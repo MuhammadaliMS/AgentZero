@@ -33,7 +33,7 @@ import { ensureWorkspace, getWorkspacePath } from './workspace'
 // To use default Anthropic:
 //   Just set ANTHROPIC_API_KEY (no base URL override needed)
 //
-const CAPTAIN_MODEL = process.env.CAPTAIN_MODEL || 'claude-sonnet-4-6'
+const CAPTAIN_MODEL = process.env.CAPTAIN_MODEL || 'claude-haiku-4-5-20251001'
 
 // Tool creators
 import { createSupabaseTools } from './tools/supabase-tools'

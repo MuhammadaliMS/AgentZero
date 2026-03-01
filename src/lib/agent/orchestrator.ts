@@ -21,6 +21,20 @@ import {
 } from './tool-metadata'
 import { ensureWorkspace, getWorkspacePath } from './workspace'
 
+// ─── Model Configuration ─────────────────────────────────────────────────
+// Supports Anthropic (default), OpenRouter, or any Anthropic-compatible proxy.
+//
+// To use OpenRouter, set these env vars:
+//   ANTHROPIC_BASE_URL=https://openrouter.ai/api
+//   ANTHROPIC_AUTH_TOKEN=sk-or-v1-...     (your OpenRouter key)
+//   ANTHROPIC_API_KEY=""                   (must be explicitly empty)
+//   CAPTAIN_MODEL=moonshotai/kimi-k2.5    (or z-ai/glm-5, etc.)
+//
+// To use default Anthropic:
+//   Just set ANTHROPIC_API_KEY (no base URL override needed)
+//
+const CAPTAIN_MODEL = process.env.CAPTAIN_MODEL || 'claude-sonnet-4-6'
+
 // Tool creators
 import { createSupabaseTools } from './tools/supabase-tools'
 import { createMemoryTools } from './tools/memory-tools'
@@ -639,13 +653,13 @@ export async function* runCaptain(
         // System prompt with dynamic capabilities
         systemPrompt: context.systemPrompt,
 
-        // Model configuration — Sonnet for depth + speed balance
-        model: 'claude-sonnet-4-6',
+        // Model — configurable via CAPTAIN_MODEL env var.
+        // Default: claude-sonnet-4-6 (Anthropic)
+        // OpenRouter examples: moonshotai/kimi-k2.5, z-ai/glm-5
+        model: CAPTAIN_MODEL,
 
         // Effort level — high for thoughtful executive analysis.
-        // The SDK uses this to control internal reasoning depth.
-        // Note: explicit `thinking` with budgetTokens breaks streaming,
-        // so we rely on `effort` instead which works with streaming.
+        // Note: non-Anthropic models may ignore this, which is fine.
         effort: 'high',
 
         // Built-in SDK tools for file system composability + MCP tool servers

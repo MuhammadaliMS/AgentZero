@@ -6,7 +6,7 @@ export class SlackAuthService extends BaseAuthService {
 
   getDefaultScopes(): string[] {
     return [
-      // Read capabilities
+      // Bot read capabilities
       'channels:read',      // List public channels
       'channels:history',   // Read public channel messages
       'groups:read',        // List private channels
@@ -15,12 +15,34 @@ export class SlackAuthService extends BaseAuthService {
       'im:history',         // Read DM messages
       'mpim:read',          // List group DM channels
       'mpim:history',       // Read group DM messages
-      // Write capabilities
+      // Bot write capabilities
       'chat:write',         // Send messages
       'im:write',           // Open DM channels
       // User info
       'users:read',         // Look up users
       'users:read.email',   // Look up by email
+    ]
+  }
+
+  /**
+   * User-level scopes for the user token (xoxp-).
+   * The user token sees everything the human user sees — including
+   * Slack Connect channels, external connections, and all workspaces.
+   * Used for read operations so the agent has the same visibility as the user.
+   */
+  getUserScopes(): string[] {
+    return [
+      'channels:read',
+      'channels:history',
+      'groups:read',
+      'groups:history',
+      'im:read',
+      'im:history',
+      'mpim:read',
+      'mpim:history',
+      'users:read',
+      'users:read.email',
+      'search:read',        // Search across all messages (powerful for "check my Slack")
     ]
   }
 
@@ -31,6 +53,7 @@ export class SlackAuthService extends BaseAuthService {
     const params = new URLSearchParams({
       client_id: clientId,
       scope: scopes.join(','),
+      user_scope: this.getUserScopes().join(','),  // Request user token too
       state,
       redirect_uri: `${(process.env.NEXT_PUBLIC_APP_URL ?? '').trim()}/api/integrations/callback`,
     })
@@ -55,8 +78,12 @@ export class SlackAuthService extends BaseAuthService {
       throw new Error(`Slack OAuth error: ${data.error}`)
     }
 
+    // Extract user token from authed_user (xoxp- token that sees everything the user sees)
+    const userAccessToken = data.authed_user?.access_token as string | undefined
+
     return {
-      access_token: data.access_token,
+      access_token: data.access_token,       // Bot token (xoxb-)
+      user_access_token: userAccessToken,     // User token (xoxp-) for read operations
       token_type: 'bearer',
       scope: data.scope,
       raw: {

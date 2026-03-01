@@ -5,11 +5,33 @@ import { WebClient } from '@slack/web-api'
 import { buildIntegrationRequiredResult } from '../tool-metadata'
 
 export function createSlackTools(orgId: string) {
-  async function getSlackClient(): Promise<WebClient | null> {
+  /**
+   * Get a Slack client using the bot token (xoxb-).
+   * Used for write operations — messages are sent as "Axari".
+   */
+  async function getSlackBotClient(): Promise<WebClient | null> {
     const tokens = await TokenManager.getTokens(orgId, 'slack')
     if (!tokens) return null
     return new WebClient(tokens.access_token)
   }
+
+  /**
+   * Get a Slack client using the user token (xoxp-) for read operations.
+   * The user token sees everything the human user sees — including
+   * Slack Connect channels, external connections, and all private channels.
+   * Falls back to bot token if no user token is available.
+   */
+  async function getSlackUserClient(): Promise<WebClient | null> {
+    const tokens = await TokenManager.getTokens(orgId, 'slack')
+    if (!tokens) return null
+    // Prefer user token for reads (sees Slack Connect channels etc.)
+    // Fall back to bot token if user token wasn't granted
+    const token = tokens.user_access_token || tokens.access_token
+    return new WebClient(token)
+  }
+
+  // Keep backward-compatible alias for write tools
+  const getSlackClient = getSlackBotClient
 
   const sendSlackDm = tool(
     'send_slack_dm',
@@ -203,14 +225,14 @@ export function createSlackTools(orgId: string) {
 
   const listSlackChannels = tool(
     'list_slack_channels',
-    'List Slack channels the bot has access to. Returns channel names, IDs, topics, and member counts. Use this to discover channels before reading messages.',
+    'List Slack channels the user has access to, including Slack Connect (external) channels. Returns channel names, IDs, topics, and member counts. Use this to discover channels before reading messages.',
     {
       types: z.enum(['public', 'private', 'dm', 'all']).optional().default('all')
         .describe('Filter by channel type'),
       limit: z.number().optional().default(50).describe('Max channels to return'),
     },
     async (args) => {
-      const client = await getSlackClient()
+      const client = await getSlackUserClient()
       if (!client) return buildIntegrationRequiredResult('slack', 'Slack')
 
       try {
@@ -251,7 +273,7 @@ export function createSlackTools(orgId: string) {
       oldest: z.string().optional().describe('Only messages after this Unix timestamp'),
     },
     async (args) => {
-      const client = await getSlackClient()
+      const client = await getSlackUserClient()
       if (!client) return buildIntegrationRequiredResult('slack', 'Slack')
 
       try {
@@ -295,7 +317,7 @@ export function createSlackTools(orgId: string) {
       limit: z.number().optional().default(50).describe('Max replies to fetch'),
     },
     async (args) => {
-      const client = await getSlackClient()
+      const client = await getSlackUserClient()
       if (!client) return buildIntegrationRequiredResult('slack', 'Slack')
 
       try {
@@ -334,30 +356,38 @@ export function createSlackTools(orgId: string) {
       limit: z.number().optional().default(20).describe('Number of messages to fetch'),
     },
     async (args) => {
-      const client = await getSlackClient()
+      const client = await getSlackUserClient()
       if (!client) return buildIntegrationRequiredResult('slack', 'Slack')
 
       try {
-        const userResult = await client.users.lookupByEmail({ email: args.user_email })
+        // Use bot client for lookupByEmail (needs bot token scope)
+        // and conversations.open (needs im:write bot scope)
+        const botClient = await getSlackBotClient()
+        const lookupClient = botClient || client
+
+        const userResult = await lookupClient.users.lookupByEmail({ email: args.user_email })
         if (!userResult.user?.id) {
           return { content: [{ type: 'text' as const, text: `Could not find Slack user: ${args.user_email}` }] }
         }
 
-        const convResult = await client.conversations.open({ users: userResult.user.id })
+        // Open DM via bot client (im:write is a bot scope)
+        const convResult = await lookupClient.conversations.open({ users: userResult.user.id })
         if (!convResult.channel?.id) {
           return { content: [{ type: 'text' as const, text: 'Could not open DM channel.' }] }
         }
 
+        // Read history via user client (sees all messages including Slack Connect)
         const history = await client.conversations.history({
           channel: convResult.channel.id,
           limit: Math.min(args.limit, 50),
         })
 
-        const botInfo = await client.auth.test()
-        const botUserId = botInfo.user_id
+        // auth.test on user client → returns the authenticated user's ID
+        const authInfo = await client.auth.test()
+        const authedUserId = authInfo.user_id
 
         const messages = (history.messages || []).reverse().map((msg) => ({
-          from: msg.user === botUserId ? 'Axari (bot)' : (userResult.user?.real_name || userResult.user?.name || msg.user),
+          from: msg.user === authedUserId ? 'You' : (userResult.user?.real_name || userResult.user?.name || msg.user),
           text: msg.text || '',
           ts: msg.ts,
           time: msg.ts ? new Date(parseFloat(msg.ts) * 1000).toISOString() : undefined,
@@ -373,21 +403,22 @@ export function createSlackTools(orgId: string) {
 
   const getSlackMentions = tool(
     'get_slack_mentions',
-    'Find recent messages that mention the bot or the authenticated user across channels the bot is in. Useful for "check my Slack" requests — surfaces DMs, @mentions, and messages needing attention.',
+    'Find recent messages that mention you (@you) and your DMs across all channels you have access to, including Slack Connect (external) channels. Useful for "check my Slack" requests — surfaces DMs, @mentions, and messages needing attention.',
     {
       hours_back: z.number().optional().default(24).describe('How many hours back to search'),
       limit: z.number().optional().default(30).describe('Max messages to return across all channels'),
     },
     async (args) => {
-      const client = await getSlackClient()
+      const client = await getSlackUserClient()
       if (!client) return buildIntegrationRequiredResult('slack', 'Slack')
 
       try {
-        const botInfo = await client.auth.test()
-        const botUserId = botInfo.user_id
+        // auth.test with user token → returns the authenticated user's ID
+        const authInfo = await client.auth.test()
+        const userId = authInfo.user_id
         const oldest = String(Math.floor(Date.now() / 1000) - args.hours_back * 3600)
 
-        // Get channels the bot is in
+        // Get channels the user is in (includes Slack Connect channels)
         const channelResult = await client.conversations.list({
           types: 'public_channel,private_channel,im,mpim',
           limit: 100,
@@ -409,7 +440,7 @@ export function createSlackTools(orgId: string) {
           if (!ch.id) continue
 
           // For DMs, read all recent messages
-          // For channels, we'll check for mentions of the bot
+          // For channels, we'll check for mentions of the user
           const isDm = ch.is_im || ch.is_mpim
 
           try {
@@ -420,10 +451,10 @@ export function createSlackTools(orgId: string) {
             })
 
             for (const msg of history.messages || []) {
-              // Skip bot's own messages
-              if (msg.user === botUserId) continue
+              // Skip user's own messages
+              if (msg.user === userId) continue
 
-              const isMention = (msg.text || '').includes(`<@${botUserId}>`)
+              const isMention = (msg.text || '').includes(`<@${userId}>`)
               const isDirectMessage = isDm
 
               if (isMention || isDirectMessage) {

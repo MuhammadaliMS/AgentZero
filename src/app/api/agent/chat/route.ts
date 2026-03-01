@@ -18,7 +18,7 @@ import type { Json } from '@/types/database'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120 // 2 minutes max for streaming
+export const maxDuration = 300 // 5 minutes max for complex multi-tool queries
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

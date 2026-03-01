@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runCaptain, type StreamEvent } from '@/lib/agent/orchestrator'
 import { cleanupConversationApprovals } from '@/lib/agent/approval-store'
+import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
+import { waitUntil } from '@vercel/functions'
 import type {
   MessagePart,
   TextPart,
@@ -448,6 +450,27 @@ export async function POST(request: NextRequest) {
                   },
                 })
                 .eq('id', conversationId)
+            }
+
+            // Fire-and-forget: extract entities/relationships from both messages
+            // Uses waitUntil() to keep the function alive after response is sent
+            if (process.env.OPENAI_API_KEY) {
+              waitUntil(
+                Promise.all([
+                  runExtractionPipeline({
+                    orgId,
+                    conversationId: conversationId!,
+                    messageContent: message,
+                    role: 'user',
+                  }),
+                  runExtractionPipeline({
+                    orgId,
+                    conversationId: conversationId!,
+                    messageContent: fullResponse,
+                    role: 'assistant',
+                  }),
+                ]).catch(err => console.error('[Extraction] Background failed:', err))
+              )
             }
 
             // Send final done event with conversation ID

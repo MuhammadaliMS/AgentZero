@@ -132,10 +132,12 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   list_failing_controls: 'Reviewing Failing Controls',
   get_audit_status: 'Checking Audit Status',
 
-  // Memory
+  // Memory & Knowledge Graph
   recall_memory: 'Recalling Context',
   store_memory: 'Storing Context',
   update_memory: 'Updating Context',
+  query_entity_graph: 'Searching Knowledge Graph',
+  get_entity_timeline: 'Checking Entity Timeline',
 
   // Supabase / CRUD
   query_commitments: 'Checking Commitments',
@@ -335,6 +337,8 @@ const TOOL_ICON_CATEGORIES: Record<string, ToolIconCategory> = {
   recall_memory: 'memory',
   store_memory: 'memory',
   update_memory: 'memory',
+  query_entity_graph: 'memory',
+  get_entity_timeline: 'memory',
   query_commitments: 'database',
   create_commitment: 'database',
   update_commitment: 'database',

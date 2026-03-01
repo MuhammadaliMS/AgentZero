@@ -126,6 +126,8 @@ const TOOLS_REQUIRING_APPROVAL = new Set([
 
 const READ_ONLY_TOOLS = new Set([
   'recall_memory',
+  'query_entity_graph',
+  'get_entity_timeline',
   'query_commitments',
   'query_actions',
   'read_recent_emails',

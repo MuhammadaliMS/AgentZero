@@ -662,6 +662,230 @@ export interface Database {
           },
         ]
       }
+      entities: {
+        Row: {
+          id: string
+          org_id: string
+          entity_type: 'person' | 'project' | 'control' | 'decision' | 'team' | 'tool' | 'vendor' | 'framework' | 'document' | 'process'
+          name: string
+          canonical_name: string
+          description: string | null
+          attributes: Json | null
+          embedding: string | null
+          first_seen_at: string
+          last_seen_at: string
+          mention_count: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          entity_type: 'person' | 'project' | 'control' | 'decision' | 'team' | 'tool' | 'vendor' | 'framework' | 'document' | 'process'
+          name: string
+          canonical_name: string
+          description?: string | null
+          attributes?: Json | null
+          embedding?: string | null
+          first_seen_at?: string
+          last_seen_at?: string
+          mention_count?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          name?: string
+          description?: string | null
+          attributes?: Json | null
+          embedding?: string | null
+          last_seen_at?: string
+          mention_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'entities_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      entity_relationships: {
+        Row: {
+          id: string
+          org_id: string
+          source_entity_id: string
+          target_entity_id: string
+          relationship_type: string
+          properties: Json | null
+          confidence: number
+          valid_from: string
+          valid_to: string | null
+          source_conversation_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          source_entity_id: string
+          target_entity_id: string
+          relationship_type: string
+          properties?: Json | null
+          confidence?: number
+          valid_from?: string
+          valid_to?: string | null
+          source_conversation_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          relationship_type?: string
+          properties?: Json | null
+          confidence?: number
+          valid_to?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'entity_relationships_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'entity_relationships_source_entity_id_fkey'
+            columns: ['source_entity_id']
+            isOneToOne: false
+            referencedRelation: 'entities'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'entity_relationships_target_entity_id_fkey'
+            columns: ['target_entity_id']
+            isOneToOne: false
+            referencedRelation: 'entities'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      memory_embeddings: {
+        Row: {
+          id: string
+          memory_id: string
+          embedding: string
+          model: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          memory_id: string
+          embedding: string
+          model?: string
+          created_at?: string
+        }
+        Update: {
+          embedding?: string
+          model?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'memory_embeddings_memory_id_fkey'
+            columns: ['memory_id']
+            isOneToOne: true
+            referencedRelation: 'memory'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      memory_entity_links: {
+        Row: {
+          id: string
+          memory_id: string
+          entity_id: string
+        }
+        Insert: {
+          id?: string
+          memory_id: string
+          entity_id: string
+        }
+        Update: Record<string, never>
+        Relationships: [
+          {
+            foreignKeyName: 'memory_entity_links_memory_id_fkey'
+            columns: ['memory_id']
+            isOneToOne: false
+            referencedRelation: 'memory'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'memory_entity_links_entity_id_fkey'
+            columns: ['entity_id']
+            isOneToOne: false
+            referencedRelation: 'entities'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      extraction_jobs: {
+        Row: {
+          id: string
+          org_id: string
+          conversation_id: string | null
+          message_id: string | null
+          status: 'pending' | 'processing' | 'completed' | 'failed'
+          entities_extracted: number | null
+          relationships_extracted: number | null
+          embeddings_generated: number | null
+          error: string | null
+          model_used: string | null
+          tokens_used: Json | null
+          cost_usd: number | null
+          duration_ms: number | null
+          created_at: string
+          completed_at: string | null
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          conversation_id?: string | null
+          message_id?: string | null
+          status?: 'pending' | 'processing' | 'completed' | 'failed'
+          entities_extracted?: number | null
+          relationships_extracted?: number | null
+          embeddings_generated?: number | null
+          error?: string | null
+          model_used?: string | null
+          tokens_used?: Json | null
+          cost_usd?: number | null
+          duration_ms?: number | null
+          created_at?: string
+          completed_at?: string | null
+        }
+        Update: {
+          status?: 'pending' | 'processing' | 'completed' | 'failed'
+          entities_extracted?: number | null
+          relationships_extracted?: number | null
+          embeddings_generated?: number | null
+          error?: string | null
+          tokens_used?: Json | null
+          cost_usd?: number | null
+          duration_ms?: number | null
+          completed_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'extraction_jobs_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
       pending_approvals: {
         Row: {
           approval_id: string
@@ -748,7 +972,62 @@ export interface Database {
       }
     }
     Views: Record<string, never>
-    Functions: Record<string, never>
+    Functions: {
+      get_entity_neighborhood: {
+        Args: {
+          p_entity_id: string
+          p_org_id: string
+          p_max_hops?: number
+          p_active_only?: boolean
+        }
+        Returns: Array<{
+          entity_id: string
+          entity_name: string
+          entity_type: string
+          entity_description: string | null
+          hop_distance: number
+          relationship_type: string | null
+          relationship_direction: string | null
+          relationship_properties: Record<string, unknown> | null
+          valid_from: string | null
+          valid_to: string | null
+        }>
+      }
+      get_entity_timeline: {
+        Args: {
+          p_entity_id: string
+          p_org_id: string
+          p_since?: string | null
+        }
+        Returns: Array<{
+          event_time: string
+          event_type: string
+          relationship_type: string
+          related_entity_name: string
+          related_entity_type: string
+          properties: Record<string, unknown> | null
+          valid_to: string | null
+        }>
+      }
+      search_memories_by_embedding: {
+        Args: {
+          p_org_id: string
+          p_embedding: string
+          p_limit?: number
+          p_category?: string | null
+        }
+        Returns: Array<{
+          memory_id: string
+          subject: string
+          content: string
+          category: string
+          confidence: number
+          similarity: number
+          related_entities: string[]
+          created_at: string
+        }>
+      }
+    }
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>
   }

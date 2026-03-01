@@ -23,8 +23,8 @@ export interface AgentContext {
 export async function buildAgentContext(orgId: string, userId: string): Promise<AgentContext> {
   const supabase = createAdminClient()
 
-  // Load profile and connected integrations in parallel
-  const [profileResult, integrationsResult] = await Promise.all([
+  // Load profile, connected integrations, and graph context in parallel
+  const [profileResult, integrationsResult, graphContext] = await Promise.all([
     supabase
       .from('profiles')
       .select('full_name, role, title, timezone, communication_style, email')
@@ -35,6 +35,7 @@ export async function buildAgentContext(orgId: string, userId: string): Promise<
       .select('integrations!inner(key)')
       .eq('org_id', orgId)
       .eq('is_active', true),
+    loadGraphContext(orgId),
   ])
 
   const profile = profileResult.data || {
@@ -54,7 +55,8 @@ export async function buildAgentContext(orgId: string, userId: string): Promise<
   const systemPrompt =
     CAPTAIN_BASE_PROMPT +
     buildCapabilitiesSection(connectedIntegrations) +
-    buildUserContext(profile)
+    buildUserContext(profile) +
+    graphContext
 
   return {
     orgId,
@@ -73,4 +75,35 @@ export function getRequiredToolSets(_connectedIntegrations: string[]): string[] 
   // canUseTool intercepts calls to unconnected integrations and emits
   // an integration_required event, showing the inline connect card.
   return ['supabase', 'memory', 'integration', 'slack', 'email', 'calendar', 'vanta']
+}
+
+// ─── Graph Context Loader ────────────────────────────────────────────────
+// Fetches the top active entities from the knowledge graph and appends
+// a lightweight summary to the system prompt. This gives the agent
+// awareness of the org's entity landscape at conversation start.
+
+async function loadGraphContext(orgId: string): Promise<string> {
+  try {
+    const supabase = createAdminClient()
+
+    // Fetch top 15 most recently active entities
+    const { data: entities } = await supabase
+      .from('entities')
+      .select('name, entity_type, mention_count, last_seen_at')
+      .eq('org_id', orgId)
+      .order('last_seen_at', { ascending: false })
+      .limit(15)
+
+    if (!entities || entities.length === 0) return ''
+
+    // Format as a compact section for the system prompt
+    const entityList = entities
+      .map(e => `${e.name} (${e.entity_type}, ${e.mention_count}x)`)
+      .join(' · ')
+
+    return `\n\n## Active Knowledge Graph\nKey entities tracked: ${entityList}\n\nUse \`query_entity_graph\` or \`get_entity_timeline\` to explore connections and history.`
+  } catch {
+    // Non-critical — don't block agent startup if graph query fails
+    return ''
+  }
 }

@@ -639,14 +639,13 @@ export async function* runCaptain(
         // System prompt with dynamic capabilities
         systemPrompt: context.systemPrompt,
 
-        // Model configuration
-        model: 'claude-haiku-4-5-20251001',
+        // Model configuration — Sonnet for depth + speed balance
+        model: 'claude-sonnet-4-6',
 
-        // Adaptive thinking — Claude decides when and how much to think.
-        // Perfect for executive-level reasoning tasks that vary in complexity.
-        thinking: { type: 'enabled', budgetTokens: 10000 },
-
-        // Effort level — high for thoughtful executive analysis
+        // Effort level — high for thoughtful executive analysis.
+        // The SDK uses this to control internal reasoning depth.
+        // Note: explicit `thinking` with budgetTokens breaks streaming,
+        // so we rely on `effort` instead which works with streaming.
         effort: 'high',
 
         // Built-in SDK tools for file system composability + MCP tool servers

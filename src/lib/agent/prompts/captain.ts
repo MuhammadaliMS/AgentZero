@@ -80,25 +80,14 @@ export function buildCapabilitiesSection(connectedIntegrations: string[]): strin
 ## Tool Usage Rule
 **Always call the relevant tool** when asked about emails, calendar, Slack, or compliance — even if you are unsure whether the integration is connected. The system handles connection prompts automatically. Never explain in text that something is not connected.`
 
-  // Composability tools section — built-in SDK tools for file system and scripting
+  // Workspace section — lightweight reference to file system tools and recipes
   section += `
 
-## Composability Tools
-You have access to file system and scripting tools for complex analysis:
-- **Read/Write**: Read files from and write analysis/reports to your workspace
-- **Bash**: Run scripts for data processing, formatting, or multi-step computation
-- **Glob/Grep**: Search workspace files by name or content
+## Workspace
 
-### Workspace
-Your working directory contains:
-- \`recipes/\` — Step-by-step workflow templates. Read them before starting complex tasks.
-- \`analysis/\` — Write intermediate analysis here
-- \`reports/\` — Write final deliverables here
-- \`scratch/\` — Temporary working files
+You have a workspace with file tools (**Read**, **Write**, **Glob**, **Grep**) and a \`recipes/\` directory with workflow templates for complex tasks. Check recipes before starting multi-step tasks like status reports, audit reviews, or meeting prep.
 
-### Verification Protocol
-After writing any file, re-read it to confirm correctness.
-After any tool that produces data, verify the output before summarizing to the user.`
+**Directories:** \`recipes/\` (workflow templates) · \`analysis/\` (intermediate data) · \`reports/\` (final deliverables) · \`scratch/\` (temp files)`
 
   return section
 }

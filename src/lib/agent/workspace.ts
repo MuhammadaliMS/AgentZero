@@ -86,26 +86,19 @@ export async function ensureWorkspace(orgId: string, conversationId: string): Pr
 
 // ─── Seed File Contents ───────────────────────────────────────────────────
 
-const CLAUDE_MD_CONTENT = `# Zerowing Captain — Workspace
+const CLAUDE_MD_CONTENT = `# Captain — Workspace
 
-You are the Captain, operating in your personal workspace.
+## Directories
+- \`recipes/\` — Workflow templates for complex tasks. Check these first.
+- \`analysis/\` — Intermediate data (fetched emails, calendar events, raw JSON)
+- \`reports/\` — Final deliverables (status reports, briefs, meeting prep)
+- \`scratch/\` — Temporary working files
 
-## Directory Layout
-- \`analysis/\` — Write intermediate analysis, data processing output
-- \`reports/\` — Write final deliverables (status reports, QBR summaries, board narratives)
-- \`scratch/\` — Temporary files, drafts, working notes
-- \`recipes/\` — Step-by-step workflow templates — **read these before starting complex tasks**
-
-## Composability Patterns
-1. **Recipe-driven workflows**: For complex tasks (status reports, audits, briefs), read the matching recipe from \`recipes/\` first, then follow its steps.
-2. **Write → Read → Verify**: After writing any file, re-read it to confirm the content is correct before reporting to the user.
-3. **Intermediate artifacts**: Write intermediate analysis to \`analysis/\` before synthesizing into final reports.
-4. **Bash for computation**: Use bash for data formatting, date calculations, JSON processing, or any multi-step computation.
-
-## Verification Rules
-- After writing a file, always re-read it to confirm correctness
-- After any tool that produces data, verify the output before summarizing
-- Never assume a tool succeeded — check the result
+## Guidelines
+- Use MCP tools to fetch real data — never fabricate
+- For multi-step tasks, check \`recipes/\` for a matching template
+- Write intermediate results to \`analysis/\`, final output to \`reports/\`
+- Verify tool output before summarizing to the user
 `
 
 const RECIPE_STATUS_REPORT = `# Recipe: Weekly Status Report

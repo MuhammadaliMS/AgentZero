@@ -3,7 +3,7 @@ import { waitUntil } from '@vercel/functions'
 import { verifySlackRequest } from '@/lib/slack/verify'
 import { getSlackClient } from '@/lib/slack/client'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { runChiefOfStaff } from '@/lib/agent/orchestrator'
+import { runCaptain } from '@/lib/agent/orchestrator'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120 // 2 minutes for agent processing
@@ -132,7 +132,7 @@ async function runAgentForSlack(
 
   console.log(`[Slack Events] Running agent: org=${orgId}, user=${userId}, msg="${message.slice(0, 100)}", convId=${conversationId}`)
 
-  const agentStream = runChiefOfStaff({
+  const agentStream = runCaptain({
     orgId,
     userId,
     message,
@@ -183,7 +183,7 @@ async function handleDmMessage(
       if (client) {
         await client.chat.postMessage({
           channel: event.channel,
-          text: "I couldn't identify your account. Please make sure you're set up in Axari.",
+          text: "I couldn't identify your account. Please make sure you're set up in Zerowing.",
           thread_ts: event.ts,
         })
       }

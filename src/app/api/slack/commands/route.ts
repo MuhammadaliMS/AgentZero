@@ -3,7 +3,7 @@ import { waitUntil } from '@vercel/functions'
 import { verifySlackRequest } from '@/lib/slack/verify'
 import { getSlackClient } from '@/lib/slack/client'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { runChiefOfStaff } from '@/lib/agent/orchestrator'
+import { runCaptain } from '@/lib/agent/orchestrator'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120 // 2 minutes for agent processing
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   const channelId = params.get('channel_id') || ''
   const responseUrl = params.get('response_url') || ''
 
-  if (command !== '/axari') {
+  if (command !== '/zerowing') {
     return NextResponse.json({ text: 'Unknown command' })
   }
 
@@ -59,7 +59,7 @@ async function processCommand(
     .single()
 
   if (!orgIntegration) {
-    await postToResponseUrl(responseUrl, 'Organization not found. Please connect Slack in Axari first.')
+    await postToResponseUrl(responseUrl, 'Organization not found. Please connect Slack in Zerowing first.')
     return
   }
 
@@ -116,7 +116,7 @@ async function processCommand(
 
     console.log(`[Slack Commands] Running agent: org=${orgId}, user=${profileId}, msg="${message.slice(0, 100)}", convId=${conversationId}`)
 
-    const agentStream = runChiefOfStaff({
+    const agentStream = runCaptain({
       orgId,
       userId: profileId,
       message,

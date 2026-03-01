@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { runChiefOfStaff, type StreamEvent } from '@/lib/agent/orchestrator'
+import { runCaptain, type StreamEvent } from '@/lib/agent/orchestrator'
 import { cleanupConversationApprovals } from '@/lib/agent/approval-store'
 import type {
   MessagePart,
@@ -376,7 +376,7 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        const agentStream = runChiefOfStaff({
+        const agentStream = runCaptain({
           orgId,
           userId: user.id,
           message,

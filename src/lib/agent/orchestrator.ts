@@ -32,7 +32,7 @@ import { createIntegrationTools } from './tools/integration-tools'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
-export interface RunChiefOfStaffParams {
+export interface RunCaptainParams {
   orgId: string
   userId: string
   message: string
@@ -211,7 +211,7 @@ ${currentMessage}`
 // ─── Main Agent Entry Point ──────────────────────────────────────────────
 
 /**
- * Run the Chief of Staff agent and yield stream events.
+ * Run the Captain agent and yield stream events.
  *
  * Uses the full Claude Agent SDK feature set:
  * - Built-in tools (Bash, Read, Write, Glob, Grep) with ephemeral workspace
@@ -227,8 +227,8 @@ ${currentMessage}`
  * - Output verification hooks for deterministic quality checks
  * - Multi-turn conversation history via structured prompt context
  */
-export async function* runChiefOfStaff(
-  params: RunChiefOfStaffParams
+export async function* runCaptain(
+  params: RunCaptainParams
 ): AsyncGenerator<StreamEvent> {
   const { orgId, userId, message, abortController, sessionId } = params
   const startTime = Date.now()
@@ -237,7 +237,7 @@ export async function* runChiefOfStaff(
   const executionId = await logWorkerExecution({
     org_id: orgId,
     conversation_id: params.conversationId,
-    worker: 'chief_of_staff',
+    worker: 'captain',
     trigger: 'chat',
     input_summary: message.slice(0, 200),
     status: 'running',
@@ -407,14 +407,14 @@ export async function* runChiefOfStaff(
         if (toolName === 'Write') {
           const rawPath = (toolInput as { file_path?: string }).file_path || ''
           const filePath = resolvePath(rawPath)
-          if (!filePath.startsWith('/tmp/axari-workspace/')) {
+          if (!filePath.startsWith('/tmp/zerowing-workspace/')) {
             console.log(`[PreToolUse:PermissionGate] Write blocked: ${rawPath} → ${filePath} (outside workspace)`)
             return {
               continue: false,
               hookSpecificOutput: {
                 hookEventName: 'PreToolUse',
                 permissionDecision: 'deny',
-                permissionDecisionReason: 'Write access is restricted to the workspace directory (/tmp/axari-workspace/).',
+                permissionDecisionReason: 'Write access is restricted to the workspace directory (/tmp/zerowing-workspace/).',
               },
             }
           }
@@ -455,14 +455,14 @@ export async function* runChiefOfStaff(
         if (toolName === 'Edit') {
           const rawPath = (toolInput as { file_path?: string }).file_path || ''
           const filePath = resolvePath(rawPath)
-          if (!filePath.startsWith('/tmp/axari-workspace/')) {
+          if (!filePath.startsWith('/tmp/zerowing-workspace/')) {
             console.log(`[PreToolUse:PermissionGate] Edit blocked: ${rawPath} → ${filePath} (outside workspace)`)
             return {
               continue: false,
               hookSpecificOutput: {
                 hookEventName: 'PreToolUse',
                 permissionDecision: 'deny',
-                permissionDecisionReason: 'Edit access is restricted to the workspace directory (/tmp/axari-workspace/).',
+                permissionDecisionReason: 'Edit access is restricted to the workspace directory (/tmp/zerowing-workspace/).',
               },
             }
           }
@@ -656,7 +656,7 @@ export async function* runChiefOfStaff(
         // Working directory — points to the ephemeral workspace
         cwd: workspacePath,
 
-        // Subagent workers — specialist agents that the Chief of Staff delegates to.
+        // Subagent workers — specialist agents that the Captain delegates to.
         // Each has their own tools, prompts, and model configuration.
         agents: {
           eve: eveAgent,
@@ -716,7 +716,7 @@ export async function* runChiefOfStaff(
           ...process.env,
           HOME: process.env.VERCEL ? '/tmp' : (process.env.HOME || '/tmp'),
           ANTHROPIC_API_KEY: (process.env.ANTHROPIC_API_KEY ?? '').trim(),
-          CLAUDE_AGENT_SDK_CLIENT_APP: 'axari-chief-of-staff/1.0.0',
+          CLAUDE_AGENT_SDK_CLIENT_APP: 'zerowing-captain/1.0.0',
         },
       },
     })
@@ -803,9 +803,9 @@ export async function* runChiefOfStaff(
     // This prevents leaking stack traces, internal paths, or API details.
     const isAbort = errorMessage.includes('abort') || params.abortController?.signal.aborted
     if (!isAbort) {
-      console.error(`[runChiefOfStaff] Error for org=${orgId}:`, errorMessage)
-      console.error(`[runChiefOfStaff] Full error:`, error)
-      console.error(`[runChiefOfStaff] ANTHROPIC_API_KEY set: ${!!process.env.ANTHROPIC_API_KEY}, length: ${(process.env.ANTHROPIC_API_KEY ?? '').length}`)
+      console.error(`[runCaptain] Error for org=${orgId}:`, errorMessage)
+      console.error(`[runCaptain] Full error:`, error)
+      console.error(`[runCaptain] ANTHROPIC_API_KEY set: ${!!process.env.ANTHROPIC_API_KEY}, length: ${(process.env.ANTHROPIC_API_KEY ?? '').length}`)
     }
     yield {
       type: 'error',

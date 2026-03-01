@@ -7,7 +7,7 @@ import { buildIntegrationRequiredResult } from '../tool-metadata'
 export function createSlackTools(orgId: string) {
   /**
    * Get a Slack client using the bot token (xoxb-).
-   * Used for write operations — messages are sent as "Axari".
+   * Used for write operations — messages are sent as "Zerowing".
    */
   async function getSlackBotClient(): Promise<WebClient | null> {
     const tokens = await TokenManager.getTokens(orgId, 'slack')

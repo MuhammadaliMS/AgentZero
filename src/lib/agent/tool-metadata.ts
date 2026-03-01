@@ -14,7 +14,9 @@ const TOOL_TO_INTEGRATION: Record<string, IntegrationInfo> = {
   // Email tools → Gmail or Outlook
   read_recent_emails: { key: 'gmail', name: 'Gmail' },
   search_emails: { key: 'gmail', name: 'Gmail' },
+  read_email: { key: 'gmail', name: 'Gmail' },
   draft_email: { key: 'gmail', name: 'Gmail' },
+  send_email: { key: 'gmail', name: 'Gmail' },
 
   // Slack tools — read
   list_slack_channels: { key: 'slack', name: 'Slack' },
@@ -24,6 +26,7 @@ const TOOL_TO_INTEGRATION: Record<string, IntegrationInfo> = {
   get_slack_mentions: { key: 'slack', name: 'Slack' },
   // Slack tools — write
   send_slack_dm: { key: 'slack', name: 'Slack' },
+  post_to_channel: { key: 'slack', name: 'Slack' },
   send_approval_message: { key: 'slack', name: 'Slack' },
   update_slack_message: { key: 'slack', name: 'Slack' },
 
@@ -103,7 +106,9 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   // Email
   read_recent_emails: 'Reading Emails',
   search_emails: 'Searching Emails',
+  read_email: 'Reading Email',
   draft_email: 'Drafting Email',
+  send_email: 'Sending Email',
 
   // Slack — read
   list_slack_channels: 'Listing Slack Channels',
@@ -113,6 +118,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   get_slack_mentions: 'Checking Slack Mentions',
   // Slack — write
   send_slack_dm: 'Sending Slack Message',
+  post_to_channel: 'Posting to Channel',
   send_approval_message: 'Posting Approval Request',
   update_slack_message: 'Updating Slack Message',
 
@@ -138,8 +144,6 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   query_actions: 'Checking Action Items',
   create_action: 'Creating Action Item',
   resolve_action: 'Resolving Action Item',
-  query_profiles: 'Looking Up Profiles',
-  query_briefs: 'Checking Briefs',
 
   // Integration
   list_connected_integrations: 'Checking Integrations',
@@ -179,11 +183,17 @@ export function buildApprovalTitle(
 ): string {
   switch (toolName) {
     case 'send_slack_dm':
-      return `Send Slack DM to ${input.recipient || input.user_id || 'user'}`
+      return `Send Slack DM to ${input.recipient || input.user_id || input.user_email || 'user'}`
+    case 'post_to_channel':
+      return `Post message to Slack channel ${input.channel_id || 'unknown'}`
     case 'send_approval_message':
       return `Post approval request in ${input.channel || 'Slack'}`
     case 'draft_email':
       return `Draft email to ${input.to || 'recipient'}`
+    case 'send_email':
+      return `Send email to ${input.to || 'recipient'}`
+    case 'update_slack_message':
+      return `Update Slack message in ${input.channel || 'channel'}`
     case 'create_commitment':
       return `Create commitment: "${truncate(input.title as string, 50)}"`
     case 'create_action':
@@ -207,9 +217,18 @@ export function buildApprovalDescription(
   switch (toolName) {
     case 'send_slack_dm':
       return [
-        `**To:** ${input.recipient || input.user_id || 'user'}`,
+        `**To:** ${input.recipient || input.user_id || input.user_email || 'user'}`,
         `**Message:** "${truncate(input.message as string, 300)}"`,
       ].join('\n')
+
+    case 'post_to_channel':
+      return [
+        `**Channel:** ${input.channel_id || 'unknown'}`,
+        `**Message:** "${truncate(input.message as string, 300)}"`,
+        input.thread_ts ? `**Thread:** ${input.thread_ts}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
 
     case 'send_approval_message':
       return [
@@ -227,6 +246,20 @@ export function buildApprovalDescription(
         `**To:** ${input.to || 'recipient'}`,
         `**Subject:** ${input.subject || '(no subject)'}`,
         `**Preview:** "${truncate(input.body as string, 300)}"`,
+      ].join('\n')
+
+    case 'send_email':
+      return [
+        `**To:** ${input.to || 'recipient'}`,
+        `**Subject:** ${input.subject || '(no subject)'}`,
+        `**Preview:** "${truncate(input.body as string, 300)}"`,
+      ].join('\n')
+
+    case 'update_slack_message':
+      return [
+        `**Channel:** ${input.channel || 'unknown'}`,
+        `**Message TS:** ${input.ts || 'unknown'}`,
+        `**New Text:** "${truncate(input.text as string, 300)}"`,
       ].join('\n')
 
     case 'create_commitment':
@@ -281,13 +314,16 @@ export type ToolIconCategory =
 const TOOL_ICON_CATEGORIES: Record<string, ToolIconCategory> = {
   read_recent_emails: 'email',
   search_emails: 'email',
+  read_email: 'email',
   draft_email: 'email',
+  send_email: 'email',
   list_slack_channels: 'slack',
   read_slack_channel: 'slack',
   read_slack_thread: 'slack',
   read_slack_dms: 'slack',
   get_slack_mentions: 'slack',
   send_slack_dm: 'slack',
+  post_to_channel: 'slack',
   send_approval_message: 'slack',
   update_slack_message: 'slack',
   get_today_events: 'calendar',

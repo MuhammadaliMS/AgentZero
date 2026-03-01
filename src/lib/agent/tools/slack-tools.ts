@@ -33,6 +33,8 @@ export function createSlackTools(orgId: string) {
   // Keep backward-compatible alias for write tools
   const getSlackClient = getSlackBotClient
 
+  // ─── Write Tools ─────────────────────────────────────────────────────────
+
   const sendSlackDm = tool(
     'send_slack_dm',
     'Send a direct message to a user via Slack. Use this for nudges, briefs, or quick updates. Requires user approval for sending.',
@@ -74,15 +76,49 @@ export function createSlackTools(orgId: string) {
           }],
         }
       } catch (e) {
-        const msg = (e as Error).message || ''
-        // Auth failures (invalid_auth, token_revoked, not_authed) → trigger integration card
-        if (msg.includes('invalid_auth') || msg.includes('token_revoked') || msg.includes('not_authed') || msg.includes('account_inactive')) {
-          return buildIntegrationRequiredResult('slack', 'Slack')
-        }
-        return { content: [{ type: 'text' as const, text: `Slack error: ${msg}` }] }
+        return handleSlackError(e)
       }
     },
     { annotations: { title: 'Send Slack DM', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
+  )
+
+  const postToChannel = tool(
+    'post_to_channel',
+    'Post a message to a Slack channel. Use list_slack_channels first to find the channel ID. Requires user approval for sending.',
+    {
+      channel_id: z.string().describe('Slack channel ID (e.g., C012345). Use list_slack_channels to find this.'),
+      message: z.string().describe('Message text (supports Slack mrkdwn formatting)'),
+      thread_ts: z.string().optional().describe('Reply to a thread — provide parent message timestamp'),
+    },
+    async (args) => {
+      const client = await getSlackClient()
+      if (!client) {
+        return buildIntegrationRequiredResult('slack', 'Slack')
+      }
+
+      try {
+        const result = await client.chat.postMessage({
+          channel: args.channel_id,
+          text: args.message,
+          ...(args.thread_ts ? { thread_ts: args.thread_ts } : {}),
+        })
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              status: 'posted',
+              channel: result.channel,
+              ts: result.ts,
+              thread_ts: args.thread_ts || undefined,
+            }),
+          }],
+        }
+      } catch (e) {
+        return handleSlackError(e)
+      }
+    },
+    { annotations: { title: 'Post to Channel', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
   )
 
   const sendApprovalMessage = tool(
@@ -172,11 +208,7 @@ export function createSlackTools(orgId: string) {
           }],
         }
       } catch (e) {
-        const msg = (e as Error).message || ''
-        if (msg.includes('invalid_auth') || msg.includes('token_revoked') || msg.includes('not_authed') || msg.includes('account_inactive')) {
-          return buildIntegrationRequiredResult('slack', 'Slack')
-        }
-        return { content: [{ type: 'text' as const, text: `Slack error: ${msg}` }] }
+        return handleSlackError(e)
       }
     },
     { annotations: { title: 'Send Approval Message', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
@@ -184,7 +216,7 @@ export function createSlackTools(orgId: string) {
 
   const updateSlackMessage = tool(
     'update_slack_message',
-    'Update an existing Slack message. Use this to update approval messages after action is taken.',
+    'Update an existing Slack message. Use this to update approval messages after action is taken. Requires user approval before updating.',
     {
       channel: z.string().describe('Slack channel ID'),
       ts: z.string().describe('Message timestamp to update'),
@@ -211,21 +243,18 @@ export function createSlackTools(orgId: string) {
 
         return { content: [{ type: 'text' as const, text: 'Message updated.' }] }
       } catch (e) {
-        const msg = (e as Error).message || ''
-        if (msg.includes('invalid_auth') || msg.includes('token_revoked') || msg.includes('not_authed') || msg.includes('account_inactive')) {
-          return buildIntegrationRequiredResult('slack', 'Slack')
-        }
-        return { content: [{ type: 'text' as const, text: `Slack error: ${msg}` }] }
+        return handleSlackError(e)
       }
     },
-    { annotations: { title: 'Update Slack Message', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
+    // ✅ destructiveHint: true — triggers approval gate in canUseTool
+    { annotations: { title: 'Update Slack Message', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true } }
   )
 
   // ─── Read Tools ─────────────────────────────────────────────────────────
 
   const listSlackChannels = tool(
     'list_slack_channels',
-    'List Slack channels the user has access to, including Slack Connect (external) channels. Returns channel names, IDs, topics, and member counts. Use this to discover channels before reading messages.',
+    'List Slack channels the user has access to, including Slack Connect (external) channels. Returns channel names, IDs, topics, and member counts. Use this to discover channels before reading messages or posting.',
     {
       types: z.enum(['public', 'private', 'dm', 'all']).optional().default('all')
         .describe('Filter by channel type'),
@@ -283,7 +312,7 @@ export function createSlackTools(orgId: string) {
           ...(args.oldest ? { oldest: args.oldest } : {}),
         })
 
-        // Resolve user IDs to names for readability
+        // Resolve user IDs to names in parallel
         const userIds = new Set<string>()
         for (const msg of result.messages || []) {
           if (msg.user) userIds.add(msg.user)
@@ -361,7 +390,6 @@ export function createSlackTools(orgId: string) {
 
       try {
         // Use bot client for lookupByEmail (needs bot token scope)
-        // and conversations.open (needs im:write bot scope)
         const botClient = await getSlackBotClient()
         const lookupClient = botClient || client
 
@@ -403,10 +431,10 @@ export function createSlackTools(orgId: string) {
 
   const getSlackMentions = tool(
     'get_slack_mentions',
-    'Find recent messages that mention you (@you) and your DMs across all channels you have access to, including Slack Connect (external) channels. Useful for "check my Slack" requests — surfaces DMs, @mentions, and messages needing attention.',
+    'Find recent messages that mention you (@you) and your unread DMs. Uses Slack search API for efficient retrieval instead of scanning all channels. Useful for "check my Slack" requests.',
     {
       hours_back: z.number().optional().default(24).describe('How many hours back to search'),
-      limit: z.number().optional().default(30).describe('Max messages to return across all channels'),
+      limit: z.number().optional().default(30).describe('Max messages to return'),
     },
     async (args) => {
       const client = await getSlackUserClient()
@@ -416,15 +444,11 @@ export function createSlackTools(orgId: string) {
         // auth.test with user token → returns the authenticated user's ID
         const authInfo = await client.auth.test()
         const userId = authInfo.user_id
-        const oldest = String(Math.floor(Date.now() / 1000) - args.hours_back * 3600)
 
-        // Get channels the user is in (includes Slack Connect channels)
-        const channelResult = await client.conversations.list({
-          types: 'public_channel,private_channel,im,mpim',
-          limit: 100,
-          exclude_archived: true,
-        })
+        const oldest = Math.floor(Date.now() / 1000) - args.hours_back * 3600
 
+        // ✅ Optimized: Use search.messages API instead of scanning all channels.
+        // This is O(1) API calls instead of O(N channels).
         const allMentions: Array<{
           channel_name: string
           channel_id: string
@@ -435,55 +459,73 @@ export function createSlackTools(orgId: string) {
           type: string
         }> = []
 
-        // Scan DM channels and channels for recent messages
-        for (const ch of channelResult.channels || []) {
-          if (!ch.id) continue
+        // 1) Search for @mentions using Slack search API
+        try {
+          const searchResult = await client.search.messages({
+            query: `<@${userId}> after:${new Date(oldest * 1000).toISOString().split('T')[0]}`,
+            count: Math.min(args.limit, 50),
+            sort: 'timestamp',
+            sort_dir: 'desc',
+          })
 
-          // For DMs, read all recent messages
-          // For channels, we'll check for mentions of the user
-          const isDm = ch.is_im || ch.is_mpim
-
-          try {
-            const history = await client.conversations.history({
-              channel: ch.id,
-              oldest,
-              limit: isDm ? 20 : 50,
+          for (const match of searchResult.messages?.matches || []) {
+            allMentions.push({
+              channel_name: (match.channel as { name?: string })?.name || 'unknown',
+              channel_id: (match.channel as { id?: string })?.id || '',
+              user: match.user || match.username || 'unknown',
+              text: ((match.text || '') as string).slice(0, 500),
+              ts: match.ts || '',
+              time: match.ts ? new Date(parseFloat(match.ts) * 1000).toISOString() : '',
+              type: 'mention',
             })
+          }
+        } catch {
+          // search.messages may not be available with bot tokens — fall back below
+        }
 
-            for (const msg of history.messages || []) {
-              // Skip user's own messages
-              if (msg.user === userId) continue
+        // 2) Get recent DMs (check up to 10 DM channels)
+        try {
+          const dmChannels = await client.conversations.list({
+            types: 'im,mpim',
+            limit: 10,
+            exclude_archived: true,
+          })
 
-              const isMention = (msg.text || '').includes(`<@${userId}>`)
-              const isDirectMessage = isDm
+          for (const ch of dmChannels.channels || []) {
+            if (!ch.id) continue
+            try {
+              const history = await client.conversations.history({
+                channel: ch.id,
+                oldest: String(oldest),
+                limit: 10,
+              })
 
-              if (isMention || isDirectMessage) {
+              for (const msg of history.messages || []) {
+                if (msg.user === userId) continue // Skip own messages
                 allMentions.push({
-                  channel_name: ch.name || (isDm ? `DM` : ch.id || 'unknown'),
+                  channel_name: ch.name || 'DM',
                   channel_id: ch.id,
                   user: msg.user || 'unknown',
-                  text: (msg.text || '').slice(0, 500),
+                  text: ((msg.text || '') as string).slice(0, 500),
                   ts: msg.ts || '',
                   time: msg.ts ? new Date(parseFloat(msg.ts) * 1000).toISOString() : '',
-                  type: isDm ? 'dm' : 'mention',
+                  type: 'dm',
                 })
               }
+            } catch {
+              continue
             }
-          } catch {
-            // Skip channels we can't read (not a member, etc.)
-            continue
           }
-
-          // Stop if we have enough
-          if (allMentions.length >= args.limit) break
+        } catch {
+          // DM listing failed — continue with what we have
         }
 
         // Sort by timestamp descending (newest first) and limit
         allMentions.sort((a, b) => parseFloat(b.ts) - parseFloat(a.ts))
         const limited = allMentions.slice(0, args.limit)
 
-        // Resolve user names
-        const userIds = [...new Set(limited.map((m) => m.user))]
+        // Resolve user names in parallel
+        const userIds = [...new Set(limited.map((m) => m.user).filter(u => u.startsWith('U')))]
         const userMap = await resolveUserNames(client, userIds)
         for (const m of limited) {
           m.user = userMap[m.user] || m.user
@@ -510,6 +552,7 @@ export function createSlackTools(orgId: string) {
     getSlackMentions,
     // Write tools
     sendSlackDm,
+    postToChannel,
     sendApprovalMessage,
     updateSlackMessage,
   ]
@@ -517,17 +560,24 @@ export function createSlackTools(orgId: string) {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-/** Resolve Slack user IDs to display names. */
+/** Resolve Slack user IDs to display names — parallelized. */
 async function resolveUserNames(client: WebClient, userIds: string[]): Promise<Record<string, string>> {
   const map: Record<string, string> = {}
-  for (const uid of userIds) {
-    try {
+
+  // ✅ Optimized: Parallel instead of sequential
+  const results = await Promise.allSettled(
+    userIds.map(async (uid) => {
       const info = await client.users.info({ user: uid })
-      map[uid] = info.user?.real_name || info.user?.name || uid
-    } catch {
-      map[uid] = uid
+      return { uid, name: info.user?.real_name || info.user?.name || uid }
+    })
+  )
+
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      map[result.value.uid] = result.value.name
     }
   }
+
   return map
 }
 

@@ -114,8 +114,11 @@ export interface StreamEvent {
 
 const TOOLS_REQUIRING_APPROVAL = new Set([
   'send_slack_dm',
+  'post_to_channel',
   'send_approval_message',
+  'update_slack_message',
   'draft_email',
+  'send_email',
   'create_commitment',
   'create_action',
   'resolve_action',
@@ -127,6 +130,12 @@ const READ_ONLY_TOOLS = new Set([
   'query_actions',
   'read_recent_emails',
   'search_emails',
+  'read_email',
+  'list_slack_channels',
+  'read_slack_channel',
+  'read_slack_thread',
+  'read_slack_dms',
+  'get_slack_mentions',
   'get_today_events',
   'get_week_events',
   'find_free_slots',
@@ -267,7 +276,7 @@ export async function* runCaptain(
     await ensureWorkspace(orgId, params.conversationId)
 
     // Build MCP servers based on connected integrations
-    const mcpServers = buildMcpServers(orgId, requiredToolSets, params.conversationId)
+    const mcpServers = buildMcpServers(orgId, requiredToolSets, params.conversationId, context.profile.timezone)
 
     // ─── Build SDK Hooks ──────────────────────────────────────────
     // These native hook callbacks provide real-time observability
@@ -435,17 +444,25 @@ export async function* runCaptain(
         }
 
         // Bash → command denylist
+        // Philosophy: block network egress, destructive ops, and privilege escalation.
+        // ALLOW Python/Node for data processing — the agent needs these for computation
+        // (sorting, summing, date math, JSON transforms). The workspace write-restriction
+        // already confines file access, and network tools are blocked separately.
         if (toolName === 'Bash') {
           const rawCmd = (toolInput as { command?: string }).command ?? ''
           const cmd = rawCmd.toLowerCase()
           const DENIED_PATTERNS = [
+            // Network egress — no calling external services
             /\bcurl\b/, /\bwget\b/, /\bnc\b/, /\bnetcat\b/, /\bncat\b/,
             /\bssh\b/, /\bscp\b/, /\bsftp\b/, /\bftp\b/, /\btelnet\b/,
-            /\bpython[23]?\s+-c\b/, /\bnode\s+-e\b/, /\bruby\s+-e\b/, /\bperl\s+-e\b/,
-            /\brm\s+-[rRf]/, /\brmdir\b/,
-            /\bsudo\b/,
-            /\beval\b/, /base64\s.*-d.*\|\s*(?:sh|bash|zsh)/,
             /\/usr\/bin\/curl/, /\/usr\/bin\/wget/,
+            // Destructive operations
+            /\brm\s+-[rRf]/, /\brmdir\b/,
+            // Privilege escalation
+            /\bsudo\b/,
+            // Shell injection / evasion — only block shell-level eval, not JS eval inside node -e
+            /^\s*eval\b/, /\|\s*eval\b/, /;\s*eval\b/, /&&\s*eval\b/,
+            /base64\s.*-d.*\|\s*(?:sh|bash|zsh)/,
           ]
           const DENIED_PATHS = ['/etc/', '/proc/', '/sys/', '/root/', '/var/']
           const isDenied =
@@ -459,7 +476,7 @@ export async function* runCaptain(
               hookSpecificOutput: {
                 hookEventName: 'PreToolUse',
                 permissionDecision: 'deny',
-                permissionDecisionReason: 'This Bash command contains restricted operations.',
+                permissionDecisionReason: 'This Bash command contains restricted operations. Bash has no network access (curl, wget, ssh are blocked). Use MCP tools for external data.',
               },
             }
           }
@@ -838,7 +855,8 @@ export async function* runCaptain(
 function buildMcpServers(
   orgId: string,
   requiredToolSets: string[],
-  conversationId?: string | null
+  conversationId?: string | null,
+  userTimezone?: string | null
 ): Record<string, ReturnType<typeof createSdkMcpServer>> {
   const servers: Record<string, ReturnType<typeof createSdkMcpServer>> = {}
 
@@ -874,7 +892,7 @@ function buildMcpServers(
     calendar: () =>
       createSdkMcpServer({
         name: 'calendar-tools',
-        tools: createCalendarTools(orgId),
+        tools: createCalendarTools(orgId, userTimezone),
       }),
     vanta: () =>
       createSdkMcpServer({

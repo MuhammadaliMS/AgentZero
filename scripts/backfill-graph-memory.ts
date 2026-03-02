@@ -11,9 +11,9 @@
  *   npx tsx scripts/backfill-graph-memory.ts
  *
  * Required env vars:
- *   OPENAI_API_KEY       — OpenAI API key
- *   NEXT_PUBLIC_SUPABASE_URL — Supabase URL
- *   SUPABASE_SERVICE_ROLE_KEY — Supabase service role key
+ *   OPENROUTER_API_KEY          — OpenRouter API key
+ *   NEXT_PUBLIC_SUPABASE_URL    — Supabase URL
+ *   SUPABASE_SERVICE_ROLE_KEY   — Supabase service role key
  *
  * Cost estimate: ~$0.20 per 1000 memories
  */
@@ -24,10 +24,10 @@ import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-small'
-const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || 'gpt-4o-mini'
-const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small'
+const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || 'openai/gpt-4o-mini'
+const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1'
 
 const BATCH_SIZE = 20
 const RATE_LIMIT_DELAY_MS = 500 // Delay between batches to avoid rate limits
@@ -37,21 +37,23 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
   process.exit(1)
 }
 
-if (!OPENAI_API_KEY) {
-  console.error('Missing OPENAI_API_KEY')
+if (!OPENROUTER_API_KEY) {
+  console.error('Missing OPENROUTER_API_KEY')
   process.exit(1)
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
-// ─── OpenAI Helpers ──────────────────────────────────────────────────────
+// ─── OpenRouter Helpers ─────────────────────────────────────────────────
 
 async function generateEmbedding(text: string): Promise<number[] | null> {
-  const response = await fetch(`${OPENAI_BASE_URL}/embeddings`, {
+  const response = await fetch(`${LLM_BASE_URL}/embeddings`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+      'X-Title': 'Captain Backfill',
     },
     body: JSON.stringify({
       model: EMBEDDING_MODEL,
@@ -72,11 +74,13 @@ async function generateEmbedding(text: string): Promise<number[] | null> {
 async function extractEntities(
   text: string
 ): Promise<{ entities: Array<{ name: string; type: string; description?: string }> }> {
-  const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+  const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+      'X-Title': 'Captain Backfill',
     },
     body: JSON.stringify({
       model: EXTRACTOR_MODEL,

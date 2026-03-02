@@ -454,7 +454,7 @@ export async function POST(request: NextRequest) {
 
             // Fire-and-forget: extract entities/relationships from both messages
             // Uses waitUntil() to keep the function alive after response is sent
-            if (process.env.OPENAI_API_KEY) {
+            if (process.env.OPENROUTER_API_KEY) {
               waitUntil(
                 Promise.all([
                   runExtractionPipeline({

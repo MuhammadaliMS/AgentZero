@@ -1,11 +1,15 @@
-// ─── Minimal OpenAI Client ───────────────────────────────────────────────
-// Direct fetch() calls to OpenAI API for entity extraction and embeddings.
-// No npm dependency — just HTTP. Used by the background extraction pipeline.
+// ─── LLM Client (OpenRouter) ────────────────────────────────────────────────
+// Direct fetch() calls to OpenRouter (OpenAI-compatible) for entity extraction
+// and embeddings. No npm dependency — just HTTP. Used by the background
+// extraction pipeline and memory tools.
+//
+// OpenRouter routes requests to 100+ LLMs — change EXTRACTOR_MODEL to use
+// any supported model (e.g., google/gemini-flash-1.5, meta-llama/llama-3-8b).
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
-const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || 'gpt-4o-mini'
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-small'
-const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
+const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || 'openai/gpt-4o-mini'
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small'
+const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1'
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -61,50 +65,20 @@ Use clear verb-based types: manages, owns, reports_to, depends_on, blocks, part_
 - Keep descriptions concise (1 sentence max)
 - If the text is a simple greeting or has no extractable entities, return empty arrays
 
-Respond with JSON only, no explanation.`
-
-const EXTRACTION_SCHEMA = {
-  type: 'object' as const,
-  properties: {
-    entities: {
-      type: 'array' as const,
-      items: {
-        type: 'object' as const,
-        properties: {
-          name: { type: 'string' as const },
-          type: { type: 'string' as const, enum: ['person', 'project', 'control', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process'] },
-          description: { type: 'string' as const },
-          attributes: { type: 'object' as const },
-        },
-        required: ['name', 'type'],
-      },
-    },
-    relationships: {
-      type: 'array' as const,
-      items: {
-        type: 'object' as const,
-        properties: {
-          source: { type: 'string' as const },
-          target: { type: 'string' as const },
-          type: { type: 'string' as const },
-          properties: { type: 'object' as const },
-          confidence: { type: 'number' as const },
-        },
-        required: ['source', 'target', 'type'],
-      },
-    },
-  },
-  required: ['entities', 'relationships'],
-}
+Respond with valid JSON matching this schema:
+{
+  "entities": [{ "name": "string", "type": "string", "description": "string", "attributes": {} }],
+  "relationships": [{ "source": "string", "target": "string", "type": "string", "properties": {}, "confidence": 1.0 }]
+}`
 
 // ─── API Functions ───────────────────────────────────────────────────────
 
 /**
- * Extract entities and relationships from text using a cheap LLM.
+ * Extract entities and relationships from text using a cheap LLM via OpenRouter.
  * Returns structured data suitable for graph insertion.
  */
 export async function extractEntitiesAndRelationships(text: string): Promise<ExtractionResult> {
-  if (!OPENAI_API_KEY) {
+  if (!OPENROUTER_API_KEY) {
     return { entities: [], relationships: [] }
   }
 
@@ -113,11 +87,13 @@ export async function extractEntitiesAndRelationships(text: string): Promise<Ext
     return { entities: [], relationships: [] }
   }
 
-  const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+  const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+      'X-Title': 'Captain Knowledge Graph',
     },
     body: JSON.stringify({
       model: EXTRACTOR_MODEL,
@@ -125,14 +101,7 @@ export async function extractEntitiesAndRelationships(text: string): Promise<Ext
         { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
         { role: 'user', content: text },
       ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'extraction',
-          strict: true,
-          schema: EXTRACTION_SCHEMA,
-        },
-      },
+      response_format: { type: 'json_object' },
       temperature: 0,
       max_tokens: 2000,
     }),
@@ -140,7 +109,7 @@ export async function extractEntitiesAndRelationships(text: string): Promise<Ext
 
   if (!response.ok) {
     const err = await response.text()
-    throw new Error(`OpenAI extraction failed (${response.status}): ${err}`)
+    throw new Error(`LLM extraction failed (${response.status}): ${err}`)
   }
 
   const data = await response.json()
@@ -149,11 +118,18 @@ export async function extractEntitiesAndRelationships(text: string): Promise<Ext
     return { entities: [], relationships: [] }
   }
 
-  const parsed = JSON.parse(content) as { entities: ExtractedEntity[]; relationships: ExtractedRelationship[] }
+  let parsed: { entities: ExtractedEntity[]; relationships: ExtractedRelationship[] }
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    console.error('[LLM Client] Failed to parse extraction JSON:', content.slice(0, 200))
+    return { entities: [], relationships: [] }
+  }
 
   // Validate entity types
   const validTypes = new Set(['person', 'project', 'control', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process'])
-  parsed.entities = parsed.entities.filter(e => validTypes.has(e.type))
+  parsed.entities = (parsed.entities || []).filter(e => validTypes.has(e.type))
+  parsed.relationships = parsed.relationships || []
 
   return {
     entities: parsed.entities,
@@ -163,18 +139,20 @@ export async function extractEntitiesAndRelationships(text: string): Promise<Ext
 }
 
 /**
- * Generate a vector embedding for text using OpenAI embeddings API.
+ * Generate a vector embedding for text using OpenRouter embeddings API.
  * Returns a 1536-dim float array.
  */
 export async function generateEmbedding(text: string): Promise<number[] | null> {
-  if (!OPENAI_API_KEY) return null
+  if (!OPENROUTER_API_KEY) return null
   if (!text || text.trim().length < 3) return null
 
-  const response = await fetch(`${OPENAI_BASE_URL}/embeddings`, {
+  const response = await fetch(`${LLM_BASE_URL}/embeddings`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+      'X-Title': 'Captain Knowledge Graph',
     },
     body: JSON.stringify({
       model: EMBEDDING_MODEL,
@@ -184,7 +162,8 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
 
   if (!response.ok) {
     const err = await response.text()
-    throw new Error(`OpenAI embedding failed (${response.status}): ${err}`)
+    console.error(`Embedding failed (${response.status}): ${err}`)
+    return null
   }
 
   const data = await response.json()
@@ -192,8 +171,8 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
 }
 
 /**
- * Check if the OpenAI API key is configured.
+ * Check if the LLM API key is configured (OpenRouter).
  */
 export function isOpenAIConfigured(): boolean {
-  return !!OPENAI_API_KEY
+  return !!OPENROUTER_API_KEY
 }

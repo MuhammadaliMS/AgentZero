@@ -744,9 +744,12 @@ export async function* runCaptain(
         // HOME must point to /tmp on Vercel — the default HOME (/vercel)
         // is read-only and cli.js (Claude Code) needs to write config
         // files to ~/.claude/ during initialization.
+        // CLAUDE_CONFIG_DIR also set so the SDK's debug logger writes
+        // to /tmp/.claude/debug/ instead of the read-only homedir.
         env: {
           ...process.env,
           HOME: process.env.VERCEL ? '/tmp' : (process.env.HOME || '/tmp'),
+          CLAUDE_CONFIG_DIR: process.env.VERCEL ? '/tmp/.claude' : (process.env.CLAUDE_CONFIG_DIR || ''),
           ANTHROPIC_API_KEY: (process.env.ANTHROPIC_API_KEY ?? '').trim(),
           CLAUDE_AGENT_SDK_CLIENT_APP: 'zerowing-captain/1.0.0',
         },

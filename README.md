@@ -1,6 +1,6 @@
-# Axari — AI Chief of Staff
+# Agent Zero — AI Captain
 
-A proactive, agentic Chief of Staff built for CISOs. Combines a conversational chat interface (Layer 2) with proactive Slack briefings (Layer 1).
+A proactive, agentic Captain built for CISOs. Combines a conversational chat interface (Layer 2) with proactive Slack briefings (Layer 1).
 
 ---
 
@@ -29,7 +29,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `ANTHROPIC_API_KEY` | ✅ | Claude API key |
 | `TOKEN_ENCRYPTION_SECRET` | ✅ | 32-byte hex string for encrypting OAuth tokens |
 | `CRON_SECRET` | ✅ | Random secret for securing `/api/cron/*` endpoints |
-| `NEXT_PUBLIC_APP_URL` | ✅ | Public URL (e.g. `https://axari.ai` or `http://localhost:3000`) |
+| `NEXT_PUBLIC_APP_URL` | ✅ | Public URL (e.g. `https://agentzero.ai` or `http://localhost:3000`) |
 | `SLACK_CLIENT_ID` | For Slack | Slack app client ID |
 | `SLACK_CLIENT_SECRET` | For Slack | Slack app client secret |
 | `SLACK_SIGNING_SECRET` | For Slack | Slack app signing secret |
@@ -51,7 +51,7 @@ Slack powers both the proactive briefing layer (morning briefs, EOD wraps, nudge
 
 **1. Create the app at [api.slack.com/apps](https://api.slack.com/apps)**
 
-Click **Create New App → From scratch**. Name it "Chief of Staff" and pick your workspace.
+Click **Create New App → From scratch**. Name it "Captain" and pick your workspace.
 
 **2. Configure OAuth & Permissions**
 
@@ -132,7 +132,7 @@ Cron schedules are defined in `vercel.json` and secured with `CRON_SECRET`.
 | `/api/cron/eod-wrap` | Every hour 16–23 UTC | EOD wrap for users in 4–7 PM local window |
 | `/api/cron/nudge` | 14:00 UTC daily (M–F) | Pending action reminders + onboarding nudges |
 
-**Deduplication**: Each cron checks the `briefs` table before generating — no user gets more than one morning brief or EOD wrap per day regardless of how many times the cron fires.
+**Deduplication**: Each cron checks the `briefs` table before generating — no user gets more than one morning brief or EOD wrap per day regardless of how many times the cron fire.
 
 **Timezone-awareness**: Each profile's `timezone` field (IANA format, e.g. `America/New_York`) controls when they receive briefings.
 
@@ -151,8 +151,8 @@ curl -H "Authorization: Bearer your-cron-secret" \
 ## Architecture
 
 ```
-Layer 1 (Push)     → Vercel Crons → Agent → Slack DM
-Layer 2 (Conversation) → Chat UI → SSE Stream → Agent → Response Parts
+Layer 1 (Push)     → Vercel Crons → Captain → Slack DM
+Layer 2 (Conversation) → Chat UI → SSE Stream → Captain → Response Parts
 Layer 3 (Dashboard) → Coming soon
 ```
 
@@ -174,7 +174,7 @@ src/
 │   └── slack/interactions/        # Slack button action handler
 ├── lib/
 │   ├── agent/
-│   │   ├── orchestrator.ts        # Claude agent runner + canUseTool
+│   │   ├── orchestrator.ts        # Captain agent runner + canUseTool
 │   │   ├── approval-store.ts      # In-process approval promises
 │   │   ├── tool-metadata.ts       # Tool → integration mapping
 │   │   └── prompts/               # System prompts

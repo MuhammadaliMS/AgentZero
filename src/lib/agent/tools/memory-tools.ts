@@ -16,7 +16,10 @@ export function createMemoryTools(orgId: string) {
     'Search institutional memory for relevant context. Uses hybrid search combining full-text, semantic similarity, and knowledge graph traversal for comprehensive recall.',
     {
       query: z.string().describe('Search query to find relevant memories'),
-      category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact']).optional(),
+      category: z.enum([
+        'decision', 'context', 'preference', 'relationship', 'fact',
+        'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline',
+      ]).optional(),
       limit: z.number().optional().default(10),
       include_graph_context: z.boolean().optional().default(true).describe('Include related entities and connections from the knowledge graph'),
     },
@@ -188,17 +191,93 @@ export function createMemoryTools(orgId: string) {
 
   const storeMemory = tool(
     'store_memory',
-    'Store a new piece of institutional memory. Use this when the user shares important context, makes a decision, or reveals a preference. Automatically generates semantic embeddings and links to known entities.',
+    `Store or update institutional memory. Call this FREQUENTLY — every conversation should produce at least one memory.
+
+**ALWAYS store when you learn about:**
+- Tasks, action items, or follow-ups (category: task)
+- Project status or progress updates (category: project_status)
+- Meeting outcomes or key takeaways (category: meeting_outcome)
+- Blockers or issues raised (category: blocker)
+- Deadlines or important dates (category: deadline)
+- People and their roles/responsibilities (category: relationship)
+- Decisions made (category: decision)
+- User preferences or working style (category: preference)
+- Org context and background (category: context)
+- Reference facts (category: fact)
+
+**Deduplication:** If a memory with the same subject already exists, it will be UPDATED (merged) rather than duplicated. So feel free to store aggressively — storing "Project Alpha" twice just updates it with the latest info.`,
     {
-      category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact']),
-      subject: z.string(),
-      content: z.string(),
-      source: z.string().optional(),
+      category: z.enum([
+        'decision', 'context', 'preference', 'relationship', 'fact',
+        'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline',
+      ]),
+      subject: z.string().describe('Short, specific label (e.g., "SOC2 audit deadline", "Sarah Chen role", "Q1 OKR status"). Use consistent naming so updates merge correctly.'),
+      content: z.string().describe('Detailed information. For updates, include ALL current info — this replaces the previous content.'),
+      source: z.string().optional().describe('Where this info came from (e.g., "user conversation", "email from Sarah", "Slack #security")'),
       confidence: z.number().min(0).max(1).optional().default(1.0),
-      related_entities: z.array(z.string()).optional(),
+      related_entities: z.array(z.string()).optional().describe('People, projects, tools mentioned (e.g., ["Sarah Chen", "SOC2 Remediation", "Vanta"])'),
     },
     async (args) => {
       try {
+        // ── Duplicate detection: check if same subject exists for this org ──
+        const { data: existing } = await supabase
+          .from('memory')
+          .select('id, content, confidence, related_entities')
+          .eq('org_id', orgId)
+          .ilike('subject', args.subject.trim())
+          .limit(1)
+          .maybeSingle()
+
+        let mem: Memory
+
+        if (existing) {
+          // ── UPDATE existing memory (merge) ──
+          const mergedEntities = [
+            ...new Set([
+              ...(existing.related_entities || []),
+              ...(args.related_entities || []),
+            ]),
+          ]
+
+          const { data: updated, error } = await supabase
+            .from('memory')
+            .update({
+              content: args.content,
+              category: args.category,
+              confidence: args.confidence,
+              related_entities: mergedEntities,
+              source: args.source,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existing.id)
+            .eq('org_id', orgId)
+            .select()
+            .single()
+
+          if (error) return { content: [{ type: 'text' as const, text: `Error updating memory: ${error.message}` }] }
+          mem = updated as Memory
+          console.log(`[Tool:store_memory] UPDATED existing memory: "${args.subject}" (${mem.id})`)
+
+          // Re-generate embedding for updated content
+          if (isOpenAIConfigured()) {
+            const embeddingText = `${args.subject}: ${args.content}`
+            generateEmbedding(embeddingText).then(async (embedding) => {
+              if (embedding) {
+                // Upsert — replace old embedding
+                await supabase
+                  .from('memory_embeddings')
+                  .upsert(
+                    { memory_id: mem.id, embedding: JSON.stringify(embedding) },
+                    { onConflict: 'memory_id' }
+                  )
+              }
+            }).catch(err => console.warn('[store_memory] Embedding update failed:', err))
+          }
+
+          return { content: [{ type: 'text' as const, text: `Memory updated (merged with existing): ${mem.subject} (${mem.id})` }] }
+        }
+
+        // ── INSERT new memory ──
         const { data, error } = await supabase
           .from('memory')
           .insert({
@@ -214,7 +293,8 @@ export function createMemoryTools(orgId: string) {
           .single()
 
         if (error) return { content: [{ type: 'text' as const, text: `Error: ${error.message}` }] }
-        const mem = data as Memory
+        mem = data as Memory
+        console.log(`[Tool:store_memory] NEW memory stored: "${args.subject}" (${mem.id})`)
 
         // Background: generate embedding for the new memory
         if (isOpenAIConfigured()) {
@@ -259,7 +339,7 @@ export function createMemoryTools(orgId: string) {
         return { content: [{ type: 'text' as const, text: `Error storing memory: ${(e as Error).message}` }] }
       }
     },
-    { annotations: { title: 'Store Memory', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } }
+    { annotations: { title: 'Store Memory', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
   )
 
   // ─── update_memory ────────────────────────────────────────────────
@@ -271,7 +351,10 @@ export function createMemoryTools(orgId: string) {
       id: z.string(),
       content: z.string().optional(),
       confidence: z.number().min(0).max(1).optional(),
-      category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact']).optional(),
+      category: z.enum([
+        'decision', 'context', 'preference', 'relationship', 'fact',
+        'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline',
+      ]).optional(),
     },
     async (args) => {
       const { id, ...updates } = args

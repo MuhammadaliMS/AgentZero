@@ -251,7 +251,7 @@ export interface Database {
         Row: {
           id: string
           org_id: string
-          category: 'decision' | 'context' | 'preference' | 'relationship' | 'fact'
+          category: 'decision' | 'context' | 'preference' | 'relationship' | 'fact' | 'task' | 'meeting_outcome' | 'project_status' | 'blocker' | 'deadline'
           subject: string
           content: string
           source: string | null
@@ -264,7 +264,7 @@ export interface Database {
         Insert: {
           id?: string
           org_id: string
-          category: 'decision' | 'context' | 'preference' | 'relationship' | 'fact'
+          category: 'decision' | 'context' | 'preference' | 'relationship' | 'fact' | 'task' | 'meeting_outcome' | 'project_status' | 'blocker' | 'deadline'
           subject: string
           content: string
           source?: string | null
@@ -275,7 +275,7 @@ export interface Database {
           updated_at?: string
         }
         Update: {
-          category?: 'decision' | 'context' | 'preference' | 'relationship' | 'fact'
+          category?: 'decision' | 'context' | 'preference' | 'relationship' | 'fact' | 'task' | 'meeting_outcome' | 'project_status' | 'blocker' | 'deadline'
           subject?: string
           content?: string
           source?: string | null

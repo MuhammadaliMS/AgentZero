@@ -51,7 +51,7 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
         conversation_id: conversationId,
         message_id: messageId ?? null,
         status: 'processing',
-        model_used: process.env.EXTRACTOR_MODEL || 'openai/gpt-4o-mini',
+        model_used: process.env.EXTRACTOR_MODEL || 'x-ai/grok-4.1-fast',
       })
       .select('id')
       .single()

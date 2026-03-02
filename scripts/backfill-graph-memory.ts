@@ -26,7 +26,7 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small'
-const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || 'openai/gpt-4o-mini'
+const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || 'x-ai/grok-4.1-fast'
 const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1'
 
 const BATCH_SIZE = 20

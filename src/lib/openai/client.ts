@@ -7,7 +7,7 @@
 // any supported model (e.g., google/gemini-flash-1.5, meta-llama/llama-3-8b).
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
-const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || 'openai/gpt-4o-mini'
+const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || 'x-ai/grok-4.1-fast'
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small'
 const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1'
 

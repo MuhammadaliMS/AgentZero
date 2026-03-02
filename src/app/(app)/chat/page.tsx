@@ -10,9 +10,9 @@ function ChatPageInner() {
   const initialPrompt = searchParams.get('prompt') || undefined
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)]">
+    <div className="flex h-full min-h-0 overflow-hidden">
       <ConversationSidebar />
-      <div className="flex-1">
+      <div className="flex-1 min-h-0">
         <ChatInterface initialPrompt={initialPrompt} />
       </div>
     </div>

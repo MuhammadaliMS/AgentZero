@@ -83,6 +83,13 @@ function ToolIcon({ category, className }: { category: ToolIconCategory; classNa
           <path d="M14.83 9.17l4.24-4.24" />
         </svg>
       )
+    case 'builtin':
+      return (
+        <svg className={cls} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="4 17 10 11 4 5" />
+          <line x1="12" x2="20" y1="19" y2="19" />
+        </svg>
+      )
     default:
       return (
         <svg className={cls} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -145,6 +152,14 @@ const TOOL_ICON_CATEGORIES: Record<string, ToolIconCategory> = {
   resolve_action: 'database',
   list_connected_integrations: 'integration',
   get_integration_health: 'integration',
+
+  // Built-in SDK tools
+  Bash: 'builtin',
+  Read: 'builtin',
+  Write: 'builtin',
+  Edit: 'builtin',
+  Glob: 'builtin',
+  Grep: 'builtin',
 }
 
 export function ToolCallBlock({ part, resultPart }: ToolCallBlockProps) {
@@ -152,7 +167,7 @@ export function ToolCallBlock({ part, resultPart }: ToolCallBlockProps) {
   const category = TOOL_ICON_CATEGORIES[part.toolName] || 'default'
 
   return (
-    <div className="my-1">
+    <div className="my-0.5">
       <button
         onClick={() => setExpanded(!expanded)}
         className={cn(
@@ -189,7 +204,7 @@ export function ToolCallBlock({ part, resultPart }: ToolCallBlockProps) {
       </button>
 
       {expanded && (
-        <div className="mt-2 ml-1 space-y-2">
+        <div className="mt-1.5 ml-1 space-y-1.5">
           {/* Tool Input */}
           {Object.keys(part.toolInput).length > 0 && (
             <div className="rounded-lg border bg-muted/20 p-3">

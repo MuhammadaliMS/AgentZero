@@ -57,7 +57,7 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
   }
 
   return (
-    <div className="border-t bg-background px-4 pb-4 pt-3">
+    <div className="shrink-0 border-t bg-background px-4 pb-4 pt-3 shadow-[0_-1px_3px_0_rgb(0_0_0/0.05)]">
       <div className="mx-auto max-w-3xl">
         <div className="flex items-end gap-2">
           <div className="relative flex-1">
@@ -67,7 +67,7 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               placeholder={placeholder || 'Message your Captain...'}
-              className="min-h-[44px] max-h-[200px] resize-none pr-10"
+              className="min-h-[44px] max-h-[200px] resize-none pr-10 rounded-xl bg-muted/40"
               rows={1}
               disabled={isStreaming}
             />

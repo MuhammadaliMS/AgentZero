@@ -102,11 +102,12 @@ export function ConversationSidebar() {
       {/* Header */}
       <div className="flex h-12 items-center justify-between border-b px-3">
         <span className="text-sm font-medium">Conversations</span>
-        <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
-          <Link href="/chat" title="New conversation">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2.5 text-xs" asChild>
+          <Link href="/chat">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 5v14M5 12h14" />
             </svg>
+            New
           </Link>
         </Button>
       </div>

@@ -58,7 +58,7 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
   }).format(message.createdAt)
 
   return (
-    <div className={cn('group flex gap-3 py-4 justify-end')}>
+    <div className={cn('group flex gap-3 py-3 justify-end')}>
       <div className="flex flex-col gap-1 max-w-[80%]">
         <div className="rounded-2xl px-4 py-3 bg-primary text-primary-foreground">
           <p className="whitespace-pre-wrap text-sm">{textContent}</p>

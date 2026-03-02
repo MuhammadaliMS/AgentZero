@@ -117,9 +117,9 @@ export function ChatInterface({ conversationId, initialPrompt }: ChatInterfacePr
   const showTypingIndicator = isStreaming && lastMessage?.role === 'assistant' && lastMessage.parts.length === 0
 
   return (
-    <div className="relative flex h-full flex-col">
+    <div className="relative flex h-full min-h-0 flex-col">
       <div className="flex-1 overflow-y-auto" ref={scrollRef}>
-        <div className="mx-auto max-w-3xl px-4 pb-4">
+        <div className="mx-auto max-w-3xl px-4 pb-8">
           {/* Empty state */}
           {messages.length === 0 && !isStreaming && (
             <div className="flex flex-col items-center justify-center py-20 text-center">

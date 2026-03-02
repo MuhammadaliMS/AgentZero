@@ -139,7 +139,7 @@ export function AgenticMessage({
   const hasError = !!message.metadata?.error
 
   return (
-    <div className="group flex gap-3 py-4">
+    <div className="group flex gap-3 py-3">
       {/* Avatar */}
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-semibold">
         A

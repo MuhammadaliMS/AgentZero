@@ -10,42 +10,55 @@ interface IntegrationInfo {
   name: string
 }
 
-const TOOL_TO_INTEGRATION: Record<string, IntegrationInfo> = {
-  // Email tools → Gmail or Outlook
-  read_recent_emails: { key: 'gmail', name: 'Gmail' },
-  search_emails: { key: 'gmail', name: 'Gmail' },
-  read_email: { key: 'gmail', name: 'Gmail' },
-  draft_email: { key: 'gmail', name: 'Gmail' },
-  send_email: { key: 'gmail', name: 'Gmail' },
+// Multi-provider tools (email, calendar) list ALL supported providers.
+// The integration gate passes if ANY provider is connected.
+const TOOL_TO_INTEGRATIONS: Record<string, IntegrationInfo[]> = {
+  // Email tools → Gmail or Outlook (tools try both at runtime)
+  read_recent_emails: [{ key: 'gmail', name: 'Gmail' }, { key: 'outlook', name: 'Outlook' }],
+  search_emails: [{ key: 'gmail', name: 'Gmail' }, { key: 'outlook', name: 'Outlook' }],
+  read_email: [{ key: 'gmail', name: 'Gmail' }, { key: 'outlook', name: 'Outlook' }],
+  draft_email: [{ key: 'gmail', name: 'Gmail' }, { key: 'outlook', name: 'Outlook' }],
+  send_email: [{ key: 'gmail', name: 'Gmail' }, { key: 'outlook', name: 'Outlook' }],
 
   // Slack tools — read
-  list_slack_channels: { key: 'slack', name: 'Slack' },
-  read_slack_channel: { key: 'slack', name: 'Slack' },
-  read_slack_thread: { key: 'slack', name: 'Slack' },
-  read_slack_dms: { key: 'slack', name: 'Slack' },
-  get_slack_mentions: { key: 'slack', name: 'Slack' },
+  list_slack_channels: [{ key: 'slack', name: 'Slack' }],
+  read_slack_channel: [{ key: 'slack', name: 'Slack' }],
+  read_slack_thread: [{ key: 'slack', name: 'Slack' }],
+  read_slack_dms: [{ key: 'slack', name: 'Slack' }],
+  get_slack_mentions: [{ key: 'slack', name: 'Slack' }],
   // Slack tools — write
-  send_slack_dm: { key: 'slack', name: 'Slack' },
-  post_to_channel: { key: 'slack', name: 'Slack' },
-  send_approval_message: { key: 'slack', name: 'Slack' },
-  update_slack_message: { key: 'slack', name: 'Slack' },
+  send_slack_dm: [{ key: 'slack', name: 'Slack' }],
+  post_to_channel: [{ key: 'slack', name: 'Slack' }],
+  send_approval_message: [{ key: 'slack', name: 'Slack' }],
+  update_slack_message: [{ key: 'slack', name: 'Slack' }],
 
-  // Calendar tools → Google Calendar
-  get_today_events: { key: 'google_calendar', name: 'Google Calendar' },
-  get_week_events: { key: 'google_calendar', name: 'Google Calendar' },
-  find_free_slots: { key: 'google_calendar', name: 'Google Calendar' },
+  // Calendar tools → Google Calendar or Microsoft Calendar (tools try both at runtime)
+  get_today_events: [{ key: 'google_calendar', name: 'Google Calendar' }, { key: 'microsoft_calendar', name: 'Microsoft Calendar' }],
+  get_week_events: [{ key: 'google_calendar', name: 'Google Calendar' }, { key: 'microsoft_calendar', name: 'Microsoft Calendar' }],
+  find_free_slots: [{ key: 'google_calendar', name: 'Google Calendar' }, { key: 'microsoft_calendar', name: 'Microsoft Calendar' }],
 
   // Compliance tools → Vanta
-  get_compliance_overview: { key: 'vanta', name: 'Vanta' },
-  list_failing_controls: { key: 'vanta', name: 'Vanta' },
-  get_audit_status: { key: 'vanta', name: 'Vanta' },
+  get_compliance_overview: [{ key: 'vanta', name: 'Vanta' }],
+  list_failing_controls: [{ key: 'vanta', name: 'Vanta' }],
+  get_audit_status: [{ key: 'vanta', name: 'Vanta' }],
 }
 
 /**
- * Get the integration required by a tool, or null if none required.
+ * Get all possible integrations for a tool (multi-provider support).
+ * Returns empty array if no integration is required.
+ */
+export function getRequiredIntegrations(toolName: string): IntegrationInfo[] {
+  return TOOL_TO_INTEGRATIONS[toolName] || []
+}
+
+/**
+ * Get the primary integration required by a tool, or null if none required.
+ * For multi-provider tools, returns the first (primary) provider.
+ * Prefer getRequiredIntegrations() for integration gate checks.
  */
 export function getRequiredIntegration(toolName: string): IntegrationInfo | null {
-  return TOOL_TO_INTEGRATION[toolName] || null
+  const integrations = TOOL_TO_INTEGRATIONS[toolName]
+  return integrations?.[0] || null
 }
 
 // ─── Integration-Required Tool Result Builder ───────────────────────────

@@ -15,6 +15,7 @@ import { rheaAgent } from './workers/rhea'
 import { createApprovalRequest } from './approval-store'
 import {
   getRequiredIntegration,
+  getRequiredIntegrations,
   buildApprovalTitle,
   buildApprovalDescription,
   formatToolDisplayName,
@@ -514,8 +515,11 @@ export async function* runCaptain(
       console.log(`[PreToolUse:PermissionGate] tool="${toolName}" base="${baseName}"`)
 
       // 1. Integration check FIRST — BLOCK if required integration is not connected.
-      const requiredIntegration = getRequiredIntegration(baseName)
-      if (requiredIntegration && !context.connectedIntegrations.includes(requiredIntegration.key)) {
+      // Multi-provider: email tools accept gmail OR outlook, calendar accepts google OR microsoft.
+      const requiredIntegrationsList = getRequiredIntegrations(baseName)
+      const requiredIntegration = requiredIntegrationsList[0] ?? null // Primary for connect prompt
+      const hasAnyProvider = requiredIntegrationsList.some(i => context.connectedIntegrations.includes(i.key))
+      if (requiredIntegration && !hasAnyProvider) {
         const displayName = formatToolDisplayName(baseName)
 
         // Reuse approval-store to create a blocking Promise.
@@ -768,6 +772,7 @@ export async function* runCaptain(
     let totalDurationMs = 0
     let totalTurns = 0
     let resultSessionId: string | undefined
+    let doneEmitted = false
     for await (const event of agentQuery) {
       // First, drain any queued hook events
       while (hookEventQueue.length > 0) {
@@ -788,6 +793,7 @@ export async function* runCaptain(
           totalDurationMs = streamEvent.durationMs || 0
           totalTurns = streamEvent.numTurns || 0
           resultSessionId = streamEvent.sessionId
+          doneEmitted = true
         }
 
         yield streamEvent
@@ -800,8 +806,8 @@ export async function* runCaptain(
       yield hookEvent
     }
 
-    // Ensure we always emit a done event
-    if (totalCost === 0 && fullText.length > 0) {
+    // Ensure we always emit a done event — but only if one wasn't already emitted by the SDK
+    if (!doneEmitted && fullText.length > 0) {
       yield {
         type: 'done',
         sessionId: resultSessionId,
@@ -810,6 +816,7 @@ export async function* runCaptain(
         durationMs: totalDurationMs,
         numTurns: totalTurns,
       }
+      doneEmitted = true
     }
 
     // Log completion to worker_executions

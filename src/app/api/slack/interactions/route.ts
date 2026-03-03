@@ -44,6 +44,21 @@ async function handleBlockAction(payload: {
 
   const admin = createAdminClient()
 
+  // Resolve the org from the Slack team ID to scope the update
+  const { data: orgIntegration } = await admin
+    .from('organization_integrations')
+    .select('org_id')
+    .eq('is_active', true)
+    .filter('user_metadata->>workspace_id', 'eq', payload.team.id)
+    .single()
+
+  if (!orgIntegration) {
+    console.error(`[Slack Interactions] No org found for team ${payload.team.id}`)
+    return
+  }
+
+  const orgId = orgIntegration.org_id
+
   // Map resolution to status
   const statusMap: Record<string, 'approved' | 'rejected' | 'deferred' | 'pending'> = {
     approve: 'approved',
@@ -52,7 +67,7 @@ async function handleBlockAction(payload: {
   }
   const newStatus = statusMap[resolution] || 'pending'
 
-  // Update the action in the database
+  // Update the action in the database — scoped to the org to prevent cross-org manipulation
   const { data: actionData } = await admin
     .from('actions')
     .update({
@@ -61,6 +76,7 @@ async function handleBlockAction(payload: {
       resolved_by: payload.user.id,
     })
     .eq('id', actionId)
+    .eq('org_id', orgId)
     .select('title, org_id')
     .single()
 

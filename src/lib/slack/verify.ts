@@ -26,8 +26,13 @@ export function verifySlackRequest(
   hmac.update(sigBasestring)
   const computed = `v0=${hmac.digest('hex')}`
 
-  return crypto.timingSafeEqual(
-    Buffer.from(computed),
-    Buffer.from(signature)
-  )
+  const computedBuf = Buffer.from(computed)
+  const signatureBuf = Buffer.from(signature)
+
+  // Length mismatch means invalid signature — return false without throwing RangeError
+  if (computedBuf.length !== signatureBuf.length) {
+    return false
+  }
+
+  return crypto.timingSafeEqual(computedBuf, signatureBuf)
 }

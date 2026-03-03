@@ -80,12 +80,12 @@ function accumulatePart(event: StreamEvent, parts: MessagePart[]): void {
         type: 'tool_result',
         toolName: event.toolName ?? '',
         content: event.content ?? '',
-        success: event.content !== 'failed',
+        success: !event.content?.startsWith('failed'),
         toolCallPartId: lastTool?.id ?? '',
         timestamp: Date.now(),
       })
       if (lastTool) {
-        lastTool.status = event.content === 'failed' ? 'failed' : 'completed'
+        lastTool.status = event.content?.startsWith('failed') ? 'failed' : 'completed'
         if (event.durationMs) lastTool.durationMs = event.durationMs
         lastTool.resultPartId = resultId
       }
@@ -186,11 +186,11 @@ export async function GET(request: NextRequest) {
 
   const { data: conversation } = await admin
     .from('conversations')
-    .select('org_id')
+    .select('org_id, user_id')
     .eq('id', conversationId)
     .single()
 
-  if (!conversation || conversation.org_id !== profile.org_id) {
+  if (!conversation || conversation.org_id !== profile.org_id || conversation.user_id !== user.id) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
@@ -275,11 +275,11 @@ export async function POST(request: NextRequest) {
   if (existingConversationId) {
     const { data: conv } = await admin
       .from('conversations')
-      .select('org_id')
+      .select('org_id, user_id')
       .eq('id', existingConversationId)
       .single()
 
-    if (!conv || conv.org_id !== orgId) {
+    if (!conv || conv.org_id !== orgId || conv.user_id !== user.id) {
       return new Response('Forbidden', { status: 403 })
     }
   }
@@ -380,6 +380,7 @@ export async function POST(request: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       let fullResponse = ''
+      let doneHandled = false
       const assembledParts: MessagePart[] = []
 
       // Helper to send SSE event
@@ -454,8 +455,9 @@ export async function POST(request: NextRequest) {
           // Accumulate parts for rich DB storage (agentic UI reload)
           accumulatePart(event, assembledParts)
 
-          // Handle completion
-          if (event.type === 'done') {
+          // Handle completion — guard against duplicate done events from orchestrator
+          if (event.type === 'done' && !doneHandled) {
+            doneHandled = true
             // Save assistant message with full metadata and parts for agentic UI reload
             await admin.from('messages').insert({
               conversation_id: conversationId,

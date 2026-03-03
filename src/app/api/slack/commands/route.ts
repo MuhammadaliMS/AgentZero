@@ -84,23 +84,14 @@ async function processCommand(
 
         profileId = profile?.id || null
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.error(`[Slack Commands] Failed to look up Slack user ${slackUserId}:`, err)
     }
   }
 
   if (!profileId) {
-    const { data: profile } = await admin
-      .from('profiles')
-      .select('id')
-      .eq('org_id', orgId)
-      .limit(1)
-      .single()
-    profileId = profile?.id || null
-  }
-
-  if (!profileId) {
-    await postToResponseUrl(responseUrl, 'Could not identify your account.')
+    console.error(`[Slack Commands] Could not resolve Slack user ${slackUserId} to a profile in org ${orgId}`)
+    await postToResponseUrl(responseUrl, 'Could not identify your account. Please make sure your Slack email matches your Zerowing account.')
     return
   }
 

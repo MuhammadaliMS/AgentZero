@@ -95,23 +95,12 @@ async function resolveOrgAndUser(
 
       userId = profile?.id || null
     }
-  } catch {
-    // If we can't look up the user, try first user in org
+  } catch (err) {
+    console.error(`[Slack Events] Failed to look up Slack user ${slackUserId}:`, err)
   }
 
   if (!userId) {
-    // Fallback: get first user in org
-    const { data: profile } = await admin
-      .from('profiles')
-      .select('id')
-      .eq('org_id', orgId)
-      .limit(1)
-      .single()
-
-    userId = profile?.id || null
-  }
-
-  if (!userId) {
+    console.error(`[Slack Events] Could not resolve Slack user ${slackUserId} to a profile in org ${orgId}`)
     return null
   }
 

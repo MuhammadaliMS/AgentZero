@@ -20,6 +20,7 @@ import { trackActionResolvedAfterNudge } from '@/lib/intelligence/feedback-track
 import { createApprovalRequest } from '../approval-store'
 import {
   getRequiredIntegration,
+  getRequiredIntegrations,
   formatToolDisplayName,
   buildApprovalTitle,
   buildApprovalDescription,
@@ -281,7 +282,7 @@ async function fetchCalendarEvents(
   }
 
   // Try Microsoft Calendar
-  const msTokens = await TokenManager.getTokens(orgId, 'microsoft')
+  const msTokens = await TokenManager.getTokens(orgId, 'microsoft_calendar')
   if (msTokens) {
     try {
       const res = await fetch(
@@ -426,8 +427,11 @@ async function wrappedExecute(
   const startTime = Date.now()
 
   // 2. Integration gate: check if tool requires a connected integration
-  const requiredIntegration = getRequiredIntegration(toolName)
-  if (requiredIntegration && !connectedIntegrations.includes(requiredIntegration.key)) {
+  // Multi-provider: email tools accept gmail OR outlook, calendar accepts google OR microsoft.
+  const requiredIntegrationsList = getRequiredIntegrations(toolName)
+  const requiredIntegration = requiredIntegrationsList[0] ?? null // Primary for connect prompt
+  const hasAnyProvider = requiredIntegrationsList.some(i => connectedIntegrations.includes(i.key))
+  if (requiredIntegration && !hasAnyProvider) {
     const displayName = formatToolDisplayName(toolName)
 
     // Create a blocking approval request (reuses pending_approvals table)
@@ -607,7 +611,7 @@ export function createCaptainTools(params: CaptainToolParams) {
       }
 
       // Outlook fallback
-      const outlookTokens = await TokenManager.getTokens(orgId, 'microsoft')
+      const outlookTokens = await TokenManager.getTokens(orgId, 'outlook')
       if (outlookTokens) {
         const res = await fetch(
           `https://graph.microsoft.com/v1.0/me/messages?$top=${args.max_results}&$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,bodyPreview,toRecipients`,
@@ -658,7 +662,7 @@ export function createCaptainTools(params: CaptainToolParams) {
         return JSON.stringify(emails, null, 2)
       }
 
-      const outlookTokens = await TokenManager.getTokens(orgId, 'microsoft')
+      const outlookTokens = await TokenManager.getTokens(orgId, 'outlook')
       if (outlookTokens) {
         const res = await fetch(
           `https://graph.microsoft.com/v1.0/me/messages?$search="${encodeURIComponent(args.query)}"&$top=${args.max_results}&$select=id,subject,from,receivedDateTime,bodyPreview`,
@@ -704,7 +708,7 @@ export function createCaptainTools(params: CaptainToolParams) {
         }, null, 2)
       }
 
-      const outlookTokens = await TokenManager.getTokens(orgId, 'microsoft')
+      const outlookTokens = await TokenManager.getTokens(orgId, 'outlook')
       if (outlookTokens) {
         const res = await fetch(
           `https://graph.microsoft.com/v1.0/me/messages/${args.email_id}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,body`,
@@ -750,7 +754,7 @@ export function createCaptainTools(params: CaptainToolParams) {
         return `Email draft created (ID: ${data.id}). Subject: "${args.subject}" To: ${args.to}`
       }
 
-      const outlookTokens = await TokenManager.getTokens(orgId, 'microsoft')
+      const outlookTokens = await TokenManager.getTokens(orgId, 'outlook')
       if (outlookTokens) {
         const res = await fetch(
           'https://graph.microsoft.com/v1.0/me/messages',
@@ -803,7 +807,7 @@ export function createCaptainTools(params: CaptainToolParams) {
         return `Email sent successfully (ID: ${data.id}). Subject: "${args.subject}" To: ${args.to}`
       }
 
-      const outlookTokens = await TokenManager.getTokens(orgId, 'microsoft')
+      const outlookTokens = await TokenManager.getTokens(orgId, 'outlook')
       if (outlookTokens) {
         const res = await fetch(
           'https://graph.microsoft.com/v1.0/me/sendMail',

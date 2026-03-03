@@ -1,0 +1,288 @@
+/**
+ * OpenAI Agents SDK — Captain Agent
+ *
+ * Full Captain agent implementation using the OpenAI Agents SDK (`@openai/agents`).
+ * Mirrors the Claude SDK Captain in `orchestrator.ts` — same interfaces, same
+ * permission system, same streaming behavior.
+ *
+ * Key differences from Claude SDK:
+ * - Uses `Agent` + `Runner` classes instead of `query()`
+ * - Tools return plain strings instead of MCP content arrays
+ * - Permission gating is handled inside tool wrappers (not SDK hooks)
+ * - Non-streaming `runner.run()` with tool events emitted in real-time via wrappers
+ * - Final text yielded at the end after run completes
+ */
+
+import { Agent, Runner } from '@openai/agents'
+import { OpenAIProvider, setOpenAIAPI } from '@openai/agents'
+import { buildAgentContext } from '../context-builder'
+import { logWorkerExecution, completeWorkerExecution } from '../hooks'
+import { cleanupConversationApprovals } from '../approval-store'
+import { createCaptainTools, type CaptainToolParams } from './captain-tools'
+import { createCaptainHandoffs } from './captain-workers'
+import type { RunCaptainParams, StreamEvent } from '../orchestrator'
+
+// ─── Model Configuration ─────────────────────────────────────────────────────
+// Uses OPENAI_CAPTAIN_MODEL env var, or falls back to a sensible default.
+// Routed via OpenRouter (OPENROUTER_API_KEY) or direct OpenAI (OPENAI_API_KEY).
+
+const DEFAULT_CAPTAIN_MODEL = 'openai/gpt-4.1-mini'
+const CAPTAIN_MODEL = process.env.OPENAI_CAPTAIN_MODEL || DEFAULT_CAPTAIN_MODEL
+
+// ─── OpenRouter / OpenAI Provider ────────────────────────────────────────────
+
+function getCaptainProvider(): OpenAIProvider {
+  const openRouterKey = process.env.OPENROUTER_API_KEY
+  if (openRouterKey) {
+    return new OpenAIProvider({
+      apiKey: openRouterKey,
+      baseURL: 'https://openrouter.ai/api/v1',
+      useResponses: false, // OpenRouter only supports chat completions
+    })
+  }
+
+  const openaiKey = process.env.OPENAI_API_KEY
+  if (openaiKey) {
+    return new OpenAIProvider({
+      apiKey: openaiKey,
+      useResponses: false,
+    })
+  }
+
+  throw new Error(
+    'OpenAI Captain requires OPENROUTER_API_KEY or OPENAI_API_KEY to be configured.'
+  )
+}
+
+// ─── Conversation History → Prompt Builder ──────────────────────────────────
+// Same logic as orchestrator.ts — prepends history as XML context to the prompt.
+
+const MAX_HISTORY_MESSAGES = 50
+const MAX_HISTORY_CHARS = 12_000
+
+function sanitizeHistoryContent(content: string): string {
+  return content
+    .replace(/<\s*\/?\s*conversation_history\s*>/gi, '[conversation_history]')
+    .replace(/<\s*\/?\s*(system|instructions?|prompt|tool_result|function_call)\s*>/gi, '[$1]')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+}
+
+function buildPromptWithHistory(
+  conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> | undefined,
+  currentMessage: string
+): string {
+  if (!conversationHistory || conversationHistory.length === 0) {
+    return currentMessage
+  }
+
+  const recentHistory = conversationHistory.slice(-MAX_HISTORY_MESSAGES)
+  let totalChars = 0
+  const formattedMessages: string[] = []
+
+  for (let i = recentHistory.length - 1; i >= 0; i--) {
+    const msg = recentHistory[i]
+    const roleLabel = msg.role === 'user' ? 'User' : 'Assistant'
+    const safeContent = sanitizeHistoryContent(msg.content)
+    const formatted = `${roleLabel}: ${safeContent}`
+
+    if (totalChars + formatted.length > MAX_HISTORY_CHARS) break
+    totalChars += formatted.length
+    formattedMessages.unshift(formatted)
+  }
+
+  if (formattedMessages.length === 0) return currentMessage
+
+  return `<conversation_history>
+The following is our conversation so far. Use this context to maintain continuity, avoid repeating information, and resolve references to prior messages.
+
+${formattedMessages.join('\n\n')}
+</conversation_history>
+
+${currentMessage}`
+}
+
+// ─── Main Agent Entry Point ──────────────────────────────────────────────────
+
+/**
+ * Run the Captain agent using the OpenAI Agents SDK and yield stream events.
+ *
+ * Designed to be a drop-in replacement for the Claude SDK's `runCaptain()` —
+ * same `RunCaptainParams` input, same `AsyncGenerator<StreamEvent>` output.
+ */
+export async function* runOpenAICaptain(
+  params: RunCaptainParams
+): AsyncGenerator<StreamEvent> {
+  const { orgId, userId, message } = params
+  const startTime = Date.now()
+
+  // Force chat completions API (OpenRouter doesn't support responses API)
+  setOpenAIAPI('chat_completions')
+
+  // Log execution start
+  const executionId = await logWorkerExecution({
+    org_id: orgId,
+    conversation_id: params.conversationId,
+    worker: 'captain-openai',
+    trigger: 'chat',
+    input_summary: message.slice(0, 200),
+    status: 'running',
+  })
+
+  try {
+    // Build context: loads profile, connected integrations, dynamic system prompt
+    const context = await buildAgentContext(orgId, userId)
+
+    // Collect tool events emitted by wrapped tool executions
+    const toolEventQueue: StreamEvent[] = []
+
+    // Build tool params — events are emitted both directly (via onEmitEvent) and queued
+    const toolParams: CaptainToolParams = {
+      orgId,
+      userId,
+      conversationId: params.conversationId,
+      connectedIntegrations: [...context.connectedIntegrations], // Mutable copy
+      onEmitEvent: (event: StreamEvent) => {
+        // For blocking events (approval_required, integration_required),
+        // use the direct SSE callback if available (same as Claude SDK)
+        if (
+          event.type === 'approval_required' ||
+          event.type === 'integration_required'
+        ) {
+          params.onEmitEvent?.(event)
+        } else {
+          // Queue non-blocking events for yield in the generator loop
+          toolEventQueue.push(event)
+        }
+      },
+      onToolOutput: params.onToolOutput,
+    }
+
+    // Create all 33 tools
+    const tools = createCaptainTools(toolParams)
+
+    // Create specialist sub-agent handoffs (Eve, Cole, Rhea)
+    // Mirrors Claude SDK's `agents: { eve, cole, rhea }` in query() options.
+    // Each sub-agent has restricted tools + specialized prompts.
+    const handoffs = createCaptainHandoffs(toolParams)
+
+    // Build prompt with conversation history
+    const prompt = buildPromptWithHistory(params.conversationHistory, message)
+
+    // Create the Agent with handoffs to specialists
+    const agent = Agent.create({
+      name: 'Captain',
+      instructions: context.systemPrompt,
+      model: CAPTAIN_MODEL,
+      tools,
+      handoffs,
+    })
+
+    // Create the Runner with model provider
+    const runner = new Runner({
+      modelProvider: getCaptainProvider(),
+    })
+
+    // Emit status event
+    yield {
+      type: 'status',
+      content: 'Thinking...',
+    }
+
+    // ─── Run the Agent ──────────────────────────────────────────────────
+    // Non-streaming run. Tool events are emitted in real-time via wrappers.
+    // After completion, we yield the final text response.
+
+    const result = await runner.run(agent, prompt, {
+      maxTurns: 30,
+      signal: params.abortController?.signal,
+    })
+
+    // Drain any remaining queued tool events
+    while (toolEventQueue.length > 0) {
+      const event = toolEventQueue.shift()!
+      yield event
+    }
+
+    // Extract the final text output
+    const finalOutput = result.finalOutput
+    const fullText = typeof finalOutput === 'string'
+      ? finalOutput
+      : JSON.stringify(finalOutput)
+
+    // Yield the response text
+    if (fullText) {
+      yield {
+        type: 'text',
+        content: fullText,
+      }
+    }
+
+    // Extract usage info from result (cast through unknown — SDK types may vary)
+    const resultAny = result as unknown as {
+      usage?: { inputTokens?: number; outputTokens?: number }
+    }
+    const totalUsage = {
+      input_tokens: resultAny.usage?.inputTokens ?? 0,
+      output_tokens: resultAny.usage?.outputTokens ?? 0,
+    }
+
+    // Estimate cost (rough: $0.15/M input, $0.60/M output for gpt-4.1-mini)
+    const costUsd =
+      (totalUsage.input_tokens * 0.00000015) +
+      (totalUsage.output_tokens * 0.0000006)
+
+    const durationMs = Date.now() - startTime
+
+    // Yield done event
+    yield {
+      type: 'done',
+      usage: totalUsage,
+      costUsd,
+      durationMs,
+      numTurns: 0, // SDK doesn't expose turn count easily
+    }
+
+    // Log completion
+    if (executionId) {
+      await completeWorkerExecution(executionId, {
+        output_summary: fullText.slice(0, 300) || '[NO TEXT]',
+        status: 'completed',
+        duration_ms: durationMs,
+        tokens_used: {
+          input: totalUsage.input_tokens,
+          output: totalUsage.output_tokens,
+        },
+        cost_usd: costUsd,
+      })
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+
+    if (executionId) {
+      await completeWorkerExecution(executionId, {
+        status: 'failed',
+        duration_ms: Date.now() - startTime,
+        error: errorMessage,
+      })
+    }
+
+    const isAbort =
+      errorMessage.includes('abort') ||
+      errorMessage.includes('cancel') ||
+      params.abortController?.signal.aborted
+    if (!isAbort) {
+      console.error(`[runOpenAICaptain] Error for org=${orgId}:`, errorMessage)
+      console.error(`[runOpenAICaptain] Full error:`, error)
+    }
+
+    yield {
+      type: 'error',
+      content: isAbort
+        ? 'Request cancelled.'
+        : 'An error occurred while processing your request.',
+    }
+  } finally {
+    // Cleanup pending approvals on exit (fire-and-forget)
+    cleanupConversationApprovals(params.conversationId).catch(() => {})
+  }
+}

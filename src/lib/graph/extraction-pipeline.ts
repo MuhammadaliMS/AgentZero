@@ -24,6 +24,9 @@ export interface ExtractionParams {
   messageId?: string
   messageContent: string
   role: 'user' | 'assistant'
+  /** Raw tool output data from integration tools (emails, calendar, Slack, etc.)
+   *  for enriched entity extraction. Only present on assistant-role extractions. */
+  toolOutputs?: Array<{ toolName: string; output: string }>
 }
 
 // ─── Pipeline ────────────────────────────────────────────────────────────
@@ -36,11 +39,23 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
   const { orgId, conversationId, messageId, messageContent, role } = params
 
   if (!isOpenAIConfigured()) return
-  if (!messageContent || messageContent.trim().length < 20) return
+  // Skip very short messages unless enriched with tool outputs
+  if (!messageContent || (messageContent.trim().length < 20 && !params.toolOutputs?.length)) return
 
   const supabase = createAdminClient()
   const startTime = Date.now()
   let jobId: string | undefined
+
+  // Build extraction input — enriched with tool outputs when available
+  let extractionInput = messageContent
+  if (params.toolOutputs && params.toolOutputs.length > 0) {
+    const toolSummary = params.toolOutputs
+      .map(t => `\n--- Data from ${t.toolName} ---\n${t.output}`)
+      .join('\n')
+    // Cap total tool data to ~12000 chars to stay within token budget
+    const cappedToolData = toolSummary.slice(0, 12000)
+    extractionInput = `${messageContent}\n\n## Integration Data (extract entities from this too):\n${cappedToolData}`
+  }
 
   try {
     // 1. Create extraction job row
@@ -58,8 +73,8 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
 
     jobId = job?.id
 
-    // 2. Extract entities and relationships via LLM
-    const extraction = await extractEntitiesAndRelationships(messageContent)
+    // 2. Extract entities and relationships via LLM (enriched with tool data when available)
+    const extraction = await extractEntitiesAndRelationships(extractionInput)
     const { entities, relationships, usage } = extraction
 
     if (entities.length === 0 && relationships.length === 0) {

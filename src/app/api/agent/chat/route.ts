@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { runCaptain, type StreamEvent } from '@/lib/agent/orchestrator'
+import { runCaptainWithSDK, getSDKInfo } from '@/lib/agent/sdk-switch'
+import type { StreamEvent } from '@/lib/agent/orchestrator'
 import { cleanupConversationApprovals } from '@/lib/agent/approval-store'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
 import { waitUntil } from '@vercel/functions'
@@ -378,7 +379,20 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        const agentStream = runCaptain({
+        const sdkInfo = getSDKInfo()
+        console.log(`[chat] Using SDK: ${sdkInfo.sdk} (model: ${sdkInfo.model}, provider: ${sdkInfo.provider})`)
+
+        // Collect raw tool output data for entity extraction enrichment
+        const toolOutputs: Array<{ toolName: string; output: string }> = []
+        const INTEGRATION_TOOLS = new Set([
+          'read_recent_emails', 'search_emails', 'read_email',
+          'get_today_events', 'get_upcoming_events',
+          'read_slack_channel', 'get_slack_mentions',
+          'get_compliance_overview', 'get_compliance_controls',
+          'query_commitments',
+        ])
+
+        const agentStream = runCaptainWithSDK({
           orgId,
           userId: user.id,
           message,
@@ -399,6 +413,12 @@ export async function POST(request: NextRequest) {
               accumulatePart(event, assembledParts)
             } catch {
               // Controller may be closed
+            }
+          },
+          // Capture raw tool output from integration tools for extraction enrichment
+          onToolOutput: (toolName: string, output: string) => {
+            if (INTEGRATION_TOOLS.has(toolName)) {
+              toolOutputs.push({ toolName, output })
             }
           },
         })
@@ -453,7 +473,9 @@ export async function POST(request: NextRequest) {
             }
 
             // Fire-and-forget: extract entities/relationships from both messages
-            // Uses waitUntil() to keep the function alive after response is sent
+            // Uses waitUntil() to keep the function alive after response is sent.
+            // The assistant extraction is enriched with raw tool output data from
+            // integration tools (emails, calendar, Slack, etc.) for richer entities.
             if (process.env.OPENROUTER_API_KEY) {
               waitUntil(
                 Promise.all([
@@ -468,6 +490,7 @@ export async function POST(request: NextRequest) {
                     conversationId: conversationId!,
                     messageContent: fullResponse,
                     role: 'assistant',
+                    toolOutputs: toolOutputs.length > 0 ? toolOutputs : undefined,
                   }),
                 ]).catch(err => console.error('[Extraction] Background failed:', err))
               )

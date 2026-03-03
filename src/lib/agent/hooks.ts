@@ -110,6 +110,8 @@ export interface HookContext {
   onToolUse?: (toolName: string, input: Record<string, unknown>) => void
   onToolResult?: (toolName: string, durationMs: number, success: boolean) => void
   onToolFailure?: (toolName: string, error: string, durationMs: number) => void
+  /** Callback invoked with raw tool output data (for extraction pipeline). */
+  onToolOutput?: (toolName: string, output: string) => void
   onSubagentStart?: (agentId: string) => void
   onSubagentStop?: (agentId: string, lastMessage?: string) => void
   onNotification?: (type: string, title: string, message: string) => void
@@ -235,6 +237,18 @@ export function buildSdkHooks(
             const verificationWarning = verifyToolOutput(toolName, toolResult)
             if (verificationWarning) {
               console.warn(`[Hook:PostToolUse:Verify] ${verificationWarning}`)
+            }
+
+            // Capture rich tool output for entity extraction (capped at 4000 chars)
+            if (ctx.onToolOutput && toolResult) {
+              try {
+                const outputStr = typeof toolResult === 'string'
+                  ? toolResult
+                  : JSON.stringify(toolResult)
+                if (outputStr.length > 20) {
+                  ctx.onToolOutput(toolName, outputStr.slice(0, 4000))
+                }
+              } catch {}
             }
 
             ctx.onToolResult?.(toolName, durationMs, true)

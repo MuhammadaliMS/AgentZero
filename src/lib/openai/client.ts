@@ -40,10 +40,10 @@ export interface ExtractionResult {
 
 // ─── Extraction System Prompt ────────────────────────────────────────────
 
-const EXTRACTION_SYSTEM_PROMPT = `You are an entity and relationship extractor for a CISO's executive workflow system. Extract structured entities and relationships from the given text.
+const EXTRACTION_SYSTEM_PROMPT = `You are an entity and relationship extractor for a CISO's executive workflow system. Extract structured entities and relationships from the given text and any integration data.
 
 ## Entity Types
-- person: People mentioned (team members, stakeholders, vendors)
+- person: People mentioned (team members, stakeholders, vendors, email senders/recipients, meeting attendees)
 - project: Projects, initiatives, programs
 - control: Security/compliance controls (e.g., "access reviews", "MFA enforcement")
 - decision: Key decisions made or pending
@@ -55,15 +55,28 @@ const EXTRACTION_SYSTEM_PROMPT = `You are an entity and relationship extractor f
 - process: Business processes or workflows
 
 ## Relationship Types
-Use clear verb-based types: manages, owns, reports_to, depends_on, blocks, part_of, uses, decided, assigned_to, works_on, reviewed_by, audited_by, etc.
+Use clear verb-based types: manages, owns, reports_to, depends_on, blocks, part_of, uses, decided, assigned_to, works_on, reviewed_by, audited_by, emailed, mentioned_in, attended, scheduled_with, requested, follows_up_on, organized, etc.
+
+## Integration Data Patterns
+When the input includes "## Integration Data" sections, extract entities from them:
+
+**Emails**: Extract senders and recipients as persons, subjects as projects/topics, action items as decisions, deadlines as attributes on related entities. Relationships: "emailed", "requested", "follows_up_on"
+
+**Calendar Events**: Extract event titles as projects/meetings, attendees as persons, recurring meetings as processes. Relationships: "attended", "scheduled_with", "organized"
+
+**Slack Messages**: Extract authors as persons, channel topics as projects, decisions made in threads, action items assigned. Relationships: "mentioned_in", "decided", "assigned_to"
+
+**Compliance Data**: Extract control names as controls, failing items with descriptions, framework names as frameworks. Relationships: "audited_by", "part_of", "violates"
 
 ## Rules
 - Use full canonical names (e.g., "Sarah Chen" not "Sarah" or "S. Chen")
+- For email addresses, extract the person name AND store the email in attributes: {"email": "sarah@example.com"}
 - Only extract entities that are clearly identifiable — skip vague references
 - Relationships must reference entities by their exact name from the entities list
-- Confidence: 1.0 for explicit statements, 0.7-0.9 for inferred relationships
+- Confidence: 1.0 for explicit (email sender/recipient, calendar attendee), 0.7-0.9 for inferred
 - Keep descriptions concise (1 sentence max)
-- If the text is a simple greeting or has no extractable entities, return empty arrays
+- If the text has no extractable entities, return empty arrays
+- Prioritize actionable entities: people with responsibilities, projects with deadlines, controls with issues, decisions pending action
 
 Respond with valid JSON matching this schema:
 {
@@ -103,7 +116,7 @@ export async function extractEntitiesAndRelationships(text: string): Promise<Ext
       ],
       response_format: { type: 'json_object' },
       temperature: 0,
-      max_tokens: 2000,
+      max_tokens: 3000,
     }),
   })
 

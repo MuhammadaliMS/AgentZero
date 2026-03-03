@@ -3,7 +3,7 @@ import { waitUntil } from '@vercel/functions'
 import { verifySlackRequest } from '@/lib/slack/verify'
 import { getSlackClient } from '@/lib/slack/client'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { runCaptain } from '@/lib/agent/orchestrator'
+import { runCaptainWithSDK } from '@/lib/agent/sdk-switch'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120 // 2 minutes for agent processing
@@ -132,7 +132,7 @@ async function runAgentForSlack(
 
   console.log(`[Slack Events] Running agent: org=${orgId}, user=${userId}, msg="${message.slice(0, 100)}", convId=${conversationId}`)
 
-  const agentStream = runCaptain({
+  const agentStream = runCaptainWithSDK({
     orgId,
     userId,
     message,

@@ -57,6 +57,9 @@ export interface RunCaptainParams {
   /** Direct SSE emission callback — bypasses the generator yield cycle.
    *  Used by permissionGateHook to emit events while blocking. */
   onEmitEvent?: (event: StreamEvent) => void
+  /** Callback invoked with raw tool output data (for extraction pipeline).
+   *  Called from PostToolUse hook (Claude SDK) or wrappedExecute (OpenAI SDK). */
+  onToolOutput?: (toolName: string, output: string) => void
 }
 
 export interface StreamEvent {
@@ -295,6 +298,7 @@ export async function* runCaptain(
       // Cast needed: StreamEvent has a narrow `type` union, HookContext uses a wider
       // HookEmittableEvent to avoid circular imports. At runtime they're compatible.
       onEmitEvent: params.onEmitEvent as HookContext['onEmitEvent'],
+      onToolOutput: params.onToolOutput,
       onToolUse: (toolName, input) => {
         hookEventQueue.push({
           type: 'tool_use',

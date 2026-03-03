@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { runCaptain } from '@/lib/agent/orchestrator'
+import { runCaptainWithSDK } from '@/lib/agent/sdk-switch'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     let fullResponse = ''
     // Generate a temporary conversation ID for the brief generation run
     const briefConversationId = `brief-${type}-${Date.now()}`
-    const agentStream = runCaptain({
+    const agentStream = runCaptainWithSDK({
       orgId,
       userId,
       message: promptMap[type],

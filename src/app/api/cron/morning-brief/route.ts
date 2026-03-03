@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSlackClient } from '@/lib/slack/client'
-import { runCaptain } from '@/lib/agent/orchestrator'
+import { runCaptainWithSDK } from '@/lib/agent/sdk-switch'
 import { buildAgentTextBlocks } from '@/lib/slack/blocks'
 import type { Json } from '@/types/database'
 import {
@@ -103,7 +103,7 @@ export async function GET(request: NextRequest) {
       let fullResponse = ''
       let agentError = ''
       try {
-        const agentStream = runCaptain({
+        const agentStream = runCaptainWithSDK({
           orgId: profile.org_id,
           userId: profile.id,
           message: enrichedPrompt,

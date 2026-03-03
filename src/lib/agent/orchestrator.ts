@@ -846,7 +846,7 @@ export async function* runCaptain(
       type: 'error',
       content: isAbort
         ? 'Request cancelled.'
-        : `An error occurred while processing your request. [DEBUG: ${errorMessage}]`,
+        : 'An error occurred while processing your request.',
     }
   }
 }

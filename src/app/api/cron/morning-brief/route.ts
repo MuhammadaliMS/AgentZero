@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSlackClient } from '@/lib/slack/client'
 import { runCaptain } from '@/lib/agent/orchestrator'
@@ -106,7 +107,7 @@ export async function GET(request: NextRequest) {
           orgId: profile.org_id,
           userId: profile.id,
           message: enrichedPrompt,
-          conversationId: `cron-morning-${profile.id}-${todayLocal}`,
+          conversationId: randomUUID(),
         })
 
         for await (const event of agentStream) {

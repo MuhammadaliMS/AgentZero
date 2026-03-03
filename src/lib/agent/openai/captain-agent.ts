@@ -247,14 +247,15 @@ export async function* runOpenAICaptain(
 
     // Create the Agent with handoffs to specialists
     // Enable reasoning so the model "thinks" before acting — similar to Claude's extended thinking.
-    // 'low' keeps costs manageable while still giving the model space to plan tool sequences.
+    // 'medium' gives the model solid thinking capacity to plan tool sequences,
+    // synthesize multi-source data, and produce detailed explanations.
     const agent = Agent.create({
       name: 'Captain',
       instructions: context.systemPrompt,
       model: CAPTAIN_MODEL,
       modelSettings: {
         reasoning: {
-          effort: 'low',
+          effort: 'medium',
         },
       },
       tools,

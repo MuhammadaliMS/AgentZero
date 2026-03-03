@@ -20,6 +20,7 @@
 
 import { Agent, handoff } from '@openai/agents'
 import type { Handoff } from '@openai/agents'
+import { z } from 'zod'
 import { EVE_PROMPT } from '../prompts/eve-prompt'
 import { COLE_PROMPT } from '../prompts/cole-prompt'
 import { RHEA_PROMPT } from '../prompts/rhea-prompt'
@@ -194,6 +195,7 @@ export function createCaptainHandoffs(
     toolNameOverride: 'transfer_to_eve',
     toolDescriptionOverride:
       'Delegate to Eve (Strategy Analyst) for board narratives, QBR prep, executive communications, and stakeholder management.',
+    inputType: z.object({}),
     onHandoff: async () => {
       console.log(`[Captain:Handoff] Delegating to Eve (Strategy Analyst)`)
       toolParams.onEmitEvent?.({
@@ -208,6 +210,7 @@ export function createCaptainHandoffs(
     toolNameOverride: 'transfer_to_cole',
     toolDescriptionOverride:
       'Delegate to Cole (Program Manager) for commitment tracking, OKRs, action items, status reporting, and cross-functional coordination.',
+    inputType: z.object({}),
     onHandoff: async () => {
       console.log(`[Captain:Handoff] Delegating to Cole (Program Manager)`)
       toolParams.onEmitEvent?.({
@@ -222,6 +225,7 @@ export function createCaptainHandoffs(
     toolNameOverride: 'transfer_to_rhea',
     toolDescriptionOverride:
       'Delegate to Rhea (GRC Analyst) for compliance frameworks, audit readiness, control monitoring, risk assessment, and POAM tracking.',
+    inputType: z.object({}),
     onHandoff: async () => {
       console.log(`[Captain:Handoff] Delegating to Rhea (GRC Analyst)`)
       toolParams.onEmitEvent?.({

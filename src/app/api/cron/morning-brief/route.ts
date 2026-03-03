@@ -48,6 +48,7 @@ export async function GET(request: NextRequest) {
   let processed = 0
   let skipped = 0
   const errors: string[] = []
+  const diagnostics: Array<{ userId: string; status: string; reason?: string }> = []
 
   for (const profile of profiles) {
     try {
@@ -69,6 +70,7 @@ export async function GET(request: NextRequest) {
 
       if (existing) {
         skipped++
+        diagnostics.push({ userId: profile.id, status: 'skipped', reason: `dedup: brief already exists for ${todayLocal}` })
         continue
       }
 
@@ -76,6 +78,7 @@ export async function GET(request: NextRequest) {
       const slackClient = await getSlackClient(profile.org_id)
       if (!slackClient) {
         skipped++
+        diagnostics.push({ userId: profile.id, status: 'skipped', reason: `no slack client for org ${profile.org_id}` })
         continue
       }
 
@@ -112,6 +115,7 @@ export async function GET(request: NextRequest) {
 
       if (!fullResponse) {
         skipped++
+        diagnostics.push({ userId: profile.id, status: 'skipped', reason: 'empty response from Captain agent' })
         continue
       }
 
@@ -167,12 +171,14 @@ export async function GET(request: NextRequest) {
       }
 
       processed++
+      diagnostics.push({ userId: profile.id, status: 'sent' })
     } catch (err) {
       const errorMsg = `[morning-brief] Error for user ${profile.id}: ${(err as Error).message}`
       console.error(errorMsg)
       errors.push(errorMsg)
+      diagnostics.push({ userId: profile.id, status: 'error', reason: (err as Error).message })
     }
   }
 
-  return NextResponse.json({ ok: true, processed, skipped, errors })
+  return NextResponse.json({ ok: true, processed, skipped, errors, diagnostics })
 }

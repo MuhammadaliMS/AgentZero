@@ -15,22 +15,6 @@ export const runtime = 'nodejs'
 export const maxDuration = 300
 export const dynamic = 'force-dynamic'
 
-/** Return the local hour (0-23) for a given IANA timezone string. */
-function getLocalHour(timezone: string): number {
-  try {
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      hour: 'numeric',
-      hour12: false,
-    })
-    const parts = formatter.formatToParts(new Date())
-    const hourPart = parts.find((p) => p.type === 'hour')
-    return hourPart ? parseInt(hourPart.value, 10) : -1
-  } catch {
-    return -1
-  }
-}
-
 /** Return today's date string in the user's local timezone (YYYY-MM-DD). */
 function getLocalDateString(timezone: string): string {
   try {
@@ -67,15 +51,8 @@ export async function GET(request: NextRequest) {
 
   for (const profile of profiles) {
     try {
-      // ── Timezone gate ─────────────────────────────────────────────────────
-      // Only send morning brief when it's 6–9 AM in the user's local timezone.
-      // This lets the cron run at multiple UTC offsets without double-sending.
+      // ── Timezone info ────────────────────────────────────────────────────
       const tz = profile.timezone ?? 'UTC'
-      const localHour = getLocalHour(tz)
-      if (localHour < 6 || localHour >= 9) {
-        skipped++
-        continue
-      }
 
       // ── Deduplication ─────────────────────────────────────────────────────
       // Skip if a morning brief was already sent today in the user's timezone.

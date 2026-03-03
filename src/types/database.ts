@@ -995,7 +995,7 @@ export interface Database {
         Row: {
           id: string
           org_id: string
-          type: 'deadline_approaching' | 'deadline_overdue' | 'stale_entity' | 'failing_control' | 'unresolved_blocker' | 'at_risk_commitment' | 'action_expiring'
+          type: 'deadline_approaching' | 'deadline_overdue' | 'stale_entity' | 'failing_control' | 'unresolved_blocker' | 'at_risk_commitment' | 'action_expiring' | 'cross_signal_risk' | 'discovered_commitment' | 'integration_insight' | 'compliance_gap' | 'stakeholder_signal' | 'deadline_conflict'
           severity: 'critical' | 'high' | 'medium' | 'low'
           title: string
           description: string | null
@@ -1008,11 +1008,14 @@ export interface Database {
           resolved_at: string | null
           expires_at: string | null
           created_at: string
+          source_integrations: string[]
+          scan_type: 'db' | 'agentic'
+          agentic_scan_id: string | null
         }
         Insert: {
           id?: string
           org_id: string
-          type: 'deadline_approaching' | 'deadline_overdue' | 'stale_entity' | 'failing_control' | 'unresolved_blocker' | 'at_risk_commitment' | 'action_expiring'
+          type: 'deadline_approaching' | 'deadline_overdue' | 'stale_entity' | 'failing_control' | 'unresolved_blocker' | 'at_risk_commitment' | 'action_expiring' | 'cross_signal_risk' | 'discovered_commitment' | 'integration_insight' | 'compliance_gap' | 'stakeholder_signal' | 'deadline_conflict'
           severity: 'critical' | 'high' | 'medium' | 'low'
           title: string
           description?: string | null
@@ -1025,6 +1028,9 @@ export interface Database {
           resolved_at?: string | null
           expires_at?: string | null
           created_at?: string
+          source_integrations?: string[]
+          scan_type?: 'db' | 'agentic'
+          agentic_scan_id?: string | null
         }
         Update: {
           severity?: 'critical' | 'high' | 'medium' | 'low'
@@ -1034,6 +1040,9 @@ export interface Database {
           status?: 'open' | 'acknowledged' | 'resolved' | 'expired'
           resolved_at?: string | null
           expires_at?: string | null
+          source_integrations?: string[]
+          scan_type?: 'db' | 'agentic'
+          agentic_scan_id?: string | null
         }
         Relationships: [
           {

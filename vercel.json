@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/patrol",
       "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/cron/agentic-patrol",
+      "schedule": "0 8,13,17 * * *"
     }
   ]
 }

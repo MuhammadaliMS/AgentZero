@@ -3,6 +3,13 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getSlackClient } from '@/lib/slack/client'
 import { runCaptain } from '@/lib/agent/orchestrator'
 import { buildAgentTextBlocks } from '@/lib/slack/blocks'
+import type { Json } from '@/types/database'
+import {
+  gatherWorkerViews,
+  buildBriefPrompt,
+  extractMetrics,
+  getYesterdayMetrics,
+} from '@/lib/intelligence/brief-synthesizer'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -94,7 +101,7 @@ export async function GET(request: NextRequest) {
         continue
       }
 
-      // ── Generate EOD wrap via agent ────────────────────────────────────────
+      // ── Generate EOD wrap via agent (with cross-worker synthesis) ─────────
       const firstName = profile.full_name?.split(' ')[0] ?? 'there'
       const now = new Date()
       const dateLabel = now.toLocaleDateString('en-US', {
@@ -105,11 +112,17 @@ export async function GET(request: NextRequest) {
         year: 'numeric',
       })
 
+      // Gather cross-worker data (pure DB queries, no LLM cost)
+      const workerViews = await gatherWorkerViews(admin, profile.org_id)
+      const yesterdayMetrics = await getYesterdayMetrics(admin, profile.id, 'eod')
+      const enrichedPrompt = buildBriefPrompt('eod', workerViews, yesterdayMetrics, firstName, dateLabel)
+      const briefMetrics = extractMetrics(workerViews)
+
       let fullResponse = ''
       const agentStream = runCaptain({
         orgId: profile.org_id,
         userId: profile.id,
-        message: `Generate ${firstName}'s end-of-day wrap for ${dateLabel}. Summarize: what was accomplished today, commitments or deliverables completed, items carrying forward to tomorrow, any pending actions still open (and who's blocking them), and a 1-sentence preview of tomorrow's priorities. Keep it under 250 words.`,
+        message: enrichedPrompt,
         conversationId: `cron-eod-${profile.id}-${todayLocal}`,
       })
 
@@ -124,7 +137,7 @@ export async function GET(request: NextRequest) {
         continue
       }
 
-      // ── Store in DB ────────────────────────────────────────────────────────
+      // ── Store in DB (with metrics for next-day comparison) ─────────────────
       const { data: brief } = await admin
         .from('briefs')
         .insert({
@@ -136,6 +149,7 @@ export async function GET(request: NextRequest) {
           status: 'sent',
           sent_at: new Date().toISOString(),
           sent_via: 'slack',
+          metrics: briefMetrics as unknown as Json,
         })
         .select('id')
         .single()

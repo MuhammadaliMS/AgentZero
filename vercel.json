@@ -10,7 +10,11 @@
     },
     {
       "path": "/api/cron/nudge",
-      "schedule": "0 12 * * *"
+      "schedule": "0 9,12,15 * * *"
+    },
+    {
+      "path": "/api/cron/patrol",
+      "schedule": "0 */2 * * *"
     }
   ]
 }

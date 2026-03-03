@@ -2,6 +2,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { Database, Json } from '@/types/database'
+import { trackActionResolvedAfterNudge } from '@/lib/intelligence/feedback-tracker'
 
 type Commitment = Database['public']['Tables']['commitments']['Row']
 type Action = Database['public']['Tables']['actions']['Row']
@@ -183,6 +184,19 @@ export function createSupabaseTools(orgId: string, conversationId?: string | nul
         .eq('org_id', orgId)
 
       if (error) return { content: [{ type: 'text' as const, text: `Error: ${error.message}` }] }
+
+      // Track feedback signal: if a nudge existed for this action, record it
+      if (args.status === 'approved' || args.status === 'rejected') {
+        try {
+          const userId = args.resolved_by ?? ''
+          if (userId) {
+            await trackActionResolvedAfterNudge(supabase, orgId, userId, args.id)
+          }
+        } catch {
+          // Non-critical — don't fail the action resolve
+        }
+      }
+
       return { content: [{ type: 'text' as const, text: `Action ${args.id} ${args.status}.` }] }
     },
     { annotations: { title: 'Resolve Action', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }

@@ -1,11 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSlackClient } from '@/lib/slack/client'
+import { runSmartNudge, buildBatchSlackMessage } from '@/lib/intelligence/nudge-engine'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
 export const dynamic = 'force-dynamic'
 
+/**
+ * Smart Nudge Cron — runs 3x daily (9 AM, 12 PM, 3 PM UTC).
+ *
+ * Pipeline:
+ *   1. Gather candidates from patrol findings + direct queries
+ *   2. Score with urgency formula
+ *   3. Apply 8-hour cooldown
+ *   4. Batch by user
+ *   5. Deliver via Slack DM
+ *
+ * Priority tiers:
+ *   - critical + high: Every run (9, 12, 3)
+ *   - medium: Noon run only
+ *   - low: Monday noon only (weekly digest)
+ */
 export async function GET(request: NextRequest) {
   if (!process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
@@ -16,106 +32,113 @@ export async function GET(request: NextRequest) {
   }
 
   const admin = createAdminClient()
-  let nudgesSent = 0
 
-  // 1. Nudge users with incomplete onboarding
-  const { data: incompleteOnboarding } = await admin
-    .from('onboarding_state')
-    .select('user_id, org_id, steps, profiles!inner(email, full_name)')
-    .eq('is_complete', false)
+  // Determine run mode based on current hour
+  const now = new Date()
+  const utcHour = now.getUTCHours()
+  const dayOfWeek = now.getUTCDay() // 0 = Sunday, 1 = Monday
+  const isNoon = utcHour === 12
+  const isMonday = dayOfWeek === 1
 
-  if (incompleteOnboarding) {
-    for (const onboarding of incompleteOnboarding) {
-      const profile = onboarding.profiles as unknown as { email: string; full_name: string | null }
-      const slackClient = await getSlackClient(onboarding.org_id)
-      if (!slackClient || !profile.email) continue
+  let mode: 'all' | 'noon' | 'monday_noon' = 'all'
+  if (isNoon && isMonday) {
+    mode = 'monday_noon'
+  } else if (isNoon) {
+    mode = 'noon'
+  }
 
-      // Check which integrations are missing
-      const steps = (onboarding.steps as Array<{ name: string; status: string }>) || []
-      const incomplete = steps.filter((s) => s.status !== 'completed')
+  // Get all orgs
+  const { data: orgs } = await admin.from('organizations').select('id')
 
-      if (incomplete.length === 0) continue
+  if (!orgs || orgs.length === 0) {
+    return NextResponse.json({ ok: true, mode, orgsProcessed: 0 })
+  }
 
-      const message = `Hey${profile.full_name ? ` ${profile.full_name.split(' ')[0]}` : ''}! You have ${incomplete.length} integration${incomplete.length > 1 ? 's' : ''} left to connect. The more tools I can access, the more I can help you. Visit your dashboard to finish setup.`
+  let totalNudgesSent = 0
+  let totalBatches = 0
+  const errors: string[] = []
 
-      try {
-        const userResult = await slackClient.users.lookupByEmail({ email: profile.email })
-        if (userResult.user?.id) {
+  for (const org of orgs) {
+    try {
+      // Check if org has onboarded users
+      const { count } = await admin
+        .from('profiles')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', org.id)
+        .not('onboarded_at', 'is', null)
+
+      if (!count || count === 0) continue
+
+      // Run smart nudge pipeline
+      const result = await runSmartNudge(admin, org.id, mode)
+
+      // Deliver batches via Slack
+      const batches = result.batches
+      for (const batch of batches) {
+        const slackClient = await getSlackClient(batch.orgId)
+        if (!slackClient) continue
+
+        // Get user email for Slack DM
+        const { data: profile } = await admin
+          .from('profiles')
+          .select('email')
+          .eq('id', batch.userId)
+          .maybeSingle()
+
+        if (!profile?.email) continue
+
+        try {
+          const userResult = await slackClient.users.lookupByEmail({ email: profile.email })
+          if (!userResult.user?.id) continue
+
           const conversation = await slackClient.conversations.open({ users: userResult.user.id })
-          if (conversation.channel?.id) {
-            await slackClient.chat.postMessage({
-              channel: conversation.channel.id,
-              text: message,
-            })
+          if (!conversation.channel?.id) continue
 
-            // Record the nudge
-            await admin.from('nudges').insert({
-              org_id: onboarding.org_id,
-              user_id: onboarding.user_id,
-              type: 'onboarding_incomplete',
-              title: 'Complete your setup',
-              content: message,
-              priority: 'medium',
-              status: 'sent',
-              sent_at: new Date().toISOString(),
-            })
+          const message = buildBatchSlackMessage(batch)
+          await slackClient.chat.postMessage({
+            channel: conversation.channel.id,
+            text: message,
+          })
 
-            nudgesSent++
+          // Mark nudges as sent
+          for (const item of batch.items) {
+            if (item.findingId) {
+              // Find the nudge we just created and update it
+              await admin
+                .from('nudges')
+                .update({ status: 'sent' as const, sent_at: new Date().toISOString() })
+                .eq('org_id', batch.orgId)
+                .eq('batch_id', batch.batchId)
+                .eq('source_finding_id', item.findingId)
+            }
           }
+
+          // Also update nudges without findingId (e.g. onboarding)
+          await admin
+            .from('nudges')
+            .update({ status: 'sent' as const, sent_at: new Date().toISOString() })
+            .eq('org_id', batch.orgId)
+            .eq('batch_id', batch.batchId)
+            .eq('status', 'pending')
+
+          totalNudgesSent += batch.items.length
+          totalBatches++
+        } catch (slackErr) {
+          console.error(`[nudge] Slack DM failed for ${profile.email}:`, slackErr)
         }
-      } catch {
-        // Skip individual errors
       }
+    } catch (err) {
+      const msg = `[nudge] Error for org ${org.id}: ${(err as Error).message}`
+      console.error(msg)
+      errors.push(msg)
     }
   }
 
-  // 2. Nudge for pending actions older than 24 hours
-  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-  const { data: pendingActions } = await admin
-    .from('actions')
-    .select('id, org_id, user_id, title, priority, profiles!inner(email, full_name)')
-    .eq('status', 'pending')
-    .lt('created_at', oneDayAgo)
-
-  if (pendingActions) {
-    for (const action of pendingActions) {
-      const profile = action.profiles as unknown as { email: string; full_name: string | null }
-      const slackClient = await getSlackClient(action.org_id)
-      if (!slackClient || !profile.email) continue
-
-      const priorityPrefix = action.priority === 'critical' ? ':rotating_light: ' : ''
-      const message = `${priorityPrefix}Reminder: *${action.title}* is still pending your approval. Please review when you get a chance.`
-
-      try {
-        const userResult = await slackClient.users.lookupByEmail({ email: profile.email })
-        if (userResult.user?.id) {
-          const conversation = await slackClient.conversations.open({ users: userResult.user.id })
-          if (conversation.channel?.id) {
-            await slackClient.chat.postMessage({
-              channel: conversation.channel.id,
-              text: message,
-            })
-
-            await admin.from('nudges').insert({
-              org_id: action.org_id,
-              user_id: action.user_id,
-              type: 'pending_action',
-              title: `Pending: ${action.title}`,
-              content: message,
-              priority: action.priority || 'medium',
-              status: 'sent',
-              sent_at: new Date().toISOString(),
-              action_id: action.id,
-            })
-
-            nudgesSent++
-          }
-        }
-      } catch {
-        // Skip individual errors
-      }
-    }
-  }
-
-  return NextResponse.json({ ok: true, nudgesSent })
+  return NextResponse.json({
+    ok: true,
+    mode,
+    totalNudgesSent,
+    totalBatches,
+    errors: errors.length > 0 ? errors : undefined,
+  })
 }

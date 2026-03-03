@@ -201,6 +201,8 @@ export interface Database {
           completed_at: string | null
           tags: string[] | null
           metadata: Json | null
+          risk_score: number
+          risk_computed_at: string | null
           created_at: string
           updated_at: string
         }
@@ -219,6 +221,8 @@ export interface Database {
           completed_at?: string | null
           tags?: string[] | null
           metadata?: Json | null
+          risk_score?: number
+          risk_computed_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -235,6 +239,8 @@ export interface Database {
           completed_at?: string | null
           tags?: string[] | null
           metadata?: Json | null
+          risk_score?: number
+          risk_computed_at?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -377,6 +383,7 @@ export interface Database {
           sent_at: string | null
           sent_via: string | null
           slack_message_ts: string | null
+          metrics: Json | null
           created_at: string
         }
         Insert: {
@@ -390,6 +397,7 @@ export interface Database {
           sent_at?: string | null
           sent_via?: string | null
           slack_message_ts?: string | null
+          metrics?: Json | null
           created_at?: string
         }
         Update: {
@@ -399,6 +407,7 @@ export interface Database {
           sent_at?: string | null
           sent_via?: string | null
           slack_message_ts?: string | null
+          metrics?: Json | null
         }
         Relationships: [
           {
@@ -480,6 +489,10 @@ export interface Database {
           priority: 'critical' | 'high' | 'medium' | 'low'
           status: 'pending' | 'sent' | 'acknowledged' | 'dismissed'
           action_id: string | null
+          commitment_id: string | null
+          urgency_score: number
+          source_finding_id: string | null
+          batch_id: string | null
           sent_at: string | null
           created_at: string
         }
@@ -493,11 +506,19 @@ export interface Database {
           priority?: 'critical' | 'high' | 'medium' | 'low'
           status?: 'pending' | 'sent' | 'acknowledged' | 'dismissed'
           action_id?: string | null
+          commitment_id?: string | null
+          urgency_score?: number
+          source_finding_id?: string | null
+          batch_id?: string | null
           sent_at?: string | null
           created_at?: string
         }
         Update: {
           status?: 'pending' | 'sent' | 'acknowledged' | 'dismissed'
+          commitment_id?: string | null
+          urgency_score?: number
+          source_finding_id?: string | null
+          batch_id?: string | null
           sent_at?: string | null
         }
         Relationships: [
@@ -963,6 +984,150 @@ export interface Database {
           },
           {
             foreignKeyName: 'onboarding_state_user_id_fkey'
+            columns: ['user_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      patrol_findings: {
+        Row: {
+          id: string
+          org_id: string
+          type: 'deadline_approaching' | 'deadline_overdue' | 'stale_entity' | 'failing_control' | 'unresolved_blocker' | 'at_risk_commitment' | 'action_expiring'
+          severity: 'critical' | 'high' | 'medium' | 'low'
+          title: string
+          description: string | null
+          entity_id: string | null
+          commitment_id: string | null
+          action_id: string | null
+          memory_id: string | null
+          metadata: Json | null
+          status: 'open' | 'acknowledged' | 'resolved' | 'expired'
+          resolved_at: string | null
+          expires_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          type: 'deadline_approaching' | 'deadline_overdue' | 'stale_entity' | 'failing_control' | 'unresolved_blocker' | 'at_risk_commitment' | 'action_expiring'
+          severity: 'critical' | 'high' | 'medium' | 'low'
+          title: string
+          description?: string | null
+          entity_id?: string | null
+          commitment_id?: string | null
+          action_id?: string | null
+          memory_id?: string | null
+          metadata?: Json | null
+          status?: 'open' | 'acknowledged' | 'resolved' | 'expired'
+          resolved_at?: string | null
+          expires_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          severity?: 'critical' | 'high' | 'medium' | 'low'
+          title?: string
+          description?: string | null
+          metadata?: Json | null
+          status?: 'open' | 'acknowledged' | 'resolved' | 'expired'
+          resolved_at?: string | null
+          expires_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'patrol_findings_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      feedback_signals: {
+        Row: {
+          id: string
+          org_id: string
+          user_id: string
+          signal_type: 'brief_read' | 'nudge_acknowledged' | 'nudge_dismissed' | 'commitment_acted_on' | 'action_resolved_after_nudge'
+          source_type: 'brief' | 'nudge' | 'commitment' | 'action'
+          source_id: string
+          category: string | null
+          metadata: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          user_id: string
+          signal_type: 'brief_read' | 'nudge_acknowledged' | 'nudge_dismissed' | 'commitment_acted_on' | 'action_resolved_after_nudge'
+          source_type: 'brief' | 'nudge' | 'commitment' | 'action'
+          source_id: string
+          category?: string | null
+          metadata?: Json | null
+          created_at?: string
+        }
+        Update: {
+          metadata?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'feedback_signals_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'feedback_signals_user_id_fkey'
+            columns: ['user_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      user_signal_weights: {
+        Row: {
+          id: string
+          org_id: string
+          user_id: string
+          category: string
+          weight: number
+          acted_count: number
+          dismissed_count: number
+          total_count: number
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          user_id: string
+          category: string
+          weight?: number
+          acted_count?: number
+          dismissed_count?: number
+          total_count?: number
+          updated_at?: string
+        }
+        Update: {
+          weight?: number
+          acted_count?: number
+          dismissed_count?: number
+          total_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'user_signal_weights_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'user_signal_weights_user_id_fkey'
             columns: ['user_id']
             isOneToOne: false
             referencedRelation: 'profiles'

@@ -1561,14 +1561,18 @@ export function createCaptainTools(params: CaptainToolParams) {
       title: z.string(),
       description: z.string().nullable(),
       priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
-      payload: z.record(z.string(), z.unknown()).nullable(),
+      payload: z.string().nullable().describe('JSON string of additional data for this action'),
     }),
     execute: async (args) => wrappedExecute('create_action', args as Record<string, unknown>, params, async () => {
+      let parsedPayload: Json = null
+      if (args.payload) {
+        try { parsedPayload = JSON.parse(args.payload) as Json } catch { parsedPayload = args.payload as Json }
+      }
       const { data, error } = await supabase.from('actions').insert({
         org_id: orgId, conversation_id: params.conversationId ?? null,
         user_id: args.user_id, type: args.type, title: args.title,
         description: args.description, priority: args.priority,
-        payload: args.payload as Json,
+        payload: parsedPayload,
       }).select().single()
       if (error) return `Error: ${error.message}`
       return `Action created: ${(data as { title: string; id: string }).title} (${(data as { id: string }).id})`

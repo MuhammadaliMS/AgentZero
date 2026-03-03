@@ -129,6 +129,8 @@ export async function* runOpenAICaptain(
   })
 
   try {
+    console.log(`[runOpenAICaptain] Starting for org=${orgId} model=${CAPTAIN_MODEL} provider=${process.env.OPENROUTER_API_KEY ? 'openrouter' : 'openai'}`)
+
     // Build context: loads profile, connected integrations, dynamic system prompt
     const context = await buildAgentContext(orgId, userId)
 
@@ -257,6 +259,9 @@ export async function* runOpenAICaptain(
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    // Extract HTTP status and API error details if available (OpenAI SDK errors)
+    const errorStatus = (error as { status?: number }).status
+    const errorBody = (error as { error?: unknown }).error
 
     if (executionId) {
       await completeWorkerExecution(executionId, {
@@ -272,6 +277,8 @@ export async function* runOpenAICaptain(
       params.abortController?.signal.aborted
     if (!isAbort) {
       console.error(`[runOpenAICaptain] Error for org=${orgId}:`, errorMessage)
+      if (errorStatus) console.error(`[runOpenAICaptain] HTTP status:`, errorStatus)
+      if (errorBody) console.error(`[runOpenAICaptain] API error body:`, JSON.stringify(errorBody))
       console.error(`[runOpenAICaptain] Full error:`, error)
     }
 
@@ -279,7 +286,7 @@ export async function* runOpenAICaptain(
       type: 'error',
       content: isAbort
         ? 'Request cancelled.'
-        : 'An error occurred while processing your request.',
+        : `An error occurred while processing your request.${errorStatus ? ` (${errorStatus})` : ''}`,
     }
   } finally {
     // Cleanup pending approvals on exit (fire-and-forget)

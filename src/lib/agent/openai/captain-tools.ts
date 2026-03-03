@@ -40,6 +40,34 @@ export interface CaptainToolParams {
   onToolOutput?: (toolName: string, output: string) => void
 }
 
+// ─── Schema Compatibility Patch ──────────────────────────────────────────────
+// Safety net: ensures ALL properties in each tool's JSON Schema are in `required`.
+// Primary fix is using `.nullable()` on Zod schemas (not `.optional()`), which
+// produces proper `anyOf: [{type}, {type: "null"}]` schemas with all fields required.
+// This patch is a defense-in-depth guard for any edge cases.
+
+function patchToolSchemas<T extends { parameters?: Record<string, unknown> }>(tools: T[]): T[] {
+  for (const t of tools) {
+    const params = t.parameters as Record<string, unknown> | undefined
+    if (params?.properties && typeof params.properties === 'object') {
+      const allKeys = Object.keys(params.properties as object)
+      const currentRequired = new Set(
+        Array.isArray(params.required) ? (params.required as string[]) : []
+      )
+      for (const key of allKeys) {
+        if (!currentRequired.has(key)) {
+          if (!Array.isArray(params.required)) params.required = [...currentRequired]
+          ;(params.required as string[]).push(key)
+        }
+      }
+    }
+  }
+  return tools
+}
+
+/** Convert null to undefined — used to bridge Zod `.nullable()` types to APIs expecting `T | undefined`. */
+const nu = <T,>(v: T | null | undefined): T | undefined => v ?? undefined
+
 // ─── Permission Sets ─────────────────────────────────────────────────────────
 
 const TOOLS_REQUIRING_APPROVAL = new Set([
@@ -153,10 +181,10 @@ function buildGmailRawMessage(args: {
   to: string
   subject: string
   body: string
-  cc?: string
-  bcc?: string
-  reply_to?: string
-  in_reply_to?: string
+  cc?: string | null
+  bcc?: string | null
+  reply_to?: string | null
+  in_reply_to?: string | null
 }): string {
   const lines: string[] = [
     `To: ${args.to}`,
@@ -564,9 +592,9 @@ export function createCaptainTools(params: CaptainToolParams) {
     name: 'read_recent_emails',
     description: 'Fetch recent emails with subjects, senders, dates, and snippets. Supports Gmail and Outlook.',
     parameters: z.object({
-      max_results: z.number().optional().default(15),
-      query: z.string().optional().describe('Gmail search query (e.g., "is:unread", "newer_than:1d")'),
-      label: z.enum(['inbox', 'sent', 'drafts', 'starred', 'important', 'unread']).optional(),
+      max_results: z.number().nullable().default(15),
+      query: z.string().nullable().describe('Gmail search query (e.g., "is:unread", "newer_than:1d")'),
+      label: z.enum(['inbox', 'sent', 'drafts', 'starred', 'important', 'unread']).nullable(),
     }),
     execute: async (args) => wrappedExecute('read_recent_emails', args as Record<string, unknown>, params, async () => {
       const gmailTokens = await TokenManager.getTokens(orgId, 'gmail')
@@ -585,7 +613,7 @@ export function createCaptainTools(params: CaptainToolParams) {
         if (!listData.messages?.length) return 'No emails found matching query.'
 
         const emails = await Promise.all(
-          listData.messages.slice(0, args.max_results).map(async (msg) => {
+          listData.messages.slice(0, args.max_results ?? 15).map(async (msg) => {
             const detailRes = await fetch(
               `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date&metadataHeaders=To`,
               { headers: { Authorization: `Bearer ${gmailTokens.access_token}` } }
@@ -631,7 +659,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Search emails with a specific query. Supports Gmail and Outlook.',
     parameters: z.object({
       query: z.string().describe('Search query (e.g., "action required", "from:ceo@company.com")'),
-      max_results: z.number().optional().default(10),
+      max_results: z.number().nullable().default(10),
     }),
     execute: async (args) => wrappedExecute('search_emails', args as Record<string, unknown>, params, async () => {
       const gmailTokens = await TokenManager.getTokens(orgId, 'gmail')
@@ -645,7 +673,7 @@ export function createCaptainTools(params: CaptainToolParams) {
         if (!listData.messages?.length) return `No emails found for query: "${args.query}"`
 
         const emails = await Promise.all(
-          listData.messages.slice(0, args.max_results).map(async (msg) => {
+          listData.messages.slice(0, args.max_results ?? 15).map(async (msg) => {
             const detailRes = await fetch(
               `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
               { headers: { Authorization: `Bearer ${gmailTokens.access_token}` } }
@@ -734,8 +762,8 @@ export function createCaptainTools(params: CaptainToolParams) {
       to: z.string(),
       subject: z.string(),
       body: z.string(),
-      cc: z.string().optional(),
-      bcc: z.string().optional(),
+      cc: z.string().nullable(),
+      bcc: z.string().nullable(),
     }),
     execute: async (args) => wrappedExecute('draft_email', args as Record<string, unknown>, params, async () => {
       const gmailTokens = await TokenManager.getTokens(orgId, 'gmail')
@@ -785,10 +813,10 @@ export function createCaptainTools(params: CaptainToolParams) {
       to: z.string(),
       subject: z.string(),
       body: z.string(),
-      cc: z.string().optional(),
-      bcc: z.string().optional(),
-      reply_to: z.string().optional(),
-      in_reply_to: z.string().optional().describe('Message-ID header for threading replies'),
+      cc: z.string().nullable(),
+      bcc: z.string().nullable(),
+      reply_to: z.string().nullable(),
+      in_reply_to: z.string().nullable().describe('Message-ID header for threading replies'),
     }),
     execute: async (args) => wrappedExecute('send_email', args as Record<string, unknown>, params, async () => {
       const gmailTokens = await TokenManager.getTokens(orgId, 'gmail')
@@ -878,7 +906,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     parameters: z.object({
       channel_id: z.string(),
       message: z.string(),
-      thread_ts: z.string().optional().describe('Reply in a specific thread'),
+      thread_ts: z.string().nullable().describe('Reply in a specific thread'),
     }),
     execute: async (args) => wrappedExecute('post_to_channel', args as Record<string, unknown>, params, async () => {
       const client = await getSlackBotClient()
@@ -900,8 +928,8 @@ export function createCaptainTools(params: CaptainToolParams) {
     parameters: z.object({
       channel_id: z.string(),
       title: z.string(),
-      description: z.string().optional(),
-      action_id: z.string().optional().describe('Action ID to link approval to'),
+      description: z.string().nullable(),
+      action_id: z.string().nullable().describe('Action ID to link approval to'),
     }),
     execute: async (args) => wrappedExecute('send_approval_message', args as Record<string, unknown>, params, async () => {
       const client = await getSlackBotClient()
@@ -944,13 +972,13 @@ export function createCaptainTools(params: CaptainToolParams) {
     name: 'list_slack_channels',
     description: 'List available Slack channels with topics and member counts.',
     parameters: z.object({
-      limit: z.number().optional().default(50),
+      limit: z.number().nullable().default(50),
     }),
     execute: async (args) => wrappedExecute('list_slack_channels', args as Record<string, unknown>, params, async () => {
       const client = await getSlackUserClient()
       if (!client) return 'Slack not connected.'
       try {
-        const res = await client.conversations.list({ types: 'public_channel,private_channel', limit: args.limit, exclude_archived: true })
+        const res = await client.conversations.list({ types: 'public_channel,private_channel', limit: args.limit ?? 50, exclude_archived: true })
         const channels = (res.channels ?? []).map((c) => ({
           id: c.id, name: c.name,
           topic: c.topic?.value?.substring(0, 100),
@@ -967,13 +995,13 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Read recent messages from a Slack channel.',
     parameters: z.object({
       channel_id: z.string(),
-      limit: z.number().optional().default(20),
+      limit: z.number().nullable().default(20),
     }),
     execute: async (args) => wrappedExecute('read_slack_channel', args as Record<string, unknown>, params, async () => {
       const client = await getSlackUserClient()
       if (!client) return 'Slack not connected.'
       try {
-        const res = await client.conversations.history({ channel: args.channel_id, limit: args.limit })
+        const res = await client.conversations.history({ channel: args.channel_id, limit: args.limit ?? 20 })
         if (!res.messages?.length) return 'No messages found in channel.'
         const userIds = [...new Set(res.messages.map((m) => m.user).filter(Boolean) as string[])]
         const userMap = await resolveUserNames(client, userIds)
@@ -994,13 +1022,13 @@ export function createCaptainTools(params: CaptainToolParams) {
     parameters: z.object({
       channel_id: z.string(),
       thread_ts: z.string().describe('Thread parent message timestamp'),
-      limit: z.number().optional().default(30),
+      limit: z.number().nullable().default(30),
     }),
     execute: async (args) => wrappedExecute('read_slack_thread', args as Record<string, unknown>, params, async () => {
       const client = await getSlackUserClient()
       if (!client) return 'Slack not connected.'
       try {
-        const res = await client.conversations.replies({ channel: args.channel_id, ts: args.thread_ts, limit: args.limit })
+        const res = await client.conversations.replies({ channel: args.channel_id, ts: args.thread_ts, limit: args.limit ?? 30 })
         if (!res.messages?.length) return 'No thread replies found.'
         const userIds = [...new Set(res.messages.map((m) => m.user).filter(Boolean) as string[])]
         const userMap = await resolveUserNames(client, userIds)
@@ -1018,7 +1046,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     name: 'read_slack_dms',
     description: 'Read recent direct messages (DMs) from Slack.',
     parameters: z.object({
-      limit: z.number().optional().default(20),
+      limit: z.number().nullable().default(20),
     }),
     execute: async (args) => wrappedExecute('read_slack_dms', args as Record<string, unknown>, params, async () => {
       const client = await getSlackUserClient()
@@ -1028,7 +1056,7 @@ export function createCaptainTools(params: CaptainToolParams) {
         const dms: Array<Record<string, unknown>> = []
         for (const conv of (convRes.channels ?? []).slice(0, 5)) {
           if (!conv.id) continue
-          const histRes = await client.conversations.history({ channel: conv.id, limit: Math.min(args.limit, 5) })
+          const histRes = await client.conversations.history({ channel: conv.id, limit: Math.min(args.limit ?? 20, 5) })
           for (const msg of histRes.messages ?? []) {
             dms.push({ channel: conv.id, user: conv.user, text: msg.text?.substring(0, 300), ts: msg.ts })
           }
@@ -1049,7 +1077,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     name: 'get_slack_mentions',
     description: 'Get recent @mentions and messages directed at you in Slack.',
     parameters: z.object({
-      hours_back: z.number().optional().default(24),
+      hours_back: z.number().nullable().default(24),
     }),
     execute: async (args) => wrappedExecute('get_slack_mentions', args as Record<string, unknown>, params, async () => {
       const client = await getSlackUserClient()
@@ -1057,7 +1085,7 @@ export function createCaptainTools(params: CaptainToolParams) {
       try {
         const results: Array<Record<string, unknown>> = []
         const searchRes = await client.search.messages({
-          query: `to:me after:${Math.floor((Date.now() - args.hours_back * 3600_000) / 1000)}`,
+          query: `to:me after:${Math.floor((Date.now() - (args.hours_back ?? 24) * 3600_000) / 1000)}`,
           count: 20, sort: 'timestamp', sort_dir: 'desc',
         })
         if (searchRes.messages?.matches) {
@@ -1083,10 +1111,10 @@ export function createCaptainTools(params: CaptainToolParams) {
     name: 'get_today_events',
     description: "Get today's calendar events with times, attendees, and locations.",
     parameters: z.object({
-      timezone: z.string().optional().default('UTC'),
+      timezone: z.string().nullable().default('UTC'),
     }),
     execute: async (args) => wrappedExecute('get_today_events', args as Record<string, unknown>, params, async () => {
-      const bounds = getTodayBounds(args.timezone)
+      const bounds = getTodayBounds(args.timezone ?? 'UTC')
       return fetchCalendarEvents(orgId, bounds.start, bounds.end)
     }),
   })
@@ -1095,11 +1123,11 @@ export function createCaptainTools(params: CaptainToolParams) {
     name: 'get_week_events',
     description: 'Get calendar events for the next N days.',
     parameters: z.object({
-      days_ahead: z.number().optional().default(7),
-      timezone: z.string().optional().default('UTC'),
+      days_ahead: z.number().nullable().default(7),
+      timezone: z.string().nullable().default('UTC'),
     }),
     execute: async (args) => wrappedExecute('get_week_events', args as Record<string, unknown>, params, async () => {
-      const bounds = getDaysBounds(args.timezone, args.days_ahead)
+      const bounds = getDaysBounds(args.timezone ?? 'UTC', args.days_ahead ?? 7)
       return fetchCalendarEvents(orgId, bounds.start, bounds.end, 50)
     }),
   })
@@ -1108,18 +1136,20 @@ export function createCaptainTools(params: CaptainToolParams) {
     name: 'find_free_slots',
     description: 'Find available time slots in the calendar for scheduling.',
     parameters: z.object({
-      days_ahead: z.number().optional().default(5),
-      timezone: z.string().optional().default('UTC'),
-      work_start_hour: z.number().optional().default(9),
-      work_end_hour: z.number().optional().default(17),
+      days_ahead: z.number().nullable().default(5),
+      timezone: z.string().nullable().default('UTC'),
+      work_start_hour: z.number().nullable().default(9),
+      work_end_hour: z.number().nullable().default(17),
     }),
     execute: async (args) => wrappedExecute('find_free_slots', args as Record<string, unknown>, params, async () => {
-      const bounds = getDaysBounds(args.timezone, args.days_ahead)
+      const tz = args.timezone ?? 'UTC'
+      const days = args.days_ahead ?? 5
+      const bounds = getDaysBounds(tz, days)
       const eventsStr = await fetchCalendarEvents(orgId, bounds.start, bounds.end, 100)
       try {
         const events = JSON.parse(eventsStr) as Array<{ start: string; end: string }>
         if (!Array.isArray(events)) return eventsStr // Error message
-        const slots = computeFreeSlots(events, args.timezone, args.days_ahead, args.work_start_hour, args.work_end_hour)
+        const slots = computeFreeSlots(events, tz, days, args.work_start_hour ?? 9, args.work_end_hour ?? 17)
         return JSON.stringify(slots, null, 2)
       } catch {
         return eventsStr // Propagate the error message
@@ -1214,8 +1244,8 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Search institutional memory. Uses text search + semantic vector similarity. Always recall before storing to check for duplicates.',
     parameters: z.object({
       query: z.string(),
-      category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact', 'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline']).optional(),
-      limit: z.number().optional().default(10),
+      category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact', 'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline']).nullable(),
+      limit: z.number().nullable().default(10),
     }),
     execute: async (args) => wrappedExecute('recall_memory', args as Record<string, unknown>, params, async () => {
       // Full-text search
@@ -1225,7 +1255,7 @@ export function createCaptainTools(params: CaptainToolParams) {
         .eq('org_id', orgId)
         .textSearch('subject', args.query, { type: 'websearch' })
         .order('confidence', { ascending: false })
-        .limit(args.limit)
+        .limit(args.limit ?? 10)
       if (args.category) query = query.eq('category', args.category)
       const { data: textData } = await query
 
@@ -1236,7 +1266,7 @@ export function createCaptainTools(params: CaptainToolParams) {
           const embedding = await generateEmbedding(args.query)
           if (embedding) {
             const { data: vd } = await supabase.rpc('search_memories_by_embedding', {
-              p_org_id: orgId, p_embedding: JSON.stringify(embedding), p_limit: args.limit, p_category: args.category ?? null,
+              p_org_id: orgId, p_embedding: JSON.stringify(embedding), p_limit: args.limit ?? 10, p_category: args.category ?? null,
             })
             vectorData = vd as Array<Record<string, unknown>> | null
           }
@@ -1261,7 +1291,7 @@ export function createCaptainTools(params: CaptainToolParams) {
           .select('id, subject, content, category, confidence, related_entities, created_at')
           .eq('org_id', orgId)
           .or(`subject.ilike.%${args.query}%,content.ilike.%${args.query}%`)
-          .limit(args.limit)
+          .limit(args.limit ?? 10)
         if (fallback) for (const mem of fallback) merged.push({ ...mem, _source: 'ilike' })
       }
 
@@ -1305,8 +1335,8 @@ export function createCaptainTools(params: CaptainToolParams) {
       category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact', 'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline']),
       subject: z.string().describe('Short label (e.g., "SOC2 audit deadline", "Sarah Chen role")'),
       content: z.string(),
-      source: z.string().optional(),
-      related_entities: z.array(z.string()).optional(),
+      source: z.string().nullable(),
+      related_entities: z.array(z.string()).nullable(),
     }),
     execute: async (args) => wrappedExecute('store_memory', args as Record<string, unknown>, params, async () => {
       // Dedup check
@@ -1356,9 +1386,9 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Update specific fields on an existing memory entry.',
     parameters: z.object({
       id: z.string(),
-      content: z.string().optional(),
-      category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact', 'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline']).optional(),
-      confidence: z.number().optional(),
+      content: z.string().nullable(),
+      category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact', 'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline']).nullable(),
+      confidence: z.number().nullable(),
     }),
     execute: async (args) => wrappedExecute('update_memory', args as Record<string, unknown>, params, async () => {
       const { id, ...updates } = args
@@ -1378,7 +1408,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Explore connections between people, projects, controls, and decisions in the knowledge graph.',
     parameters: z.object({
       entity_name: z.string().describe('Name of the entity to explore'),
-      depth: z.number().optional().default(1),
+      depth: z.number().nullable().default(1),
     }),
     execute: async (args) => wrappedExecute('query_entity_graph', args as Record<string, unknown>, params, async () => {
       // Find the entity
@@ -1393,7 +1423,7 @@ export function createCaptainTools(params: CaptainToolParams) {
 
       // Get neighborhood via RPC
       const { data: neighborhood } = await supabase.rpc('get_entity_neighborhood', {
-        p_entity_id: entity.id, p_org_id: orgId, p_max_hops: args.depth, p_active_only: true,
+        p_entity_id: entity.id, p_org_id: orgId, p_max_hops: args.depth ?? 2, p_active_only: true,
       })
 
       // Get linked memories
@@ -1417,7 +1447,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Get the chronological timeline of events for a specific entity.',
     parameters: z.object({
       entity_name: z.string(),
-      limit: z.number().optional().default(20),
+      limit: z.number().nullable().default(20),
     }),
     execute: async (args) => wrappedExecute('get_entity_timeline', args as Record<string, unknown>, params, async () => {
       const { data: entity } = await supabase
@@ -1444,14 +1474,14 @@ export function createCaptainTools(params: CaptainToolParams) {
     name: 'query_commitments',
     description: 'Query commitments for the organization. Filter by status, priority, or due date.',
     parameters: z.object({
-      status: z.enum(['active', 'at_risk', 'overdue', 'completed', 'cancelled']).optional(),
-      priority: z.enum(['critical', 'high', 'medium', 'low']).optional(),
-      limit: z.number().optional().default(20),
+      status: z.enum(['active', 'at_risk', 'overdue', 'completed', 'cancelled']).nullable(),
+      priority: z.enum(['critical', 'high', 'medium', 'low']).nullable(),
+      limit: z.number().nullable().default(20),
     }),
     execute: async (args) => wrappedExecute('query_commitments', args as Record<string, unknown>, params, async () => {
       let query = supabase
         .from('commitments').select('*, profiles!owner_id(full_name)')
-        .eq('org_id', orgId).order('created_at', { ascending: false }).limit(args.limit)
+        .eq('org_id', orgId).order('created_at', { ascending: false }).limit(args.limit ?? 20)
       if (args.status) query = query.eq('status', args.status)
       if (args.priority) query = query.eq('priority', args.priority)
       const { data, error } = await query
@@ -1465,11 +1495,11 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Create a new commitment to track. Requires user approval.',
     parameters: z.object({
       title: z.string(),
-      description: z.string().optional(),
+      description: z.string().nullable(),
       priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
-      due_date: z.string().optional(),
-      source: z.string().optional(),
-      tags: z.array(z.string()).optional(),
+      due_date: z.string().nullable(),
+      source: z.string().nullable(),
+      tags: z.array(z.string()).nullable(),
     }),
     execute: async (args) => wrappedExecute('create_commitment', args as Record<string, unknown>, params, async () => {
       const { data, error } = await supabase.from('commitments').insert({
@@ -1487,10 +1517,10 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Update an existing commitment status, priority, or description.',
     parameters: z.object({
       id: z.string(),
-      status: z.enum(['active', 'at_risk', 'overdue', 'completed', 'cancelled']).optional(),
-      priority: z.enum(['critical', 'high', 'medium', 'low']).optional(),
-      due_date: z.string().optional(),
-      description: z.string().optional(),
+      status: z.enum(['active', 'at_risk', 'overdue', 'completed', 'cancelled']).nullable(),
+      priority: z.enum(['critical', 'high', 'medium', 'low']).nullable(),
+      due_date: z.string().nullable(),
+      description: z.string().nullable(),
     }),
     execute: async (args) => wrappedExecute('update_commitment', args as Record<string, unknown>, params, async () => {
       const { id, ...updates } = args
@@ -1510,13 +1540,13 @@ export function createCaptainTools(params: CaptainToolParams) {
     name: 'query_actions',
     description: 'Query pending actions that need user approval or attention.',
     parameters: z.object({
-      status: z.enum(['pending', 'approved', 'rejected', 'deferred', 'expired']).optional().default('pending'),
-      limit: z.number().optional().default(10),
+      status: z.enum(['pending', 'approved', 'rejected', 'deferred', 'expired']).nullable().default('pending'),
+      limit: z.number().nullable().default(10),
     }),
     execute: async (args) => wrappedExecute('query_actions', args as Record<string, unknown>, params, async () => {
       const { data, error } = await supabase.from('actions').select('*')
-        .eq('org_id', orgId).eq('status', args.status)
-        .order('created_at', { ascending: false }).limit(args.limit)
+        .eq('org_id', orgId).eq('status', args.status ?? 'pending')
+        .order('created_at', { ascending: false }).limit(args.limit ?? 10)
       if (error) return `Error: ${error.message}`
       return JSON.stringify(data, null, 2)
     }),
@@ -1529,9 +1559,9 @@ export function createCaptainTools(params: CaptainToolParams) {
       user_id: z.string(),
       type: z.string(),
       title: z.string(),
-      description: z.string().optional(),
+      description: z.string().nullable(),
       priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
-      payload: z.record(z.string(), z.unknown()).optional(),
+      payload: z.record(z.string(), z.unknown()).nullable(),
     }),
     execute: async (args) => wrappedExecute('create_action', args as Record<string, unknown>, params, async () => {
       const { data, error } = await supabase.from('actions').insert({
@@ -1551,7 +1581,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     parameters: z.object({
       id: z.string(),
       status: z.enum(['approved', 'rejected', 'deferred']),
-      resolved_by: z.string().optional(),
+      resolved_by: z.string().nullable(),
     }),
     execute: async (args) => wrappedExecute('resolve_action', args as Record<string, unknown>, params, async () => {
       const { error } = await supabase.from('actions').update({
@@ -1652,10 +1682,10 @@ export function createCaptainTools(params: CaptainToolParams) {
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // Return all 33 tools as array
+  // Return all 33 tools as array (with patched schemas for OpenAI API compat)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  return Object.values(toolMap)
+  return patchToolSchemas(Object.values(toolMap))
 }
 
 /**

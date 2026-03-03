@@ -13,6 +13,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { logWorkerExecution, completeWorkerExecution } from '@/lib/agent/hooks'
 import { gatherWorkerViews } from '@/lib/intelligence/brief-synthesizer'
 import { runPatrolAgent } from '@/lib/agent/openai/patrol-agent'
+import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
+import { randomUUID } from 'crypto'
 import type { PatrolFindings } from '@/lib/agent/openai/patrol-agent'
 import type { Database } from '@/types/database'
 
@@ -193,6 +195,28 @@ export async function runAgenticScan(orgId: string, userId: string): Promise<Age
         console.error(`[agentic-scanner] Exception inserting finding:`, insertErr)
       }
     }
+  }
+
+  // ── Extract entities from patrol findings for knowledge graph ───────────
+  try {
+    const findingDescriptions = (agentOutput?.findings ?? [])
+      .map(f => `[${f.severity}] ${f.title}: ${f.description}`)
+      .join('\n')
+    const extractionContent = [
+      agentOutput.summary,
+      findingDescriptions,
+    ].filter(Boolean).join('\n\n')
+
+    if (extractionContent.length > 20) {
+      await runExtractionPipeline({
+        orgId,
+        conversationId: randomUUID(),
+        messageContent: extractionContent,
+        role: 'assistant',
+      })
+    }
+  } catch (extractErr) {
+    console.error(`[agentic-scanner] Extraction failed:`, extractErr)
   }
 
   // ── Estimate cost ───────────────────────────────────────────────────────

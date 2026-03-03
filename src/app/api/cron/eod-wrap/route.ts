@@ -11,6 +11,7 @@ import {
   extractMetrics,
   getYesterdayMetrics,
 } from '@/lib/intelligence/brief-synthesizer'
+import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -165,6 +166,18 @@ export async function GET(request: NextRequest) {
         } catch (slackErr) {
           console.error(`[eod-wrap] Slack DM failed for ${profile.email}:`, slackErr)
         }
+      }
+
+      // ── Extract entities from wrap for knowledge graph ──────────────────────
+      try {
+        await runExtractionPipeline({
+          orgId: profile.org_id,
+          conversationId: randomUUID(),
+          messageContent: fullResponse,
+          role: 'assistant',
+        })
+      } catch (extractErr) {
+        console.error(`[eod-wrap] Extraction failed for ${profile.id}:`, extractErr)
       }
 
       processed++

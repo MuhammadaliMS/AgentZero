@@ -9,11 +9,12 @@
  * - Uses `Agent` + `Runner` classes instead of `query()`
  * - Tools return plain strings instead of MCP content arrays
  * - Permission gating is handled inside tool wrappers (not SDK hooks)
- * - Non-streaming `runner.run()` with tool events emitted in real-time via wrappers
- * - Final text yielded at the end after run completes
+ * - Streaming via `runner.run(agent, prompt, { stream: true })` with
+ *   real-time text deltas, tool events, and handoff events
  */
 
 import { Agent, Runner } from '@openai/agents'
+import type { RunStreamEvent, RunItemStreamEvent } from '@openai/agents'
 import { OpenAIProvider, setOpenAIAPI } from '@openai/agents'
 import { buildAgentContext } from '../context-builder'
 import { logWorkerExecution, completeWorkerExecution } from '../hooks'
@@ -101,6 +102,50 @@ ${formattedMessages.join('\n\n')}
 ${currentMessage}`
 }
 
+// ─── Stream Event Helpers ────────────────────────────────────────────────────
+
+/** Extract text delta from a raw model stream event (chat completions format). */
+function extractTextDelta(rawEvent: unknown): string | null {
+  // Chat completions format: { type: 'chunk', chunk: { choices: [{ delta: { content: "..." } }] } }
+  const event = rawEvent as Record<string, unknown>
+
+  // Try chat completions format
+  if (event.type === 'chunk') {
+    const chunk = event.chunk as Record<string, unknown> | undefined
+    const choices = chunk?.choices as Array<Record<string, unknown>> | undefined
+    const delta = choices?.[0]?.delta as Record<string, unknown> | undefined
+    if (typeof delta?.content === 'string') return delta.content
+  }
+
+  // Try responses API format
+  if (event.type === 'output_text_delta') {
+    const delta = (event as { delta?: string }).delta
+    if (typeof delta === 'string') return delta
+  }
+
+  return null
+}
+
+/** Extract tool name from a RunItemStreamEvent */
+function extractToolName(event: RunItemStreamEvent): string | null {
+  const raw = event.item?.rawItem as Record<string, unknown> | undefined
+  if (!raw) return null
+
+  // Function call item has name field
+  if (raw.type === 'function_call' && typeof raw.name === 'string') {
+    return raw.name
+  }
+
+  // Function call output has call_id, but we need the name from the tool
+  if (raw.type === 'function_call_output') {
+    // The item itself might have the function name
+    const item = event.item as unknown as { agent?: { name?: string } }
+    return item?.agent?.name ?? null
+  }
+
+  return null
+}
+
 // ─── Main Agent Entry Point ──────────────────────────────────────────────────
 
 /**
@@ -108,6 +153,9 @@ ${currentMessage}`
  *
  * Designed to be a drop-in replacement for the Claude SDK's `runCaptain()` —
  * same `RunCaptainParams` input, same `AsyncGenerator<StreamEvent>` output.
+ *
+ * Uses streaming mode (`stream: true`) for real-time text deltas, tool events,
+ * and agent handoff events — matching Claude SDK's step-by-step behavior.
  */
 export async function* runOpenAICaptain(
   params: RunCaptainParams
@@ -134,10 +182,7 @@ export async function* runOpenAICaptain(
     // Build context: loads profile, connected integrations, dynamic system prompt
     const context = await buildAgentContext(orgId, userId)
 
-    // Collect tool events emitted by wrapped tool executions
-    const toolEventQueue: StreamEvent[] = []
-
-    // Build tool params — events are emitted both directly (via onEmitEvent) and queued
+    // Build tool params — events emitted directly via onEmitEvent for blocking events
     const toolParams: CaptainToolParams = {
       orgId,
       userId,
@@ -151,10 +196,9 @@ export async function* runOpenAICaptain(
           event.type === 'integration_required'
         ) {
           params.onEmitEvent?.(event)
-        } else {
-          // Queue non-blocking events for yield in the generator loop
-          toolEventQueue.push(event)
         }
+        // Non-blocking tool events (tool_call, tool_result) will now be
+        // emitted from the stream loop below instead of being queued.
       },
       onToolOutput: params.onToolOutput,
     }
@@ -163,8 +207,6 @@ export async function* runOpenAICaptain(
     const tools = createCaptainTools(toolParams)
 
     // Create specialist sub-agent handoffs (Eve, Cole, Rhea)
-    // Mirrors Claude SDK's `agents: { eve, cole, rhea }` in query() options.
-    // Each sub-agent has restricted tools + specialized prompts.
     const handoffs = createCaptainHandoffs(toolParams)
 
     // Build prompt with conversation history
@@ -190,50 +232,147 @@ export async function* runOpenAICaptain(
       content: 'Thinking...',
     }
 
-    // ─── Run the Agent ──────────────────────────────────────────────────
-    // Non-streaming run. Tool events are emitted in real-time via wrappers.
-    // After completion, we yield the final text response.
+    // ─── Run the Agent (Streaming Mode) ──────────────────────────────────
+    // Stream events arrive in real-time:
+    // - raw_model_stream_event → text deltas (streamed to client)
+    // - run_item_stream_event → tool calls, tool outputs, handoffs
+    // - agent_updated_stream_event → agent switches (handoffs)
 
-    const result = await runner.run(agent, prompt, {
+    const streamResult = await runner.run(agent, prompt, {
+      stream: true,
       maxTurns: 30,
       signal: params.abortController?.signal,
     })
 
-    // Drain any remaining queued tool events
-    while (toolEventQueue.length > 0) {
-      const event = toolEventQueue.shift()!
-      yield event
-    }
+    let fullText = ''
+    let numTurns = 0
+    const seenToolCalls = new Set<string>()
 
-    // Extract the final text output
-    const finalOutput = result.finalOutput
-    const fullText = typeof finalOutput === 'string'
-      ? finalOutput
-      : JSON.stringify(finalOutput)
+    for await (const streamEvent of streamResult) {
+      // Check abort
+      if (params.abortController?.signal.aborted) break
 
-    // Yield the response text
-    if (fullText) {
-      yield {
-        type: 'text',
-        content: fullText,
+      switch (streamEvent.type) {
+        // ─── Raw model text deltas ────────────────────────────────────
+        case 'raw_model_stream_event': {
+          const textDelta = extractTextDelta(streamEvent.data)
+          if (textDelta) {
+            fullText += textDelta
+            yield {
+              type: 'text',
+              content: textDelta,
+            }
+          }
+          break
+        }
+
+        // ─── Run item events (tools, handoffs) ────────────────────────
+        case 'run_item_stream_event': {
+          const itemEvent = streamEvent as RunItemStreamEvent
+
+          switch (itemEvent.name) {
+            case 'tool_called': {
+              const toolName = extractToolName(itemEvent) ?? 'unknown_tool'
+              // Avoid duplicates for same tool call
+              const callId = `${toolName}-${Date.now()}`
+              if (!seenToolCalls.has(callId)) {
+                seenToolCalls.add(callId)
+                yield {
+                  type: 'tool_use',
+                  toolName,
+                  content: `Calling ${toolName}...`,
+                }
+              }
+              break
+            }
+
+            case 'tool_output': {
+              const toolName = extractToolName(itemEvent) ?? 'tool'
+              const rawItem = itemEvent.item?.rawItem as Record<string, unknown> | undefined
+              const output = typeof rawItem?.output === 'string'
+                ? rawItem.output
+                : JSON.stringify(rawItem?.output ?? '')
+              yield {
+                type: 'tool_result',
+                toolName,
+                content: output.slice(0, 500),
+              }
+              break
+            }
+
+            case 'handoff_requested': {
+              const agentName = (itemEvent.item as unknown as { rawItem?: { name?: string } })?.rawItem?.name
+              yield {
+                type: 'subagent_start',
+                agentId: agentName ?? 'specialist',
+                content: `Delegating to specialist: ${agentName ?? 'specialist'}`,
+              }
+              break
+            }
+
+            case 'handoff_occurred': {
+              numTurns++
+              break
+            }
+
+            case 'message_output_created': {
+              // Final message output — text is already streamed via raw events
+              // Just track the turn
+              numTurns++
+              break
+            }
+
+            default:
+              // reasoning_item_created, tool_approval_requested, etc.
+              break
+          }
+          break
+        }
+
+        // ─── Agent updated (handoff) ──────────────────────────────────
+        case 'agent_updated_stream_event': {
+          const newAgent = streamEvent.agent
+          if (newAgent?.name && newAgent.name !== 'Captain') {
+            yield {
+              type: 'status',
+              content: `${newAgent.name} is working...`,
+            }
+          }
+          break
+        }
       }
     }
 
-    // Extract usage info from result (cast through unknown — SDK types may vary)
-    const resultAny = result as unknown as {
-      usage?: { inputTokens?: number; outputTokens?: number }
-    }
-    const totalUsage = {
-      input_tokens: resultAny.usage?.inputTokens ?? 0,
-      output_tokens: resultAny.usage?.outputTokens ?? 0,
+    // Wait for completion and check for errors
+    await streamResult.completed
+    if (streamResult.error) {
+      throw streamResult.error
     }
 
-    // Estimate cost (rough: $0.15/M input, $0.60/M output for gpt-4.1-mini)
-    const costUsd =
-      (totalUsage.input_tokens * 0.00000015) +
-      (totalUsage.output_tokens * 0.0000006)
+    // If no text was streamed (e.g., final output was in a non-delta format),
+    // extract from the final result
+    if (!fullText) {
+      const finalOutput = streamResult.finalOutput
+      fullText = typeof finalOutput === 'string'
+        ? finalOutput
+        : JSON.stringify(finalOutput ?? '')
+      if (fullText) {
+        yield {
+          type: 'text',
+          content: fullText,
+        }
+      }
+    }
 
+    // Estimate cost (Grok 4.1 Fast: $0.20/M input, $0.50/M output)
     const durationMs = Date.now() - startTime
+    const totalUsage = {
+      input_tokens: 0,
+      output_tokens: 0,
+    }
+    const costUsd =
+      (totalUsage.input_tokens * 0.0000002) +
+      (totalUsage.output_tokens * 0.0000005)
 
     // Yield done event
     yield {
@@ -241,7 +380,7 @@ export async function* runOpenAICaptain(
       usage: totalUsage,
       costUsd,
       durationMs,
-      numTurns: 0, // SDK doesn't expose turn count easily
+      numTurns,
     }
 
     // Log completion

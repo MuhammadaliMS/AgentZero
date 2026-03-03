@@ -10,15 +10,15 @@
     },
     {
       "path": "/api/cron/nudge",
-      "schedule": "0 9,12,15 * * *"
+      "schedule": "0 9 * * *"
     },
     {
       "path": "/api/cron/patrol",
-      "schedule": "0 */2 * * *"
+      "schedule": "0 7 * * *"
     },
     {
       "path": "/api/cron/agentic-patrol",
-      "schedule": "0 8,13,17 * * *"
+      "schedule": "0 8 * * *"
     }
   ]
 }

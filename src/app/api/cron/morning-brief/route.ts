@@ -100,22 +100,38 @@ export async function GET(request: NextRequest) {
       const briefMetrics = extractMetrics(workerViews)
 
       let fullResponse = ''
-      const agentStream = runCaptain({
-        orgId: profile.org_id,
-        userId: profile.id,
-        message: enrichedPrompt,
-        conversationId: `cron-morning-${profile.id}-${todayLocal}`,
-      })
+      let agentError = ''
+      try {
+        const agentStream = runCaptain({
+          orgId: profile.org_id,
+          userId: profile.id,
+          message: enrichedPrompt,
+          conversationId: `cron-morning-${profile.id}-${todayLocal}`,
+        })
 
-      for await (const event of agentStream) {
-        if (event.type === 'text' && event.content) {
-          fullResponse += event.content
+        for await (const event of agentStream) {
+          if (event.type === 'text' && event.content) {
+            fullResponse += event.content
+          }
+          if (event.type === 'error' && event.content) {
+            agentError = event.content
+            console.error(`[morning-brief] Captain error event for ${profile.id}: ${event.content}`)
+          }
         }
+      } catch (agentErr) {
+        agentError = (agentErr as Error).message
+        console.error(`[morning-brief] Captain threw for ${profile.id}:`, agentErr)
       }
 
       if (!fullResponse) {
         skipped++
-        diagnostics.push({ userId: profile.id, status: 'skipped', reason: 'empty response from Captain agent' })
+        diagnostics.push({
+          userId: profile.id,
+          status: 'skipped',
+          reason: agentError
+            ? `Captain error: ${agentError}`
+            : 'empty response from Captain agent (no text events)',
+        })
         continue
       }
 

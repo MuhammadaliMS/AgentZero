@@ -104,23 +104,39 @@ ${currentMessage}`
 
 // ─── Stream Event Helpers ────────────────────────────────────────────────────
 
-/** Extract text delta from a raw model stream event (chat completions format). */
-function extractTextDelta(rawEvent: unknown): string | null {
-  // Chat completions format: { type: 'chunk', chunk: { choices: [{ delta: { content: "..." } }] } }
+/** Result from parsing a raw model stream event — can be text, reasoning, or nothing. */
+type StreamDelta =
+  | { kind: 'text'; content: string }
+  | { kind: 'reasoning'; content: string }
+  | null
+
+/** Extract text or reasoning delta from a raw model stream event. */
+function extractStreamDelta(rawEvent: unknown): StreamDelta {
   const event = rawEvent as Record<string, unknown>
 
-  // Try chat completions format
+  // Chat completions format: { type: 'chunk', chunk: { choices: [{ delta: { content, reasoning } }] } }
   if (event.type === 'chunk') {
     const chunk = event.chunk as Record<string, unknown> | undefined
     const choices = chunk?.choices as Array<Record<string, unknown>> | undefined
     const delta = choices?.[0]?.delta as Record<string, unknown> | undefined
-    if (typeof delta?.content === 'string') return delta.content
+    if (!delta) return null
+
+    // Reasoning content comes as `reasoning` or `reasoning_content` in the delta
+    const reasoning = delta.reasoning ?? delta.reasoning_content
+    if (typeof reasoning === 'string' && reasoning) {
+      return { kind: 'reasoning', content: reasoning }
+    }
+
+    // Regular text content
+    if (typeof delta.content === 'string' && delta.content) {
+      return { kind: 'text', content: delta.content }
+    }
   }
 
-  // Try responses API format
+  // Responses API format
   if (event.type === 'output_text_delta') {
     const delta = (event as { delta?: string }).delta
-    if (typeof delta === 'string') return delta
+    if (typeof delta === 'string') return { kind: 'text', content: delta }
   }
 
   return null
@@ -213,10 +229,17 @@ export async function* runOpenAICaptain(
     const prompt = buildPromptWithHistory(params.conversationHistory, message)
 
     // Create the Agent with handoffs to specialists
+    // Enable reasoning so the model "thinks" before acting — similar to Claude's extended thinking.
+    // 'low' keeps costs manageable while still giving the model space to plan tool sequences.
     const agent = Agent.create({
       name: 'Captain',
       instructions: context.systemPrompt,
       model: CAPTAIN_MODEL,
+      modelSettings: {
+        reasoning: {
+          effort: 'low',
+        },
+      },
       tools,
       handoffs,
     })
@@ -253,14 +276,16 @@ export async function* runOpenAICaptain(
       if (params.abortController?.signal.aborted) break
 
       switch (streamEvent.type) {
-        // ─── Raw model text deltas ────────────────────────────────────
+        // ─── Raw model text/reasoning deltas ─────────────────────────
         case 'raw_model_stream_event': {
-          const textDelta = extractTextDelta(streamEvent.data)
-          if (textDelta) {
-            fullText += textDelta
-            yield {
-              type: 'text',
-              content: textDelta,
+          const delta = extractStreamDelta(streamEvent.data)
+          if (delta) {
+            if (delta.kind === 'text') {
+              fullText += delta.content
+              yield { type: 'text', content: delta.content }
+            } else if (delta.kind === 'reasoning') {
+              // Emit thinking events — matches Claude SDK's extended thinking behavior
+              yield { type: 'thinking', content: delta.content }
             }
           }
           break
@@ -322,8 +347,22 @@ export async function* runOpenAICaptain(
               break
             }
 
+            case 'reasoning_item_created': {
+              // Extract reasoning text from the completed reasoning item
+              const reasoningItem = itemEvent.item?.rawItem as Record<string, unknown> | undefined
+              const rawContent = reasoningItem?.rawContent as Array<Record<string, unknown>> | undefined
+              if (rawContent) {
+                for (const part of rawContent) {
+                  if (part.type === 'reasoning_text' && typeof part.text === 'string' && part.text) {
+                    yield { type: 'thinking', content: part.text }
+                  }
+                }
+              }
+              break
+            }
+
             default:
-              // reasoning_item_created, tool_approval_requested, etc.
+              // tool_approval_requested, etc.
               break
           }
           break

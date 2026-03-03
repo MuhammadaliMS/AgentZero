@@ -110,33 +110,50 @@ type StreamDelta =
   | { kind: 'reasoning'; content: string }
   | null
 
-/** Extract text or reasoning delta from a raw model stream event. */
+/**
+ * Extract text or reasoning delta from a raw model stream event.
+ *
+ * The SDK's streaming converter yields events with these types:
+ *   - { type: 'model', event: <raw OpenRouter chunk> } — raw chat completion chunks
+ *   - { type: 'output_text_delta', delta: '...' } — text deltas (already extracted by SDK)
+ *
+ * Grok via OpenRouter returns reasoning in `delta.reasoning_details` array:
+ *   { type: "reasoning.summary", summary: "token text", format: "xai-responses-v1" }
+ *
+ * Some models return reasoning as `delta.reasoning` (string) — we handle both.
+ */
 function extractStreamDelta(rawEvent: unknown): StreamDelta {
   const event = rawEvent as Record<string, unknown>
 
-  // Chat completions format: { type: 'chunk', chunk: { choices: [{ delta: { content, reasoning } }] } }
-  if (event.type === 'chunk') {
-    const chunk = event.chunk as Record<string, unknown> | undefined
-    const choices = chunk?.choices as Array<Record<string, unknown>> | undefined
-    const delta = choices?.[0]?.delta as Record<string, unknown> | undefined
-    if (!delta) return null
-
-    // Reasoning content comes as `reasoning` or `reasoning_content` in the delta
-    const reasoning = delta.reasoning ?? delta.reasoning_content
-    if (typeof reasoning === 'string' && reasoning) {
-      return { kind: 'reasoning', content: reasoning }
-    }
-
-    // Regular text content
-    if (typeof delta.content === 'string' && delta.content) {
-      return { kind: 'text', content: delta.content }
-    }
-  }
-
-  // Responses API format
+  // ── Text deltas (SDK's converter output) ──────────────────────────
   if (event.type === 'output_text_delta') {
     const delta = (event as { delta?: string }).delta
     if (typeof delta === 'string') return { kind: 'text', content: delta }
+  }
+
+  // ── Raw model chunks (contains reasoning_details for Grok) ────────
+  if (event.type === 'model') {
+    const rawChunk = event.event as Record<string, unknown> | undefined
+    const choices = rawChunk?.choices as Array<Record<string, unknown>> | undefined
+    const delta = choices?.[0]?.delta as Record<string, unknown> | undefined
+    if (!delta) return null
+
+    // Format 1: Grok via OpenRouter — reasoning_details array
+    // Each entry: { type: "reasoning.summary"|"reasoning.text", summary: "...", text: "..." }
+    const details = delta.reasoning_details as Array<Record<string, unknown>> | undefined
+    if (Array.isArray(details) && details.length > 0) {
+      const part = details[0]
+      // Grok uses "summary" field, other models may use "text"
+      const text = (part?.summary ?? part?.text) as string | undefined
+      if (typeof text === 'string' && text) {
+        return { kind: 'reasoning', content: text }
+      }
+    }
+
+    // Format 2: Direct reasoning string (e.g., DeepSeek via Groq)
+    if (typeof delta.reasoning === 'string' && delta.reasoning) {
+      return { kind: 'reasoning', content: delta.reasoning }
+    }
   }
 
   return null

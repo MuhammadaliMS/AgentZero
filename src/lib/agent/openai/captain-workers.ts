@@ -31,7 +31,7 @@ import { createCaptainToolsMap, type CaptainToolParams } from './captain-tools'
 // configurable model via env var, defaulting to gpt-4.1 (more capable model
 // for specialist work, similar to how sonnet > haiku in Claude SDK).
 
-const WORKER_MODEL = process.env.OPENAI_WORKER_MODEL || 'openai/gpt-4.1-mini'
+const WORKER_MODEL = process.env.OPENAI_WORKER_MODEL || 'x-ai/grok-4.1-fast'
 
 // ─── Tool Lists (matching Claude SDK worker definitions exactly) ─────────────
 

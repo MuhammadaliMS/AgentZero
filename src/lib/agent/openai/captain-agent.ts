@@ -26,7 +26,7 @@ import type { RunCaptainParams, StreamEvent } from '../orchestrator'
 // Uses OPENAI_CAPTAIN_MODEL env var, or falls back to a sensible default.
 // Routed via OpenRouter (OPENROUTER_API_KEY) or direct OpenAI (OPENAI_API_KEY).
 
-const DEFAULT_CAPTAIN_MODEL = 'openai/gpt-4.1-mini'
+const DEFAULT_CAPTAIN_MODEL = 'x-ai/grok-4.1-fast'
 const CAPTAIN_MODEL = process.env.OPENAI_CAPTAIN_MODEL || DEFAULT_CAPTAIN_MODEL
 
 // ─── OpenRouter / OpenAI Provider ────────────────────────────────────────────

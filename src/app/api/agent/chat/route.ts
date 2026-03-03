@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { runCaptainWithSDK, getSDKInfo } from '@/lib/agent/sdk-switch'
+import { runCaptainWithSDK, getSDKInfo, type AgentSDK } from '@/lib/agent/sdk-switch'
 import type { StreamEvent } from '@/lib/agent/orchestrator'
 import { cleanupConversationApprovals } from '@/lib/agent/approval-store'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
@@ -255,6 +255,20 @@ export async function POST(request: NextRequest) {
 
   const orgId = profile.org_id
 
+  // ─── Load org SDK preference ───────────────────────────────────────────────
+  let orgSdkOverride: AgentSDK | undefined
+  {
+    const { data: orgRow } = await admin
+      .from('organizations')
+      .select('settings')
+      .eq('id', orgId)
+      .single()
+    const orgSettings = (orgRow?.settings || {}) as Record<string, unknown>
+    if (orgSettings.agent_sdk === 'openai' || orgSettings.agent_sdk === 'claude') {
+      orgSdkOverride = orgSettings.agent_sdk as AgentSDK
+    }
+  }
+
   // ─── P0-1: Verify existingConversationId ownership ────────────────────────
   // Without this check, any authenticated user can inject any conversationId
   // from a different org and read/write to it (IDOR vulnerability).
@@ -379,8 +393,8 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        const sdkInfo = getSDKInfo()
-        console.log(`[chat] Using SDK: ${sdkInfo.sdk} (model: ${sdkInfo.model}, provider: ${sdkInfo.provider})`)
+        const sdkInfo = getSDKInfo(orgSdkOverride)
+        console.log(`[chat] Using SDK: ${sdkInfo.sdk} (model: ${sdkInfo.model}, provider: ${sdkInfo.provider})${orgSdkOverride ? ' [org override]' : ''}`)
 
         // Collect raw tool output data for entity extraction enrichment
         const toolOutputs: Array<{ toolName: string; output: string }> = []
@@ -421,7 +435,7 @@ export async function POST(request: NextRequest) {
               toolOutputs.push({ toolName, output })
             }
           },
-        })
+        }, orgSdkOverride)
 
         for await (const event of agentStream) {
           // Check if aborted

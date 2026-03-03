@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from 're
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { SDKToggle } from '@/components/sdk-toggle'
 
 interface MessageInputProps {
   onSend: (message: string) => void
@@ -110,11 +111,14 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
             </TooltipProvider>
           )}
         </div>
-        {/* Footer hint */}
+        {/* Footer hint + SDK toggle */}
         <div className="mt-1.5 flex items-center justify-between px-1">
-          <span className="text-[10px] text-muted-foreground/60">
-            Shift+Enter for new line
-          </span>
+          <div className="flex items-center gap-2">
+            <SDKToggle variant="compact" />
+            <span className="text-[10px] text-muted-foreground/60">
+              Shift+Enter for new line
+            </span>
+          </div>
           {charCount > 500 && (
             <span className="text-[10px] text-muted-foreground/60">
               {charCount.toLocaleString()} chars

@@ -3,9 +3,10 @@
  *
  * Controls which agent framework handles Captain requests.
  *
- * Configuration:
- *   AGENT_SDK=claude    → Use Claude Agent SDK (default)
- *   AGENT_SDK=openai    → Use OpenAI Agents SDK
+ * Priority (highest → lowest):
+ *   1. Per-org override from DB (organizations.settings.agent_sdk)
+ *   2. AGENT_SDK env var (claude | openai)
+ *   3. Default: claude
  *
  * Both implementations share the same interfaces (RunCaptainParams, StreamEvent)
  * so the chat API route and frontend need zero changes.
@@ -17,8 +18,14 @@ export type AgentSDK = 'claude' | 'openai'
 
 /**
  * Get the currently configured agent SDK.
+ * Accepts an optional override (e.g., from the org's DB settings).
  */
-export function getActiveSDK(): AgentSDK {
+export function getActiveSDK(override?: AgentSDK): AgentSDK {
+  // Per-org override takes priority
+  if (override === 'openai') return 'openai'
+  if (override === 'claude') return 'claude'
+
+  // Fall back to env var
   const sdk = (process.env.AGENT_SDK || 'claude').toLowerCase().trim()
   if (sdk === 'openai') return 'openai'
   return 'claude' // Default
@@ -34,9 +41,10 @@ export function getActiveSDK(): AgentSDK {
  *   for await (const event of stream) { ... }
  */
 export async function* runCaptainWithSDK(
-  params: RunCaptainParams
+  params: RunCaptainParams,
+  sdkOverride?: AgentSDK
 ): AsyncGenerator<StreamEvent> {
-  const sdk = getActiveSDK()
+  const sdk = getActiveSDK(sdkOverride)
 
   if (sdk === 'openai') {
     // Dynamic import to avoid loading OpenAI SDK when using Claude
@@ -52,12 +60,12 @@ export async function* runCaptainWithSDK(
 /**
  * Get metadata about the active SDK for debugging/logging.
  */
-export function getSDKInfo(): {
+export function getSDKInfo(override?: AgentSDK): {
   sdk: AgentSDK
   model: string
   provider: string
 } {
-  const sdk = getActiveSDK()
+  const sdk = getActiveSDK(override)
 
   if (sdk === 'openai') {
     const model = process.env.OPENAI_CAPTAIN_MODEL || 'openai/gpt-4.1-mini'

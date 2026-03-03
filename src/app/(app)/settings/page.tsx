@@ -19,6 +19,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
+import { SDKToggle } from '@/components/sdk-toggle'
 import type { Database } from '@/types/database'
 
 type Profile = Database['public']['Tables']['profiles']['Row']
@@ -428,6 +429,18 @@ export default function SettingsPage() {
                   }`}
                 />
               </button>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-3">
+              <div>
+                <p className="text-sm font-medium">AI Model</p>
+                <p className="text-xs text-muted-foreground">
+                  Choose which AI model powers your Captain. Changes take effect on the next message.
+                </p>
+              </div>
+              <SDKToggle variant="full" />
             </div>
           </CardContent>
         </Card>

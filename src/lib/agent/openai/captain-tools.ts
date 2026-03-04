@@ -1209,18 +1209,22 @@ export function createCaptainTools(params: CaptainToolParams) {
   // SLACK TOOLS (9)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  // Use user token (xoxp-) for ALL Slack operations — reads AND writes.
-  // The user token has full visibility: Slack Connect channels, private channels,
-  // search.messages support. Messages sent appear as the authenticated user.
-  async function getSlackClient(): Promise<WebClient | null> {
+  // Hybrid token strategy:
+  // • User token (xoxp-) for READS — full visibility: Slack Connect, private channels, search.messages
+  // • Bot token (xoxb-) for WRITES — messages appear as the bot app, not the user
+  async function getSlackUserClient(): Promise<WebClient | null> {
     const tokens = await TokenManager.getTokens(orgId, 'slack')
     if (!tokens) return null
     return new WebClient(tokens.user_access_token || tokens.access_token)
   }
 
-  // Aliases — all point to the same user-token client
-  const getSlackBotClient = getSlackClient
-  const getSlackUserClient = getSlackClient
+  async function getSlackBotClient(): Promise<WebClient | null> {
+    const tokens = await TokenManager.getTokens(orgId, 'slack')
+    if (!tokens) return null
+    // Bot token for writes — messages sent as the bot app identity
+    // Falls back to user token if bot token isn't available
+    return new WebClient(tokens.access_token || tokens.user_access_token)
+  }
 
   const sendSlackDm = tool({
     name: 'send_slack_dm',

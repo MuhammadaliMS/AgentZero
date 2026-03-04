@@ -6,20 +6,23 @@ import { buildIntegrationRequiredResult } from '../tool-metadata'
 
 export function createSlackTools(orgId: string) {
   /**
-   * Get a Slack client using the user token (xoxp-) for ALL operations.
-   * The user token has full visibility: Slack Connect channels, private channels,
-   * search.messages support. Messages sent appear as the authenticated user.
-   * Falls back to bot token if no user token is available.
+   * Hybrid token strategy:
+   * • User token (xoxp-) for READS — full visibility: Slack Connect, private channels, search.messages
+   * • Bot token (xoxb-) for WRITES — messages appear as the bot app, not the user
    */
-  async function getSlackClient(): Promise<WebClient | null> {
+  async function getSlackUserClient(): Promise<WebClient | null> {
     const tokens = await TokenManager.getTokens(orgId, 'slack')
     if (!tokens) return null
     return new WebClient(tokens.user_access_token || tokens.access_token)
   }
 
-  // Aliases — all point to the same user-token client
-  const getSlackBotClient = getSlackClient
-  const getSlackUserClient = getSlackClient
+  async function getSlackBotClient(): Promise<WebClient | null> {
+    const tokens = await TokenManager.getTokens(orgId, 'slack')
+    if (!tokens) return null
+    // Bot token for writes — messages sent as the bot app identity
+    // Falls back to user token if bot token isn't available
+    return new WebClient(tokens.access_token || tokens.user_access_token)
+  }
 
   // ─── Write Tools ─────────────────────────────────────────────────────────
 
@@ -31,23 +34,26 @@ export function createSlackTools(orgId: string) {
       message: z.string().describe('Message text (supports Slack mrkdwn formatting)'),
     },
     async (args) => {
-      const client = await getSlackClient()
-      if (!client) {
+      // Use user client for lookups (full visibility), bot client for sending (appear as bot)
+      const userClient = await getSlackUserClient()
+      if (!userClient) {
         return buildIntegrationRequiredResult('slack', 'Slack')
       }
 
       try {
-        const userResult = await client.users.lookupByEmail({ email: args.user_email })
+        const userResult = await userClient.users.lookupByEmail({ email: args.user_email })
         if (!userResult.user?.id) {
           return { content: [{ type: 'text' as const, text: `Could not find Slack user with email: ${args.user_email}` }] }
         }
 
-        const conversationResult = await client.conversations.open({ users: userResult.user.id })
+        const botClient = await getSlackBotClient()
+        const sendClient = botClient || userClient // prefer bot, fall back to user
+        const conversationResult = await sendClient.conversations.open({ users: userResult.user.id })
         if (!conversationResult.channel?.id) {
           return { content: [{ type: 'text' as const, text: 'Could not open DM channel.' }] }
         }
 
-        const result = await client.chat.postMessage({
+        const result = await sendClient.chat.postMessage({
           channel: conversationResult.channel.id,
           text: args.message,
         })
@@ -79,7 +85,8 @@ export function createSlackTools(orgId: string) {
       thread_ts: z.string().optional().describe('Reply to a thread — provide parent message timestamp'),
     },
     async (args) => {
-      const client = await getSlackClient()
+      const botClient = await getSlackBotClient()
+      const client = botClient || await getSlackUserClient()
       if (!client) {
         return buildIntegrationRequiredResult('slack', 'Slack')
       }
@@ -120,18 +127,21 @@ export function createSlackTools(orgId: string) {
       priority: z.enum(['critical', 'high', 'medium', 'low']).optional(),
     },
     async (args) => {
-      const client = await getSlackClient()
-      if (!client) {
+      // Use user client for lookups, bot client for sending
+      const userClient = await getSlackUserClient()
+      if (!userClient) {
         return buildIntegrationRequiredResult('slack', 'Slack')
       }
 
       try {
-        const userResult = await client.users.lookupByEmail({ email: args.user_email })
+        const userResult = await userClient.users.lookupByEmail({ email: args.user_email })
         if (!userResult.user?.id) {
           return { content: [{ type: 'text' as const, text: `Could not find Slack user: ${args.user_email}` }] }
         }
 
-        const conversationResult = await client.conversations.open({ users: userResult.user.id })
+        const botClient = await getSlackBotClient()
+        const sendClient = botClient || userClient
+        const conversationResult = await sendClient.conversations.open({ users: userResult.user.id })
         if (!conversationResult.channel?.id) {
           return { content: [{ type: 'text' as const, text: 'Could not open DM channel.' }] }
         }
@@ -143,7 +153,7 @@ export function createSlackTools(orgId: string) {
           low: ':white_circle:',
         }
 
-        const result = await client.chat.postMessage({
+        const result = await sendClient.chat.postMessage({
           channel: conversationResult.channel.id,
           text: `Approval needed: ${args.title}`,
           blocks: [
@@ -211,7 +221,9 @@ export function createSlackTools(orgId: string) {
       text: z.string().describe('New message text'),
     },
     async (args) => {
-      const client = await getSlackClient()
+      // Bot token for message updates (bot can only update its own messages)
+      const botClient = await getSlackBotClient()
+      const client = botClient || await getSlackUserClient()
       if (!client) {
         return buildIntegrationRequiredResult('slack', 'Slack')
       }

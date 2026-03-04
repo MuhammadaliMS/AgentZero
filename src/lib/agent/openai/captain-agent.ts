@@ -224,6 +224,7 @@ export async function* runOpenAICaptain(
       yield {
         type: 'status',
         content: `Knowledge graph: ${assocCtx.itemCount} items injected (${assocCtx.durationMs}ms)`,
+        injectedEntityIds: assocCtx.matchedEntityIds,
       } as StreamEvent
 
       // Track 'injected' utility events and bump access for matched entities

@@ -54,6 +54,13 @@ export async function POST(
     return NextResponse.json({ error: 'chosenTruth is required' }, { status: 400 })
   }
 
+  if (chosenTruth.keep !== 'new' && chosenTruth.keep !== 'existing') {
+    return NextResponse.json(
+      { error: 'chosenTruth.keep must be "new" or "existing"' },
+      { status: 400 }
+    )
+  }
+
   await resolveContradiction(
     profile.org_id,
     contradictionId,

@@ -5,6 +5,7 @@ import { runCaptainWithSDK, getSDKInfo, type AgentSDK } from '@/lib/agent/sdk-sw
 import type { StreamEvent } from '@/lib/agent/orchestrator'
 import { cleanupConversationApprovals } from '@/lib/agent/approval-store'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
+import { isOpenAIConfigured } from '@/lib/openai/client'
 import { waitUntil } from '@vercel/functions'
 import type {
   MessagePart,
@@ -499,7 +500,7 @@ export async function POST(request: NextRequest) {
             // Uses waitUntil() to keep the function alive after response is sent.
             // The assistant extraction is enriched with raw tool output data from
             // integration tools (emails, calendar, Slack, etc.) for richer entities.
-            if (process.env.OPENROUTER_API_KEY) {
+            if (isOpenAIConfigured()) {
               waitUntil(
                 Promise.all([
                   runExtractionPipeline({

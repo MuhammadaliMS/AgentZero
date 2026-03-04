@@ -68,6 +68,18 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  if (memoryId) {
+    const { data: mem } = await supabase
+      .from('memory')
+      .select('id')
+      .eq('id', memoryId)
+      .eq('org_id', profile.org_id)
+      .maybeSingle()
+    if (!mem) {
+      return NextResponse.json({ error: 'Memory not found in org' }, { status: 404 })
+    }
+  }
+
   await trackUtilityEvent(profile.org_id, {
     entityId,
     memoryId,

@@ -524,16 +524,25 @@ export async function resolveContradiction(
     .eq('id', contradictionId)
     .single()
 
-  // 3. Update insight status
+  // 3. Apply chosen truth based on the keep directive
+  // Only proceed with graph mutations if a valid keep decision was provided
+  const keep = chosenTruth.keep as string | undefined
+  if (keep !== 'new' && keep !== 'existing') {
+    // No valid decision — record the resolution but don't alter graph state.
+    // The insight stays active so the user can try again.
+    return
+  }
+
+  // 4. Update insight status — 'confirmed' means resolved with a decision
   await supabase
     .from('graph_insights')
     .update({
-      status: 'dismissed',
+      status: 'confirmed',
       updated_at: new Date().toISOString(),
     })
     .eq('id', contradictionId)
 
-  // 4. Clear conflicted state on involved entities
+  // 5. Clear conflicted state on involved entities (only after valid resolution)
   if (insight?.related_entity_ids) {
     await supabase
       .from('entities')
@@ -543,9 +552,9 @@ export async function resolveContradiction(
       .eq('state', 'conflicted')
   }
 
-  // 5. Apply chosen truth based on the keep directive
+  // 6. Apply the chosen truth to the knowledge graph
   const evidence = insight?.evidence as Record<string, unknown> | null
-  if (evidence && chosenTruth.keep === 'new') {
+  if (evidence && keep === 'new') {
     // Close the old conflicting relationship
     if (evidence.existing_source_id && evidence.target_id && evidence.rel_type) {
       await supabase
@@ -572,9 +581,9 @@ export async function resolveContradiction(
           source_conversation_id: null,
         })
     }
-  } else if (evidence && chosenTruth.keep === 'existing') {
-    // User confirmed the existing relationship is correct — no changes needed.
-    // If there was a blocked new relationship, it stays blocked.
+  } else if (keep === 'existing') {
+    // User confirmed the existing relationship is correct — no graph mutations needed.
+    // The blocked new relationship stays blocked.
   }
 }
 

@@ -1471,7 +1471,7 @@ export interface Database {
           p_evidence: Json
           p_action_template: Json | null
         }
-        Returns: undefined
+        Returns: string // UUID of the upserted insight
       }
       find_repetitive_relationships: {
         Args: {
@@ -1480,13 +1480,15 @@ export interface Database {
         }
         Returns: Array<{
           source_entity_id: string
+          source_entity_name: string
           target_entity_id: string
+          target_entity_name: string
           relationship_type: string
-          source_name: string
-          target_name: string
           repetition_count: number
           avg_confidence: number
-          relationship_ids: string[]
+          conversation_ids: string[]
+          earliest: string
+          latest: string
         }>
       }
       detect_velocity_spikes: {

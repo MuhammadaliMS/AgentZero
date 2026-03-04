@@ -8,6 +8,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { trackUtilityEventBatch } from '@/lib/graph/utility-tracker'
+import { handleFindingResolved } from '@/lib/graph/insight-action-router'
 
 type FeedbackSignalInsert = Database['public']['Tables']['feedback_signals']['Insert']
 
@@ -59,20 +60,26 @@ export async function trackNudgeAcknowledged(
     .update({ status: 'acknowledged' as const })
     .eq('id', nudgeId)
 
-  // Track 'accepted' utility for entities involved in graph-sourced nudges.
-  // Lookup the nudge → source_finding → insight_actions → insight → entity_ids chain.
+  // Close the insight feedback loop for graph-sourced nudges:
+  // 1. Resolve the insight_action (marks outcome, updates insight lifecycle)
+  // 2. Track 'accepted' utility for involved entities
   try {
-    const { data: nudge } = await supabase
+    const { data: nudgeRow } = await supabase
       .from('nudges')
       .select('source_finding_id')
       .eq('id', nudgeId)
       .maybeSingle()
 
-    if (nudge?.source_finding_id) {
+    if (nudgeRow?.source_finding_id) {
+      // This is the correct place to call handleFindingResolved —
+      // the user has now actually acknowledged the nudge.
+      handleFindingResolved(orgId, nudgeRow.source_finding_id, 'approved').catch(() => {})
+
+      // Also track 'accepted' utility for entities involved in this insight
       const { data: insightAction } = await supabase
         .from('insight_actions')
         .select('insight_id')
-        .eq('finding_id', nudge.source_finding_id)
+        .eq('finding_id', nudgeRow.source_finding_id)
         .maybeSingle()
 
       if (insightAction?.insight_id) {

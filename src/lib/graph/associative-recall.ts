@@ -221,11 +221,15 @@ async function findMatchingEntities(
   // 1. Exact match — word-boundary regex on canonical names
   const exactPromise = withTimeout(
     (async () => {
+      // Cap at 500 entities ordered by most recently accessed / highest utility
+      // to stay within the 800ms budget as orgs grow.
       const { data: allEntities } = await supabase
         .from('entities')
         .select('id, name, canonical_name, entity_type, description, mention_count, state, utility_score')
         .eq('org_id', orgId)
-        .in('state', ['active', 'pinned', 'dormant', 'conflicted'])
+        .in('state', ['active', 'pinned', 'dormant', 'conflicted', 'archived'])
+        .order('last_accessed_at', { ascending: false, nullsFirst: false })
+        .limit(500)
 
       if (!allEntities) return
 

@@ -241,6 +241,18 @@ export async function handleFindingResolved(
     })
     .eq('id', action.id)
 
+  // Update the parent graph_insight lifecycle status
+  if (action.insight_id) {
+    await supabase
+      .from('graph_insights')
+      .update({
+        status: outcome === 'approved' ? 'confirmed' : 'dismissed',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', action.insight_id)
+      .eq('status', 'routed') // Only transition from routed — don't clobber other states
+  }
+
   // If approved, bump the insight's utility
   if (outcome === 'approved' && action.insight_id) {
     const { data: insight } = await supabase

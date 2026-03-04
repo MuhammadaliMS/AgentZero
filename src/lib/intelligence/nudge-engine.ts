@@ -13,7 +13,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { getUserWeight } from './feedback-tracker'
-import { handleFindingResolved } from '@/lib/graph/insight-action-router'
+// handleFindingResolved is called from feedback-tracker.ts when users acknowledge nudges,
+// NOT at nudge generation time. See trackNudgeAcknowledged.
 
 type PatrolFinding = Database['public']['Tables']['patrol_findings']['Row']
 
@@ -118,7 +119,7 @@ export async function runSmartNudge(
       result.nudgesRecorded++
     }
 
-    // Mark findings as acknowledged
+    // Mark findings as acknowledged (nudge created, not yet user-acted)
     const findingIds = batch.items
       .map((i) => i.findingId)
       .filter(Boolean) as string[]
@@ -128,11 +129,9 @@ export async function runSmartNudge(
         .update({ status: 'acknowledged' as const })
         .in('id', findingIds)
 
-      // Close the feedback loop: notify insight-action-router so it can
-      // update insight_actions and bump utility scores for graph-sourced findings
-      for (const fid of findingIds) {
-        handleFindingResolved(batch.orgId, fid, 'approved').catch(() => {})
-      }
+      // NOTE: Do NOT call handleFindingResolved here — nudge was just *sent*.
+      // The feedback loop fires when the user actually acknowledges the nudge,
+      // via trackNudgeAcknowledged → handleFindingResolved in feedback-tracker.ts.
     }
   }
 

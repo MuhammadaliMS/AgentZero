@@ -1167,6 +1167,40 @@ export function createCaptainTools(params: CaptainToolParams) {
     }),
   })
 
+  const searchSlack = tool({
+    name: 'search_slack',
+    description: 'Search Slack messages across ALL channels (including external/Slack Connect channels). Use this to find messages from a specific person, about a topic, or in a specific channel. Uses the user token so it sees everything the user sees. Supports Slack search modifiers: from:@user, in:#channel, has:link, before:YYYY-MM-DD, after:YYYY-MM-DD, etc.',
+    parameters: z.object({
+      query: z.string().describe('Slack search query. Examples: "from:@komal budget", "in:#axari-development deploy", "security incident after:2026-03-01"'),
+      count: z.number().nullable().default(20).describe('Number of results to return (max 50)'),
+      sort: z.enum(['timestamp', 'score']).nullable().default('timestamp').describe('Sort by timestamp (newest first) or relevance score'),
+    }),
+    execute: async (args) => wrappedExecute('search_slack', args as Record<string, unknown>, params, async () => {
+      const client = await getSlackUserClient()
+      if (!client) return 'Slack not connected.'
+      try {
+        const searchRes = await client.search.messages({
+          query: args.query,
+          count: Math.min(args.count ?? 20, 50),
+          sort: args.sort ?? 'timestamp',
+          sort_dir: 'desc',
+        })
+        if (!searchRes.messages?.matches || searchRes.messages.matches.length === 0) {
+          return `No Slack messages found for query: "${args.query}"`
+        }
+        const results = searchRes.messages.matches.slice(0, Math.min(args.count ?? 20, 50)).map((match) => ({
+          channel: match.channel?.name ?? 'unknown',
+          channel_id: match.channel?.id ?? 'unknown',
+          from: match.username ?? 'unknown',
+          text: match.text?.substring(0, 500),
+          ts: match.ts,
+          permalink: match.permalink,
+        }))
+        return JSON.stringify(results, null, 2)
+      } catch (e) { return handleSlackError(e) }
+    }),
+  })
+
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // CALENDAR TOOLS (3)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1312,12 +1346,15 @@ export function createCaptainTools(params: CaptainToolParams) {
       limit: z.number().nullable().default(10),
     }),
     execute: async (args) => wrappedExecute('recall_memory', args as Record<string, unknown>, params, async () => {
-      // Full-text search
+      const nowMs = Date.now()
+
+      // Full-text search (filter out expired memories)
       let query = supabase
         .from('memory')
-        .select('id, subject, content, category, confidence, related_entities, created_at')
+        .select('id, subject, content, category, confidence, related_entities, created_at, updated_at')
         .eq('org_id', orgId)
         .textSearch('subject', args.query, { type: 'websearch' })
+        .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
         .order('confidence', { ascending: false })
         .limit(args.limit ?? 10)
       if (args.category) query = query.eq('category', args.category)
@@ -1348,13 +1385,14 @@ export function createCaptainTools(params: CaptainToolParams) {
         }
       }
 
-      // Fallback ilike
+      // Fallback ilike (also filter expired)
       if (merged.length === 0) {
         const { data: fallback } = await supabase
           .from('memory')
-          .select('id, subject, content, category, confidence, related_entities, created_at')
+          .select('id, subject, content, category, confidence, related_entities, created_at, updated_at')
           .eq('org_id', orgId)
           .or(`subject.ilike.%${args.query}%,content.ilike.%${args.query}%`)
+          .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
           .limit(args.limit ?? 10)
         if (fallback) for (const mem of fallback) merged.push({ ...mem, _source: 'ilike' })
       }
@@ -1379,7 +1417,7 @@ export function createCaptainTools(params: CaptainToolParams) {
             if (linkedMemoryIds.length > 0) {
               const { data: linkedMems } = await supabase
                 .from('memory')
-                .select('id, subject, content, category, confidence, related_entities, created_at')
+                .select('id, subject, content, category, confidence, related_entities, created_at, updated_at')
                 .in('id', linkedMemoryIds)
                 .limit(5)
               if (linkedMems) for (const mem of linkedMems) { seenIds.add(mem.id); merged.push({ ...mem, _source: 'graph' }) }
@@ -1387,6 +1425,24 @@ export function createCaptainTools(params: CaptainToolParams) {
           }
         }
       } catch { /* Graph enrichment is optional */ }
+
+      // Apply recency weighting: boost recently updated memories
+      // Recency factor: memories updated in the last 7 days get full weight,
+      // older memories decay exponentially with a 30-day half-life
+      const HALF_LIFE_MS = 30 * 24 * 3600_000 // 30 days
+      for (const mem of merged) {
+        const updatedAt = mem.updated_at || mem.created_at
+        const ageMs = nowMs - new Date(updatedAt as string).getTime()
+        const recencyScore = Math.pow(0.5, ageMs / HALF_LIFE_MS)
+        mem._recency = Math.round(recencyScore * 100) / 100
+      }
+
+      // Sort by recency-weighted confidence (recency * confidence)
+      merged.sort((a, b) => {
+        const scoreA = (a._recency as number ?? 0.5) * (a.confidence as number ?? 0.5)
+        const scoreB = (b._recency as number ?? 0.5) * (b.confidence as number ?? 0.5)
+        return scoreB - scoreA
+      })
 
       return merged.length > 0 ? JSON.stringify(merged, null, 2) : 'No memories found matching query.'
     }),
@@ -1464,6 +1520,36 @@ export function createCaptainTools(params: CaptainToolParams) {
       const { error } = await supabase.from('memory').update(updateData).eq('id', id).eq('org_id', orgId)
       if (error) return `Error updating memory: ${error.message}`
       return `Memory ${id} updated.`
+    }),
+  })
+
+  const deleteMemory = tool({
+    name: 'delete_memory',
+    description: 'Delete a memory entry that is outdated, incorrect, or no longer relevant. Use after recalling memories to clean up stale information. Also deletes associated embeddings.',
+    parameters: z.object({
+      id: z.string().describe('Memory ID to delete'),
+      reason: z.string().nullable().describe('Brief reason for deletion (for audit trail)'),
+    }),
+    execute: async (args) => wrappedExecute('delete_memory', args as Record<string, unknown>, params, async () => {
+      // Verify memory exists and belongs to this org
+      const { data: existing } = await supabase
+        .from('memory')
+        .select('id, subject')
+        .eq('id', args.id)
+        .eq('org_id', orgId)
+        .maybeSingle()
+      if (!existing) return `Memory ${args.id} not found or does not belong to this organization.`
+
+      // Delete embedding first (foreign key)
+      await supabase.from('memory_embeddings').delete().eq('memory_id', args.id)
+      // Delete entity links
+      await supabase.from('memory_entity_links').delete().eq('memory_id', args.id)
+      // Delete the memory
+      const { error } = await supabase.from('memory').delete().eq('id', args.id).eq('org_id', orgId)
+      if (error) return `Error deleting memory: ${error.message}`
+
+      console.log(`[Memory] Deleted memory "${existing.subject}" (${args.id}). Reason: ${args.reason ?? 'not specified'}`)
+      return `Memory deleted: "${existing.subject}" (${args.id})`
     }),
   })
 
@@ -1850,6 +1936,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     read_slack_thread: readSlackThread,
     read_slack_dms: readSlackDms,
     get_slack_mentions: getSlackMentions,
+    search_slack: searchSlack,
     // Calendar (3)
     get_today_events: getTodayEvents,
     get_week_events: getWeekEvents,
@@ -1858,10 +1945,11 @@ export function createCaptainTools(params: CaptainToolParams) {
     get_compliance_overview: getComplianceOverview,
     list_failing_controls: listFailingControls,
     get_audit_status: getAuditStatus,
-    // Memory (5)
+    // Memory (6)
     recall_memory: recallMemory,
     store_memory: storeMemory,
     update_memory: updateMemory,
+    delete_memory: deleteMemory,
     query_entity_graph: queryEntityGraph,
     get_entity_timeline: getEntityTimeline,
     // Reasoning (1)

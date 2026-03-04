@@ -26,6 +26,7 @@ const TOOL_TO_INTEGRATIONS: Record<string, IntegrationInfo[]> = {
   read_slack_thread: [{ key: 'slack', name: 'Slack' }],
   read_slack_dms: [{ key: 'slack', name: 'Slack' }],
   get_slack_mentions: [{ key: 'slack', name: 'Slack' }],
+  search_slack: [{ key: 'slack', name: 'Slack' }],
   // Slack tools — write
   send_slack_dm: [{ key: 'slack', name: 'Slack' }],
   post_to_channel: [{ key: 'slack', name: 'Slack' }],
@@ -129,6 +130,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   read_slack_thread: 'Reading Slack Thread',
   read_slack_dms: 'Reading Slack DMs',
   get_slack_mentions: 'Checking Slack Mentions',
+  search_slack: 'Searching Slack',
   // Slack — write
   send_slack_dm: 'Sending Slack Message',
   post_to_channel: 'Posting to Channel',
@@ -149,6 +151,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   recall_memory: 'Recalling Context',
   store_memory: 'Storing Context',
   update_memory: 'Updating Context',
+  delete_memory: 'Deleting Memory',
   query_entity_graph: 'Searching Knowledge Graph',
   get_entity_timeline: 'Checking Entity Timeline',
 
@@ -337,6 +340,7 @@ const TOOL_ICON_CATEGORIES: Record<string, ToolIconCategory> = {
   read_slack_thread: 'slack',
   read_slack_dms: 'slack',
   get_slack_mentions: 'slack',
+  search_slack: 'slack',
   send_slack_dm: 'slack',
   post_to_channel: 'slack',
   send_approval_message: 'slack',
@@ -350,6 +354,7 @@ const TOOL_ICON_CATEGORIES: Record<string, ToolIconCategory> = {
   recall_memory: 'memory',
   store_memory: 'memory',
   update_memory: 'memory',
+  delete_memory: 'memory',
   query_entity_graph: 'memory',
   get_entity_timeline: 'memory',
   query_commitments: 'database',

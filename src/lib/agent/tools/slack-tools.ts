@@ -543,6 +543,47 @@ export function createSlackTools(orgId: string) {
     { annotations: { title: 'Get Slack Mentions', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
   )
 
+  const searchSlack = tool(
+    'search_slack',
+    'Search Slack messages across ALL channels (including external/Slack Connect channels). Use this to find messages from a specific person, about a topic, or in a specific channel. Uses the user token so it sees everything the user sees. Supports Slack search modifiers: from:@user, in:#channel, has:link, before:YYYY-MM-DD, after:YYYY-MM-DD, etc.',
+    {
+      query: z.string().describe('Slack search query. Examples: "from:@komal budget", "in:#axari-development deploy", "security incident after:2026-03-01"'),
+      count: z.number().optional().default(20).describe('Number of results to return (max 50)'),
+      sort: z.enum(['timestamp', 'score']).optional().default('timestamp').describe('Sort by timestamp (newest first) or relevance score'),
+    },
+    async (args) => {
+      const client = await getSlackUserClient()
+      if (!client) return buildIntegrationRequiredResult('slack', 'Slack')
+
+      try {
+        const searchRes = await client.search.messages({
+          query: args.query,
+          count: Math.min(args.count ?? 20, 50),
+          sort: args.sort ?? 'timestamp',
+          sort_dir: 'desc',
+        })
+
+        if (!searchRes.messages?.matches || searchRes.messages.matches.length === 0) {
+          return { content: [{ type: 'text' as const, text: `No Slack messages found for query: "${args.query}"` }] }
+        }
+
+        const results = searchRes.messages.matches.slice(0, Math.min(args.count ?? 20, 50)).map((match) => ({
+          channel: (match.channel as { name?: string })?.name ?? 'unknown',
+          channel_id: (match.channel as { id?: string })?.id ?? 'unknown',
+          from: match.username ?? 'unknown',
+          text: ((match.text || '') as string).substring(0, 500),
+          ts: match.ts,
+          permalink: match.permalink,
+        }))
+
+        return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] }
+      } catch (e) {
+        return handleSlackError(e)
+      }
+    },
+    { annotations: { title: 'Search Slack', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
+  )
+
   return [
     // Read tools
     listSlackChannels,
@@ -550,6 +591,7 @@ export function createSlackTools(orgId: string) {
     readSlackThread,
     readSlackDms,
     getSlackMentions,
+    searchSlack,
     // Write tools
     sendSlackDm,
     postToChannel,

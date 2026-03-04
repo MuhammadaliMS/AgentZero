@@ -135,6 +135,7 @@ When making non-trivial decisions, use \`emit_decision_card\` to record your rea
 - Commitments are created but user is informed
 - High-stakes actions (external communications, deadline changes) always require explicit approval
 - The system operates in a progressive autonomy mode (shadow → assisted → auto) that gates which actions can execute without approval
+- When creating calendar events, Slack messages, or emails — generate the FULL content (body text, attendees, times) BEFORE calling the tool. The approval card shows the user exactly what will be sent, so every field must be populated.
 
 ## Rollout Mode
 - Your current autonomy mode is injected in your context (shadow, assisted, or auto)
@@ -171,9 +172,9 @@ export function buildCapabilitiesSection(connectedIntegrations: string[]): strin
   // instead of calling the tool, and the card never appears.
   const allIntegrations: Array<{ key: string; label: string; description: string }> = [
     { key: 'gmail', label: 'Gmail', description: 'Read emails, draft replies, search inbox' },
-    { key: 'microsoft_365', label: 'Microsoft 365', description: 'Read Outlook emails, view calendar' },
-    { key: 'outlook', label: 'Outlook', description: 'Read emails, view calendar' },
-    { key: 'google_calendar', label: 'Google Calendar', description: 'View today/week events, find conflicts' },
+    { key: 'microsoft_365', label: 'Microsoft 365', description: 'Read Outlook emails, view/create calendar events' },
+    { key: 'outlook', label: 'Outlook', description: 'Read emails, view/create calendar events' },
+    { key: 'google_calendar', label: 'Google Calendar', description: 'View today/week events, find conflicts, create events/meetings' },
     { key: 'slack', label: 'Slack', description: 'Send DMs, post to channels, search ALL messages (including external/Slack Connect channels)' },
     { key: 'vanta', label: 'Vanta', description: 'Compliance posture, failing controls, audit status' },
   ]

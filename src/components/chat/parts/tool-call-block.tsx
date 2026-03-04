@@ -138,6 +138,7 @@ const TOOL_ICON_CATEGORIES: Record<string, ToolIconCategory> = {
   get_today_events: 'calendar',
   get_week_events: 'calendar',
   find_free_slots: 'calendar',
+  create_calendar_event: 'calendar',
   get_compliance_overview: 'compliance',
   list_failing_controls: 'compliance',
   get_audit_status: 'compliance',

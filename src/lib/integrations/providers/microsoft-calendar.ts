@@ -5,18 +5,18 @@ import type { TokenResult, TokenData } from '@/types/integrations'
  * Microsoft Calendar OAuth provider.
  *
  * Scopes needed (Microsoft Graph):
- *   - Calendars.Read     (read calendar events)
- *   - User.Read          (identify the account)
- *   - offline_access     (refresh token)
+ *   - Calendars.ReadWrite (read + create + edit calendar events)
+ *   - User.Read           (identify the account)
+ *   - offline_access      (refresh token)
  *
  * In Azure AD app registration → API permissions, add:
- *   Microsoft Graph → Delegated → Calendars.Read, User.Read
+ *   Microsoft Graph → Delegated → Calendars.ReadWrite, User.Read
  */
 export class MicrosoftCalendarAuthService extends BaseAuthService {
   readonly integrationKey = 'microsoft_calendar'
 
   getDefaultScopes(): string[] {
-    return ['Calendars.Read', 'User.Read', 'offline_access']
+    return ['Calendars.ReadWrite', 'User.Read', 'offline_access']
   }
 
   async getAuthUrl(scopes: string[], state: string): Promise<string> {

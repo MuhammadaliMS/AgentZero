@@ -37,6 +37,7 @@ const TOOL_TO_INTEGRATIONS: Record<string, IntegrationInfo[]> = {
   get_today_events: [{ key: 'google_calendar', name: 'Google Calendar' }, { key: 'microsoft_calendar', name: 'Microsoft Calendar' }],
   get_week_events: [{ key: 'google_calendar', name: 'Google Calendar' }, { key: 'microsoft_calendar', name: 'Microsoft Calendar' }],
   find_free_slots: [{ key: 'google_calendar', name: 'Google Calendar' }, { key: 'microsoft_calendar', name: 'Microsoft Calendar' }],
+  create_calendar_event: [{ key: 'google_calendar', name: 'Google Calendar' }, { key: 'microsoft_calendar', name: 'Microsoft Calendar' }],
 
   // Compliance tools → Vanta
   get_compliance_overview: [{ key: 'vanta', name: 'Vanta' }],
@@ -141,6 +142,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   get_today_events: 'Checking Today\'s Calendar',
   get_week_events: 'Checking Weekly Calendar',
   find_free_slots: 'Finding Available Slots',
+  create_calendar_event: 'Creating Calendar Event',
 
   // Compliance
   get_compliance_overview: 'Checking Compliance Posture',
@@ -226,6 +228,8 @@ export function buildApprovalTitle(
       return `Resolve action: ${input.action_id || input.id || 'unknown'}`
     case 'update_commitment':
       return `Update commitment: ${input.commitment_id || input.id || 'unknown'}`
+    case 'create_calendar_event':
+      return `Create event: "${truncate(input.title as string, 50)}" at ${input.start_time || 'TBD'}`
     default:
       return `Execute ${formatToolDisplayName(toolName)}`
   }
@@ -316,6 +320,23 @@ export function buildApprovalDescription(
         `**Resolution:** ${input.status || input.resolution || 'resolved'}`,
       ].join('\n')
 
+    case 'create_calendar_event':
+      return [
+        `**Title:** ${input.title || 'Untitled Event'}`,
+        `**Start:** ${input.start_time || 'TBD'}`,
+        `**End:** ${input.end_time || 'TBD'}`,
+        input.timezone ? `**Timezone:** ${input.timezone}` : '',
+        Array.isArray(input.attendees) && input.attendees.length > 0
+          ? `**Attendees:** ${(input.attendees as string[]).join(', ')}`
+          : '',
+        input.location ? `**Location:** ${input.location}` : '',
+        input.description
+          ? `**Description:** "${truncate(input.description as string, 200)}"`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+
     default:
       return `Will execute **${formatToolDisplayName(toolName)}** with the provided parameters.`
   }
@@ -354,6 +375,7 @@ const TOOL_ICON_CATEGORIES: Record<string, ToolIconCategory> = {
   get_today_events: 'calendar',
   get_week_events: 'calendar',
   find_free_slots: 'calendar',
+  create_calendar_event: 'calendar',
   get_compliance_overview: 'compliance',
   list_failing_controls: 'compliance',
   get_audit_status: 'compliance',

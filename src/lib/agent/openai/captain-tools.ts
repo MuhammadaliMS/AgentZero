@@ -84,6 +84,7 @@ const TOOLS_REQUIRING_APPROVAL = new Set([
   'create_commitment',
   'create_action',
   'resolve_action',
+  'create_calendar_event',
 ])
 
 const READ_ONLY_TOOLS = new Set([
@@ -334,6 +335,131 @@ async function fetchCalendarEvents(
       const data = (await res.json()) as { value?: Array<Record<string, unknown>>; error?: { message: string } }
       if (data.error) return `Microsoft Calendar error: ${data.error.message}`
       return JSON.stringify(data.value ?? [], null, 2)
+    } catch (e) {
+      return `Microsoft Calendar error: ${(e as Error).message}`
+    }
+  }
+
+  return 'No calendar integration connected.'
+}
+
+async function createCalendarEventImpl(
+  orgId: string,
+  args: {
+    title: string
+    start_time: string
+    end_time: string
+    attendees: string[] | null
+    location: string | null
+    description: string | null
+    timezone: string | null
+  }
+): Promise<string> {
+  const tz = args.timezone ?? 'UTC'
+
+  // Try Google Calendar first
+  const googleTokens = await TokenManager.getTokens(orgId, 'google_calendar')
+  if (googleTokens) {
+    try {
+      const body: Record<string, unknown> = {
+        summary: args.title,
+        start: { dateTime: args.start_time, timeZone: tz },
+        end: { dateTime: args.end_time, timeZone: tz },
+      }
+      if (args.attendees && args.attendees.length > 0) {
+        body.attendees = args.attendees.map((email) => ({ email }))
+      }
+      if (args.location) body.location = args.location
+      if (args.description) body.description = args.description
+
+      const res = await fetch(
+        'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${googleTokens.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        }
+      )
+      const data = (await res.json()) as {
+        id?: string
+        htmlLink?: string
+        summary?: string
+        start?: { dateTime?: string }
+        end?: { dateTime?: string }
+        attendees?: Array<{ email: string }>
+        error?: { message: string }
+      }
+      if (data.error) return `Google Calendar error: ${data.error.message}`
+      return JSON.stringify({
+        eventId: data.id,
+        title: data.summary,
+        start: data.start?.dateTime,
+        end: data.end?.dateTime,
+        attendees: (data.attendees ?? []).map((a) => a.email),
+        link: data.htmlLink,
+        provider: 'google',
+      }, null, 2)
+    } catch (e) {
+      return `Google Calendar error: ${(e as Error).message}`
+    }
+  }
+
+  // Try Microsoft Calendar
+  const msTokens = await TokenManager.getTokens(orgId, 'microsoft_calendar')
+  if (msTokens) {
+    try {
+      const body: Record<string, unknown> = {
+        subject: args.title,
+        start: { dateTime: args.start_time, timeZone: tz },
+        end: { dateTime: args.end_time, timeZone: tz },
+      }
+      if (args.attendees && args.attendees.length > 0) {
+        body.attendees = args.attendees.map((email) => ({
+          emailAddress: { address: email },
+          type: 'required',
+        }))
+      }
+      if (args.location) body.location = { displayName: args.location }
+      if (args.description) body.body = { contentType: 'text', content: args.description }
+
+      const res = await fetch(
+        'https://graph.microsoft.com/v1.0/me/events',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${msTokens.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        }
+      )
+      const data = (await res.json()) as {
+        id?: string
+        webLink?: string
+        subject?: string
+        start?: { dateTime?: string }
+        end?: { dateTime?: string }
+        attendees?: Array<{ emailAddress?: { address?: string } }>
+        error?: { message: string; code?: string }
+      }
+      if (data.error) {
+        if (data.error.code === 'ErrorAccessDenied' || data.error.code === 'AuthorizationRequestDenied') {
+          return 'Microsoft Calendar error: Insufficient permissions. Please reconnect Microsoft Calendar to grant write access (Calendars.ReadWrite scope).'
+        }
+        return `Microsoft Calendar error: ${data.error.message}`
+      }
+      return JSON.stringify({
+        eventId: data.id,
+        title: data.subject,
+        start: data.start?.dateTime,
+        end: data.end?.dateTime,
+        attendees: (data.attendees ?? []).map((a) => a.emailAddress?.address).filter(Boolean),
+        link: data.webLink,
+        provider: 'microsoft',
+      }, null, 2)
     } catch (e) {
       return `Microsoft Calendar error: ${(e as Error).message}`
     }
@@ -1259,6 +1385,31 @@ export function createCaptainTools(params: CaptainToolParams) {
     }),
   })
 
+  const createCalendarEvent = tool({
+    name: 'create_calendar_event',
+    description: 'Create a calendar event/meeting invite with title, time, attendees, and optional location/description. Sends invites to attendees automatically.',
+    parameters: z.object({
+      title: z.string().describe('Event title/summary'),
+      start_time: z.string().describe('ISO 8601 start time (e.g. 2024-03-15T10:00:00-05:00)'),
+      end_time: z.string().describe('ISO 8601 end time'),
+      attendees: z.array(z.string()).nullable().default(null).describe('Email addresses of attendees to invite'),
+      location: z.string().nullable().default(null).describe('Physical or virtual location'),
+      description: z.string().nullable().default(null).describe('Event description or agenda'),
+      timezone: z.string().nullable().default(null).describe('IANA timezone (e.g. America/New_York). Defaults to UTC.'),
+    }),
+    execute: async (args) => wrappedExecute('create_calendar_event', args as Record<string, unknown>, params, async () => {
+      return createCalendarEventImpl(orgId, {
+        title: args.title,
+        start_time: args.start_time,
+        end_time: args.end_time,
+        attendees: args.attendees,
+        location: args.location,
+        description: args.description,
+        timezone: args.timezone,
+      })
+    }),
+  })
+
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // COMPLIANCE / VANTA TOOLS (3)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2108,10 +2259,11 @@ export function createCaptainTools(params: CaptainToolParams) {
     read_slack_dms: readSlackDms,
     get_slack_mentions: getSlackMentions,
     search_slack: searchSlack,
-    // Calendar (3)
+    // Calendar (4)
     get_today_events: getTodayEvents,
     get_week_events: getWeekEvents,
     find_free_slots: findFreeSlots,
+    create_calendar_event: createCalendarEvent,
     // Compliance (3)
     get_compliance_overview: getComplianceOverview,
     list_failing_controls: listFailingControls,

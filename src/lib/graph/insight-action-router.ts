@@ -13,6 +13,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { createOutcome } from '@/lib/agent/runtime/outcome-runtime'
 import type { Json, Database } from '@/types/database'
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -147,6 +148,71 @@ export async function routeInsightsToActions(
           updated_at: new Date().toISOString(),
         })
         .eq('id', insight.id)
+
+      // ── Insight-to-Outcome pipeline ──────────────────────────────────
+      // High-confidence insights with a create_outcome action template
+      // can draft a proactive outcome directly. Fire-and-forget — never
+      // block the routing loop. All proactive outcomes start as 'planning'.
+      if (
+        decisionMode === 'recommended' &&
+        (insight.action_template as Record<string, unknown>)?.type === 'create_outcome'
+      ) {
+        const template = insight.action_template as Record<string, unknown>
+        const outcomeTitle = (template.title as string) || insight.summary.slice(0, 200)
+        const outcomeDescription =
+          (template.description as string) ||
+          `Auto-drafted from insight: ${insight.summary}`
+
+        // Fire-and-forget: don't await — outcome creation must never
+        // block or fail the routing loop
+        void createOutcome({
+          orgId,
+          title: outcomeTitle,
+          description: outcomeDescription,
+          goalType: 'proactive_signal',
+          relatedEntityIds: insight.related_entity_ids ?? [],
+          priority: mapConfidenceToSeverity(insight.confidence) === 'critical'
+            ? 'critical'
+            : mapConfidenceToSeverity(insight.confidence) === 'high'
+              ? 'high'
+              : 'medium',
+        }).then(async (outcomeId) => {
+          if (outcomeId) {
+            console.log(
+              `[InsightRouter] Drafted proactive outcome ${outcomeId} from insight ${insight.id}`
+            )
+            // Close the correlation loop: write outcome_id back to the
+            // finding metadata so feedback-tracker can link
+            // finding → outcome for resume/cancel flows.
+            try {
+              const adminClient = createAdminClient()
+              await adminClient
+                .from('patrol_findings')
+                .update({
+                  metadata: {
+                    source: 'graph_insight',
+                    insight_id: insight.id,
+                    insight_type: insight.insight_type,
+                    decision_mode: decisionMode,
+                    action_template: insight.action_template,
+                    outcome_id: outcomeId,
+                  } as unknown as Json,
+                })
+                .eq('id', finding.id)
+            } catch (updateErr) {
+              console.error(
+                `[InsightRouter] Failed to write outcome_id back to finding ${finding.id}:`,
+                updateErr
+              )
+            }
+          }
+        }).catch(err => {
+          console.error(
+            `[InsightRouter] Failed to draft outcome from insight ${insight.id}:`,
+            err
+          )
+        })
+      }
 
       result.routed++
       if (decisionMode === 'auto') {

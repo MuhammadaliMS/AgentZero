@@ -29,6 +29,7 @@ export interface RolloutConfig {
   modeChangedAt: string | null
   modeChangedReason: string | null
   previousMode: string | null
+  manualAutoApproved: boolean
 }
 
 export interface RolloutMeasurement {
@@ -56,12 +57,19 @@ const DEFAULT_AUTO_ACTIONS = [
   'get_today_events', 'get_week_events', 'find_free_slots',
   'get_compliance_overview', 'list_failing_controls', 'get_audit_status',
   'list_connected_integrations', 'get_integration_health',
+  // Outcome control plane — these are internal orchestration tools,
+  // not external actions. They must always be allowed so the agent
+  // can manage its own task tracking in any rollout mode.
+  'create_outcome', 'update_outcome', 'list_outcomes',
 ]
 
 // In shadow mode, these are the ONLY actions that can execute
 const SHADOW_ACTIONS = [
   'recall_memory', 'store_memory', 'query_entity_graph',
   'get_entity_timeline', 'emit_decision_card',
+  // Outcome control plane — even in shadow mode, the agent must be
+  // able to create/manage outcomes to build a track record.
+  'create_outcome', 'update_outcome', 'list_outcomes',
 ]
 
 // ─── Config Management ────────────────────────────────────────────────────
@@ -90,15 +98,20 @@ export async function getRolloutConfig(orgId: string): Promise<RolloutConfig> {
         modeChangedAt: data.mode_changed_at as string | null,
         modeChangedReason: data.mode_changed_reason as string | null,
         previousMode: data.previous_mode as string | null,
+        manualAutoApproved: (data.manual_auto_approved as boolean) ?? false,
       }
     }
 
-    // Create default config
+    // Create default config — start in 'assisted' mode (not 'shadow').
+    // Shadow mode blocks all tools except memory, creating a deadlock where
+    // the agent can never earn trust to advance. Assisted mode lets the agent
+    // read and act, with external actions requiring approval.
     const { data: newConfig } = await supabase
       .from('org_rollout_config')
       .insert({
         org_id: orgId,
-        rollout_mode: 'shadow' as const,
+        rollout_mode: 'assisted' as const,
+        min_interactions: 20,
         auto_allowed_actions: DEFAULT_AUTO_ACTIONS,
       })
       .select('*')
@@ -107,14 +120,15 @@ export async function getRolloutConfig(orgId: string): Promise<RolloutConfig> {
     if (!newConfig) {
       return {
         orgId,
-        rolloutMode: 'shadow',
+        rolloutMode: 'assisted',
         minAcceptanceRate: 0.80,
         maxErrorRate: 0.05,
-        minInteractions: 40,
+        minInteractions: 20,
         autoAllowedActions: DEFAULT_AUTO_ACTIONS,
         modeChangedAt: null,
         modeChangedReason: null,
         previousMode: null,
+        manualAutoApproved: false,
       }
     }
 
@@ -128,18 +142,20 @@ export async function getRolloutConfig(orgId: string): Promise<RolloutConfig> {
       modeChangedAt: newConfig.mode_changed_at as string | null,
       modeChangedReason: newConfig.mode_changed_reason as string | null,
       previousMode: newConfig.previous_mode as string | null,
+      manualAutoApproved: (newConfig.manual_auto_approved as boolean) ?? false,
     }
   } catch {
     return {
       orgId,
-      rolloutMode: 'shadow',
+      rolloutMode: 'assisted',
       minAcceptanceRate: 0.80,
       maxErrorRate: 0.05,
-      minInteractions: 40,
+      minInteractions: 20,
       autoAllowedActions: DEFAULT_AUTO_ACTIONS,
       modeChangedAt: null,
       modeChangedReason: null,
       previousMode: null,
+      manualAutoApproved: false,
     }
   }
 }
@@ -205,6 +221,22 @@ export async function evaluateRolloutAdvancement(
       return { newMode: null, reason: 'Not enough measurement data (need ≥2 weeks)' }
     }
 
+    // ── Phase 3a Safety Guard: Latest-week error rate auto-revert ────────
+    const latestMeasurement = measurements[0] // already ordered desc
+    const latestError = (latestMeasurement.error_rate as number) ?? 0
+
+    if (latestError > 0.10) {
+      const previousMode = getPreviousMode(config.rolloutMode)
+      if (previousMode !== config.rolloutMode) {
+        await updateRolloutMode(orgId, previousMode, config.rolloutMode,
+          `SAFETY REVERT: latest week error_rate=${(latestError * 100).toFixed(1)}% exceeds 10% threshold`)
+        return {
+          newMode: previousMode,
+          reason: `Latest week error rate ${(latestError * 100).toFixed(1)}% > 10% — immediate safety revert to ${previousMode}`,
+        }
+      }
+    }
+
     // Aggregate metrics
     const totalInteractions = measurements.reduce(
       (sum, m) => sum + ((m.total_outcomes as number) ?? 0), 0
@@ -245,6 +277,14 @@ export async function evaluateRolloutAdvancement(
     if (canAdvance) {
       const nextMode = getNextMode(config.rolloutMode)
       if (nextMode !== config.rolloutMode) {
+        // ── Phase 3a Safety Guard: Manual gate for auto advancement ──────
+        if (nextMode === 'auto' && !config.manualAutoApproved) {
+          return {
+            newMode: null,
+            reason: 'Advancement to auto requires explicit admin approval via API or chat command',
+          }
+        }
+
         await updateRolloutMode(orgId, nextMode, config.rolloutMode,
           `Advancing: acceptance=${(avgAcceptance * 100).toFixed(0)}%, error=${(avgError * 100).toFixed(0)}%`)
         return {
@@ -261,6 +301,44 @@ export async function evaluateRolloutAdvancement(
   } catch (error) {
     console.error('[RolloutManager] Evaluation failed:', error)
     return { newMode: null, reason: 'Evaluation error' }
+  }
+}
+
+/**
+ * Explicitly set the rollout mode for an org.
+ * Used by admin API or chat commands to manually control autonomy level.
+ */
+export async function setRolloutMode(
+  orgId: string,
+  newMode: RolloutMode,
+  reason: string
+): Promise<{ success: boolean; previousMode: RolloutMode; reason: string }> {
+  try {
+    const config = await getRolloutConfig(orgId)
+    const previousMode = config.rolloutMode
+
+    await updateRolloutMode(orgId, newMode, previousMode, reason)
+
+    // If setting to 'auto', also set the manual approval flag
+    if (newMode === 'auto') {
+      const supabase = createAdminClient()
+      await supabase
+        .from('org_rollout_config')
+        .update({
+          manual_auto_approved: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('org_id', orgId)
+    }
+
+    return { success: true, previousMode, reason }
+  } catch (error) {
+    console.error('[RolloutManager] setRolloutMode failed:', error)
+    return {
+      success: false,
+      previousMode: 'assisted' as RolloutMode,
+      reason: `Failed to set mode: ${error instanceof Error ? error.message : 'unknown error'}`,
+    }
   }
 }
 
@@ -307,6 +385,17 @@ export async function recordWeeklyMeasurement(
     const intIgnored = interventions?.filter(i => i.user_response === 'ignored').length ?? 0
     const intRejected = interventions?.filter(i => i.user_response === 'rejected').length ?? 0
 
+    // ── Phase 3b: Query outcome metrics directly ──────────────────────
+    const { data: weekOutcomes } = await supabase
+      .from('outcomes')
+      .select('status')
+      .eq('org_id', orgId)
+      .gte('updated_at', weekStart.toISOString())
+
+    const outcomeCompleted = weekOutcomes?.filter(o => o.status === 'completed').length ?? 0
+    const outcomeFailed = weekOutcomes?.filter(o => o.status === 'failed').length ?? 0
+    const outcomeTotal = weekOutcomes?.length ?? 0
+
     const config = await getRolloutConfig(orgId)
     const acceptanceRate = (m.acceptance_rate as number) ?? null
     const errorRate = (m.error_rate as number) ?? null
@@ -328,12 +417,17 @@ export async function recordWeeklyMeasurement(
       }
     }
 
+    // Use direct outcome query values, falling back to RPC values if needed
+    const finalTotalOutcomes = outcomeTotal > 0 ? outcomeTotal : ((m.total_outcomes as number) ?? 0)
+    const finalCompletedOutcomes = outcomeTotal > 0 ? outcomeCompleted : ((m.completed_outcomes as number) ?? 0)
+    const finalFailedOutcomes = outcomeTotal > 0 ? outcomeFailed : ((m.failed_outcomes as number) ?? 0)
+
     const measurement = {
       org_id: orgId,
       measurement_week: weekStart.toISOString().split('T')[0],
-      total_outcomes: (m.total_outcomes as number) ?? 0,
-      completed_outcomes: (m.completed_outcomes as number) ?? 0,
-      failed_outcomes: (m.failed_outcomes as number) ?? 0,
+      total_outcomes: finalTotalOutcomes,
+      completed_outcomes: finalCompletedOutcomes,
+      failed_outcomes: finalFailedOutcomes,
       total_decisions: (m.total_decisions as number) ?? 0,
       avg_decision_confidence: (m.avg_confidence as number) ?? null,
       acceptance_rate: acceptanceRate,
@@ -350,9 +444,9 @@ export async function recordWeeklyMeasurement(
 
     return {
       measurementWeek: weekStart.toISOString().split('T')[0],
-      totalOutcomes: (m.total_outcomes as number) ?? 0,
-      completedOutcomes: (m.completed_outcomes as number) ?? 0,
-      failedOutcomes: (m.failed_outcomes as number) ?? 0,
+      totalOutcomes: finalTotalOutcomes,
+      completedOutcomes: finalCompletedOutcomes,
+      failedOutcomes: finalFailedOutcomes,
       totalDecisions: (m.total_decisions as number) ?? 0,
       avgDecisionConfidence: (m.avg_confidence as number) ?? null,
       acceptanceRate,

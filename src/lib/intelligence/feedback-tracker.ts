@@ -9,6 +9,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { trackUtilityEventBatch } from '@/lib/graph/utility-tracker'
 import { handleFindingResolved } from '@/lib/graph/insight-action-router'
+import { updateOutcomeStatus } from '@/lib/agent/runtime/outcome-runtime'
 
 type FeedbackSignalInsert = Database['public']['Tables']['feedback_signals']['Insert']
 
@@ -97,6 +98,45 @@ export async function trackNudgeAcknowledged(
   } catch {
     // Fire-and-forget — don't fail the acknowledgment
   }
+
+  // ── Outcome-linked nudge backflow ──────────────────────────────────────
+  // If the finding that sourced this nudge is linked to an outcome,
+  // resume the outcome (blocked → executing) and track 'accepted' utility.
+  try {
+    const { data: nudgeForOutcome } = await supabase
+      .from('nudges')
+      .select('source_finding_id')
+      .eq('id', nudgeId)
+      .maybeSingle()
+
+    if (nudgeForOutcome?.source_finding_id) {
+      const { data: finding } = await supabase
+        .from('patrol_findings')
+        .select('metadata')
+        .eq('id', nudgeForOutcome.source_finding_id)
+        .maybeSingle()
+
+      const outcomeId = (finding?.metadata as Record<string, unknown> | null)?.outcome_id as string | undefined
+      if (outcomeId) {
+        updateOutcomeStatus(outcomeId, 'executing', { orgId }).catch((err) =>
+          console.error('[FeedbackTracker] Failed to resume outcome after nudge accepted:', err)
+        )
+        // Resolve outcome → related_entity_ids for utility tracking.
+        // outcomeId is NOT an entity ID — passing it directly would fail the FK.
+        const { data: outcome } = await supabase
+          .from('outcomes')
+          .select('related_entity_ids')
+          .eq('id', outcomeId)
+          .maybeSingle()
+        const entityIds = (outcome?.related_entity_ids ?? []) as string[]
+        if (entityIds.length > 0) {
+          trackUtilityEventBatch(orgId, entityIds, 'accepted').catch(() => {})
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[FeedbackTracker] Outcome backflow (accepted) failed:', err)
+  }
 }
 
 /** Track when a user dismisses a nudge. */
@@ -120,6 +160,39 @@ export async function trackNudgeDismissed(
     .from('nudges')
     .update({ status: 'dismissed' as const })
     .eq('id', nudgeId)
+
+  // ── Outcome-linked nudge backflow ──────────────────────────────────────
+  // If the finding that sourced this nudge is linked to an outcome,
+  // cancel the outcome and track 'rejected' utility.
+  try {
+    const { data: nudgeForOutcome } = await supabase
+      .from('nudges')
+      .select('source_finding_id')
+      .eq('id', nudgeId)
+      .maybeSingle()
+
+    if (nudgeForOutcome?.source_finding_id) {
+      const { data: finding } = await supabase
+        .from('patrol_findings')
+        .select('metadata')
+        .eq('id', nudgeForOutcome.source_finding_id)
+        .maybeSingle()
+
+      const outcomeId = (finding?.metadata as Record<string, unknown> | null)?.outcome_id as string | undefined
+      if (outcomeId) {
+        updateOutcomeStatus(outcomeId, 'cancelled', {
+          orgId,
+          blockerSummary: 'User dismissed the nudge',
+        }).catch((err) =>
+          console.error('[FeedbackTracker] Failed to cancel outcome after nudge dismissed:', err)
+        )
+        // Note: no utility event for 'rejected' — dismissal is already tracked
+        // via the 'nudge_dismissed' feedback signal above.
+      }
+    }
+  } catch (err) {
+    console.error('[FeedbackTracker] Outcome backflow (rejected) failed:', err)
+  }
 }
 
 /** Track when an action is resolved after a nudge existed for it. */

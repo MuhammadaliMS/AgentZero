@@ -95,6 +95,39 @@ CREATE TABLE outcome_runs (
 CREATE INDEX idx_runs_outcome ON outcome_runs(outcome_id, plan_version);
 CREATE INDEX idx_runs_org_status ON outcome_runs(org_id) WHERE status = 'active';
 
+-- ─── B2.5 pending_approvals — Must exist before outcome_steps FK ─────────
+-- Moved here from migration 011 because outcome_steps.approval_id references
+-- pending_approvals(approval_id). Creating it in the same migration avoids
+-- FK errors when migrations run sequentially.
+
+CREATE TABLE IF NOT EXISTS pending_approvals (
+  approval_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  tool_name TEXT NOT NULL,
+  tool_input JSONB NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '2 minutes'
+);
+
+CREATE INDEX IF NOT EXISTS idx_pa_conversation
+  ON pending_approvals(conversation_id)
+  WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_pa_expires
+  ON pending_approvals(expires_at)
+  WHERE status = 'pending';
+
+ALTER TABLE pending_approvals ENABLE ROW LEVEL SECURITY;
+
+-- Service role only: RLS is enabled with ZERO policies.
+-- service_role bypasses RLS entirely, so no policy = locked to service_role.
+-- Authenticated users have no access (correct: internal system table).
+
+
 -- ─── B3. outcome_steps — Individual actions within a run ────
 
 CREATE TABLE outcome_steps (
@@ -467,6 +500,9 @@ CREATE TABLE org_rollout_config (
   mode_changed_at TIMESTAMPTZ DEFAULT now(),
   mode_changed_reason TEXT,
   previous_mode TEXT,
+
+  -- Phase 3a: Manual gate — must be explicitly set to true before advancing to auto
+  manual_auto_approved BOOLEAN NOT NULL DEFAULT false,
 
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),

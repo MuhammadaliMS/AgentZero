@@ -241,16 +241,27 @@ export async function* runOpenAICaptain(
       conversationId: params.conversationId,
       connectedIntegrations: [...context.connectedIntegrations], // Mutable copy
       onEmitEvent: (event: StreamEvent) => {
-        // For blocking events (approval_required, integration_required),
-        // use the direct SSE callback if available (same as Claude SDK)
-        if (
-          event.type === 'approval_required' ||
-          event.type === 'integration_required'
-        ) {
+        // Forward blocking events (approval_required, integration_required)
+        // AND semantic lifecycle events so the UI can react in real-time.
+        // Non-blocking tool events (tool_call, tool_result) are emitted
+        // from the stream loop below instead of being queued here.
+        const forwardedTypes = new Set([
+          // Blocking events (same as Claude SDK)
+          'approval_required',
+          'integration_required',
+          // Semantic lifecycle events from tool execution
+          'decision_card_emitted',
+          'outcome_started',
+          'outcome_blocked',
+          'outcome_completed',
+          'intervention_triaged',
+          'narrative_updated',
+          'preference_learned',
+          'rollout_mode_changed',
+        ])
+        if (forwardedTypes.has(event.type)) {
           params.onEmitEvent?.(event)
         }
-        // Non-blocking tool events (tool_call, tool_result) will now be
-        // emitted from the stream loop below instead of being queued.
       },
       onToolOutput: params.onToolOutput,
     }

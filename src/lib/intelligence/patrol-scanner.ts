@@ -14,6 +14,7 @@ import {
   daysSinceUpdate,
   isActionExpired,
 } from './risk-engine'
+import { updateOutcomeStatus } from '@/lib/agent/runtime/outcome-runtime'
 
 type PatrolFindingInsert = Database['public']['Tables']['patrol_findings']['Insert']
 type PatrolFindingType = PatrolFindingInsert['type']
@@ -59,6 +60,58 @@ export async function runPatrolScan(
   return result
 }
 
+// ─── Helpers: Outcome Linking ────────────────────────────────────────────────
+
+/**
+ * Check if a commitment has a linked active outcome (planning/executing/blocked).
+ * Returns the outcome row if found, null otherwise.
+ */
+async function findLinkedOutcome(
+  supabase: SupabaseClient<Database>,
+  orgId: string,
+  conversationId: string | null
+): Promise<{ id: string; status: string; blocker_summary: string | null } | null> {
+  if (!conversationId) return null
+
+  const { data } = await supabase
+    .from('outcomes')
+    .select('id, status, blocker_summary')
+    .eq('org_id', orgId)
+    .eq('conversation_id', conversationId)
+    .in('status', ['planning', 'executing', 'blocked'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  return data ?? null
+}
+
+/**
+ * Update an outcome's blocker_summary with deadline info from a patrol finding.
+ * If the outcome is not already blocked, transitions it to 'blocked'.
+ */
+async function syncFindingToOutcome(
+  outcomeRow: { id: string; status: string; blocker_summary: string | null },
+  orgId: string,
+  findingTitle: string
+): Promise<void> {
+  const blockerLine = `[Patrol] ${findingTitle}`
+  const existingSummary = outcomeRow.blocker_summary ?? ''
+  // Avoid duplicate lines
+  if (existingSummary.includes(blockerLine)) return
+
+  const newSummary = existingSummary
+    ? `${existingSummary}\n${blockerLine}`
+    : blockerLine
+
+  // Keep the outcome in its current status but update the blocker summary
+  await updateOutcomeStatus(
+    outcomeRow.id,
+    outcomeRow.status as 'planning' | 'executing' | 'blocked',
+    { blockerSummary: newSummary, orgId }
+  )
+}
+
 // ─── Scan: Deadline Commitments + Risk Scoring ──────────────────────────────
 
 async function scanDeadlineCommitments(
@@ -99,6 +152,10 @@ async function scanDeadlineCommitments(
       .eq('id', commitment.id)
     result.riskScoresUpdated++
 
+    // Check for linked active outcome (planning/executing/blocked)
+    const linkedOutcome = await findLinkedOutcome(supabase, orgId, commitment.conversation_id)
+    const outcomeMetadata = linkedOutcome ? { outcome_id: linkedOutcome.id } : {}
+
     // Check for auto-status transitions
     const transition = getStatusTransition(commitment, riskScore)
     if (transition) {
@@ -109,15 +166,23 @@ async function scanDeadlineCommitments(
       result.statusTransitions++
 
       // Create finding for the transition
+      const transitionTitle = transition.newStatus === 'overdue'
+        ? `Overdue: ${commitment.title}`
+        : `At Risk (score ${riskScore}): ${commitment.title}`
+
       await upsertFinding(supabase, orgId, {
         type: transition.newStatus === 'overdue' ? 'deadline_overdue' : 'at_risk_commitment',
         severity: riskScore >= 80 ? 'critical' : riskScore >= 60 ? 'high' : 'medium',
-        title: transition.newStatus === 'overdue'
-          ? `Overdue: ${commitment.title}`
-          : `At Risk (score ${riskScore}): ${commitment.title}`,
+        title: transitionTitle,
         description: `Commitment "${commitment.title}" auto-transitioned to ${transition.newStatus}. Risk score: ${riskScore}/100.`,
         commitment_id: commitment.id,
+        metadata: outcomeMetadata,
       }, result)
+
+      // Sync to linked outcome's blocker_summary
+      if (linkedOutcome) {
+        await syncFindingToOutcome(linkedOutcome, orgId, transitionTitle)
+      }
     }
 
     // Deadline proximity findings (only for non-overdue)
@@ -125,32 +190,45 @@ async function scanDeadlineCommitments(
       const dueDate = new Date(commitment.due_date)
       const daysRemaining = (dueDate.getTime() - Date.now()) / 86_400_000
 
+      let deadlineTitle: string | null = null
+
       if (daysRemaining <= 0) {
         // Already handled by overdue transition above
       } else if (daysRemaining <= 1) {
+        deadlineTitle = `Due today: ${commitment.title}`
         await upsertFinding(supabase, orgId, {
           type: 'deadline_approaching',
           severity: 'critical',
-          title: `Due today: ${commitment.title}`,
+          title: deadlineTitle,
           description: `Commitment due within 24 hours. Priority: ${commitment.priority}. Risk score: ${riskScore}.`,
           commitment_id: commitment.id,
+          metadata: outcomeMetadata,
         }, result)
       } else if (daysRemaining <= 3) {
+        deadlineTitle = `Due in ${Math.ceil(daysRemaining)} days: ${commitment.title}`
         await upsertFinding(supabase, orgId, {
           type: 'deadline_approaching',
           severity: 'high',
-          title: `Due in ${Math.ceil(daysRemaining)} days: ${commitment.title}`,
+          title: deadlineTitle,
           description: `Commitment due within 3 days. Priority: ${commitment.priority}. Risk score: ${riskScore}.`,
           commitment_id: commitment.id,
+          metadata: outcomeMetadata,
         }, result)
       } else if (daysRemaining <= 7) {
+        deadlineTitle = `Due in ${Math.ceil(daysRemaining)} days: ${commitment.title}`
         await upsertFinding(supabase, orgId, {
           type: 'deadline_approaching',
           severity: 'medium',
-          title: `Due in ${Math.ceil(daysRemaining)} days: ${commitment.title}`,
+          title: deadlineTitle,
           description: `Commitment due within 7 days. Priority: ${commitment.priority}. Risk score: ${riskScore}.`,
           commitment_id: commitment.id,
+          metadata: outcomeMetadata,
         }, result)
+      }
+
+      // Sync deadline finding to linked outcome's blocker_summary
+      if (linkedOutcome && deadlineTitle) {
+        await syncFindingToOutcome(linkedOutcome, orgId, deadlineTitle)
       }
     }
   }
@@ -275,6 +353,7 @@ interface FindingInput {
   entity_id?: string
   action_id?: string
   memory_id?: string
+  metadata?: Record<string, unknown>
 }
 
 async function upsertFinding(
@@ -306,7 +385,7 @@ async function upsertFinding(
         severity: input.severity,
         title: input.title,
         description: input.description,
-        metadata: { last_refreshed: new Date().toISOString() },
+        metadata: { last_refreshed: new Date().toISOString(), ...input.metadata },
       })
       .eq('id', existing.id)
     result.findingsUpdated++
@@ -323,7 +402,7 @@ async function upsertFinding(
       action_id: input.action_id ?? null,
       memory_id: input.memory_id ?? null,
       status: 'open',
-      metadata: { created_by_patrol: true },
+      metadata: { created_by_patrol: true, ...input.metadata },
     })
     result.findingsCreated++
   }

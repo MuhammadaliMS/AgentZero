@@ -2007,6 +2007,7 @@ export interface Database {
           mode_changed_at: string | null
           mode_changed_reason: string | null
           previous_mode: string | null
+          manual_auto_approved: boolean
           created_at: string
           updated_at: string
         }
@@ -2021,6 +2022,7 @@ export interface Database {
           mode_changed_at?: string | null
           mode_changed_reason?: string | null
           previous_mode?: string | null
+          manual_auto_approved?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -2033,6 +2035,7 @@ export interface Database {
           mode_changed_at?: string | null
           mode_changed_reason?: string | null
           previous_mode?: string | null
+          manual_auto_approved?: boolean
           updated_at?: string
         }
         Relationships: [

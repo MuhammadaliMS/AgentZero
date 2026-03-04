@@ -74,7 +74,7 @@ export function getRequiredToolSets(_connectedIntegrations: string[]): string[] 
   // Always load ALL tool sets so the agent can attempt any tool.
   // canUseTool intercepts calls to unconnected integrations and emits
   // an integration_required event, showing the inline connect card.
-  return ['supabase', 'memory', 'integration', 'slack', 'email', 'calendar', 'vanta']
+  return ['supabase', 'memory', 'integration', 'slack', 'email', 'calendar', 'vanta', 'outcome']
 }
 
 // ─── Graph Context Loader ────────────────────────────────────────────────

@@ -55,12 +55,18 @@ export interface InsightsView {
   totalActive: number
 }
 
+export interface OutcomesView {
+  active: Array<{ id: string; title: string; status: string; priority: string; progress: string; blockerSummary: string | null }>
+  totalActive: number
+}
+
 export interface WorkerViews {
   cole: ColeView
   rhea: RheaView
   eve: EveView
   patrol: PatrolView
   insights: InsightsView
+  outcomes: OutcomesView
 }
 
 export interface BriefMetrics {
@@ -79,15 +85,16 @@ export async function gatherWorkerViews(
   supabase: SupabaseClient<Database>,
   orgId: string
 ): Promise<WorkerViews> {
-  const [cole, rhea, eve, patrol, insights] = await Promise.all([
+  const [cole, rhea, eve, patrol, insights, outcomes] = await Promise.all([
     gatherColeView(supabase, orgId),
     gatherRheaView(supabase, orgId),
     gatherEveView(supabase, orgId),
     gatherPatrolView(supabase, orgId),
     gatherInsightsView(supabase, orgId),
+    gatherOutcomesView(supabase, orgId),
   ])
 
-  return { cole, rhea, eve, patrol, insights }
+  return { cole, rhea, eve, patrol, insights, outcomes }
 }
 
 // ─── Cole (Program Management) ──────────────────────────────────────────────
@@ -369,6 +376,19 @@ export function buildBriefPrompt(
     }
   }
 
+  // ── Active Outcomes ─────────────────────────────────────────────────
+  if (views.outcomes.totalActive > 0) {
+    sections.push('\n## Active Outcomes')
+    for (const o of views.outcomes.active) {
+      const statusEmoji = o.status === 'executing' ? '▶️' : o.status === 'blocked' ? '⛔' : '📋'
+      let line = `- ${statusEmoji} "${o.title}" — ${o.status}, ${o.priority} priority, progress: ${o.progress}`
+      if (o.blockerSummary) {
+        line += ` | Blocker: ${o.blockerSummary}`
+      }
+      sections.push(line)
+    }
+  }
+
   // ── Knowledge Graph Insights ──────────────────────────────────────────
   if (views.insights.totalActive > 0) {
     sections.push('\n## Knowledge Graph Insights')
@@ -467,6 +487,63 @@ async function gatherInsightsView(
       .filter(i => i.insight_type === 'risk')
       .slice(0, 3)
       .map(i => ({ summary: i.summary, confidence: i.confidence })),
+    totalActive: all.length,
+  }
+}
+
+// ─── Outcomes View ──────────────────────────────────────────────────────────
+
+async function gatherOutcomesView(
+  supabase: SupabaseClient<Database>,
+  orgId: string
+): Promise<OutcomesView> {
+  const { data: activeOutcomes } = await supabase
+    .from('outcomes')
+    .select('id, title, status, priority, blocker_summary')
+    .eq('org_id', orgId)
+    .in('status', ['planning', 'executing', 'blocked'])
+    .order('priority', { ascending: true })
+    .limit(20)
+
+  const all = activeOutcomes ?? []
+
+  // For each outcome, compute progress from outcome_steps via active runs
+  const active: OutcomesView['active'] = []
+
+  for (const o of all) {
+    // Find the active run for this outcome
+    const { data: activeRun } = await supabase
+      .from('outcome_runs')
+      .select('id')
+      .eq('outcome_id', o.id)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle()
+
+    let progress = '0/0'
+    if (activeRun) {
+      const { data: steps } = await supabase
+        .from('outcome_steps')
+        .select('id, status')
+        .eq('run_id', activeRun.id)
+
+      const totalSteps = steps?.length ?? 0
+      const completedSteps = steps?.filter((s) => s.status === 'completed').length ?? 0
+      progress = `${completedSteps}/${totalSteps}`
+    }
+
+    active.push({
+      id: o.id,
+      title: o.title,
+      status: o.status,
+      priority: o.priority,
+      progress,
+      blockerSummary: o.blocker_summary,
+    })
+  }
+
+  return {
+    active,
     totalActive: all.length,
   }
 }

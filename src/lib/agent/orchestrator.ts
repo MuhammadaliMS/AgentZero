@@ -47,6 +47,8 @@ import { createEmailTools } from './tools/email-tools'
 import { createCalendarTools } from './tools/calendar-tools'
 import { createVantaTools } from './tools/vanta-tools'
 import { createIntegrationTools } from './tools/integration-tools'
+import { createOutcomeTools } from './tools/outcome-tools'
+import { getActiveOutcomes } from './runtime/outcome-runtime'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -327,6 +329,16 @@ export async function* runCaptain(
       }
     }
 
+    // Inject active outcomes into context so Captain knows about ongoing tasks
+    const activeOutcomes = await getActiveOutcomes(orgId, 5).catch(() => [])
+    if (activeOutcomes.length > 0) {
+      const outcomeSummary = activeOutcomes.map((o: { title: string; status: string; priority: string; blockerSummary: string | null }) => {
+        const status = o.status === 'blocked' ? `⛔ BLOCKED: ${o.blockerSummary}` : o.status
+        return `- ${o.title} [${status}] (${o.priority})`
+      }).join('\n')
+      context.systemPrompt += `\n\n## Active Outcomes\n${outcomeSummary}`
+    }
+
     const requiredToolSets = getRequiredToolSets(context.connectedIntegrations)
 
     // Create ephemeral workspace for built-in tools (Bash, Read, Write, Glob, Grep)
@@ -351,7 +363,62 @@ export async function* runCaptain(
       // Cast needed: StreamEvent has a narrow `type` union, HookContext uses a wider
       // HookEmittableEvent to avoid circular imports. At runtime they're compatible.
       onEmitEvent: params.onEmitEvent as HookContext['onEmitEvent'],
-      onToolOutput: params.onToolOutput,
+      onToolOutput: (toolName: string, output: string) => {
+        // Forward to caller (extraction pipeline)
+        params.onToolOutput?.(toolName, output)
+
+        // ── Outcome stream events ──
+        // Intercept outcome tool results and emit semantic events.
+        // NOTE: Claude SDK tools return MCP envelopes { content: [{ type: 'text', text: '...' }] }.
+        // The hooks serialize this with JSON.stringify, so `output` may be the envelope string
+        // rather than the flat JSON. We must unwrap before parsing the actual tool result.
+        try {
+          const baseName = toolName.includes('__') ? toolName.split('__').pop()! : toolName
+          if ((baseName === 'create_outcome' || baseName === 'update_outcome') && output) {
+            // Unwrap MCP envelope if present (Claude SDK path), otherwise use flat JSON (OpenAI path)
+            let toolText = output
+            try {
+              const envelope = JSON.parse(output)
+              if (envelope?.content?.[0]?.type === 'text' && typeof envelope.content[0].text === 'string') {
+                toolText = envelope.content[0].text
+              }
+            } catch {
+              // Not valid JSON yet — will be parsed below
+            }
+
+            const parsed = JSON.parse(toolText)
+
+            if (baseName === 'create_outcome') {
+              if (parsed.outcomeId && parsed.status === 'executing') {
+                hookEventQueue.push({
+                  type: 'outcome_started',
+                  outcomeId: parsed.outcomeId,
+                  outcomeTitle: parsed.planSummary ?? 'New outcome',
+                  outcomeStatus: 'executing',
+                })
+              }
+            } else if (baseName === 'update_outcome') {
+              if (parsed.statusChanged && parsed.newStatus) {
+                const eventType =
+                  parsed.newStatus === 'blocked' ? 'outcome_blocked' as const
+                  : ['completed', 'failed', 'cancelled'].includes(parsed.newStatus)
+                    ? 'outcome_completed' as const
+                    : null
+                if (eventType) {
+                  hookEventQueue.push({
+                    type: eventType,
+                    outcomeId: parsed.outcomeId,
+                    outcomeStatus: parsed.newStatus,
+                    content: parsed.blockerSummary ?? undefined,
+                  })
+                }
+              }
+            }
+          }
+        } catch {
+          // Parsing failures are non-fatal — just skip event emission
+        }
+      },
       onToolUse: (toolName, input) => {
         hookEventQueue.push({
           type: 'tool_use',
@@ -1003,6 +1070,11 @@ function buildMcpServers(
       createSdkMcpServer({
         name: 'vanta-tools',
         tools: createVantaTools(orgId),
+      }),
+    outcome: () =>
+      createSdkMcpServer({
+        name: 'outcome-tools',
+        tools: createOutcomeTools(orgId, conversationId),
       }),
   }
 

@@ -77,3 +77,44 @@ export async function POST(request: Request) {
   const result = await evaluateRolloutAdvancement(profile.org_id)
   return NextResponse.json(result)
 }
+
+/**
+ * PUT /api/agent/rollout
+ * Explicitly set rollout mode. Requires { "mode": "auto"|"assisted"|"shadow", "reason": "..." }.
+ * This is the manual gate — only org members can trigger this.
+ */
+export async function PUT(request: Request) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('org_id')
+    .eq('id', user.id)
+    .single()
+
+  if (!profile) return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+
+  let body: { mode?: string; reason?: string } = {}
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const validModes = ['shadow', 'assisted', 'auto']
+  if (!body.mode || !validModes.includes(body.mode)) {
+    return NextResponse.json(
+      { error: `Invalid mode. Must be one of: ${validModes.join(', ')}` },
+      { status: 400 }
+    )
+  }
+
+  const reason = body.reason || `Manually set by user ${user.id}`
+
+  const { setRolloutMode } = await import('@/lib/agent/runtime/rollout-manager')
+  const result = await setRolloutMode(profile.org_id, body.mode as 'shadow' | 'assisted' | 'auto', reason)
+
+  return NextResponse.json(result)
+}

@@ -1,7 +1,7 @@
 /**
  * OpenAI Agents SDK — Captain Tools
  *
- * All 33 Captain tools converted from Claude Agent SDK format to OpenAI Agents SDK format.
+ * All 37 Captain tools converted from Claude Agent SDK format to OpenAI Agents SDK format.
  * Each tool returns a plain string (not MCP content arrays).
  *
  * Tools are wrapped with:
@@ -28,6 +28,7 @@ import {
 } from '../tool-metadata'
 import type { StreamEvent } from '../orchestrator'
 import type { Json } from '@/types/database'
+import { executeCreateOutcome, executeUpdateOutcome, executeListOutcomes } from '../tools/outcome-tools'
 
 // ─── Tool Context ────────────────────────────────────────────────────────────
 
@@ -105,6 +106,7 @@ const READ_ONLY_TOOLS = new Set([
   'get_audit_status',
   'list_connected_integrations',
   'get_integration_health',
+  'list_outcomes',
 ])
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -558,6 +560,41 @@ async function wrappedExecute(
     // Capture rich tool output for entity extraction (capped at 4000 chars)
     if (params.onToolOutput && result && result.length > 20) {
       try { params.onToolOutput(toolName, result.slice(0, 4000)) } catch {}
+    }
+
+    // ── Outcome stream events ──
+    // Emit semantic events when outcome tools complete
+    try {
+      if (toolName === 'create_outcome' && result) {
+        const parsed = JSON.parse(result)
+        if (parsed.outcomeId && parsed.status === 'executing') {
+          onEmitEvent?.({
+            type: 'outcome_started',
+            outcomeId: parsed.outcomeId,
+            outcomeTitle: parsed.planSummary ?? 'New outcome',
+            outcomeStatus: 'executing',
+          })
+        }
+      } else if (toolName === 'update_outcome' && result) {
+        const parsed = JSON.parse(result)
+        if (parsed.statusChanged && parsed.newStatus) {
+          const eventType =
+            parsed.newStatus === 'blocked' ? 'outcome_blocked' as const
+            : ['completed', 'failed', 'cancelled'].includes(parsed.newStatus)
+              ? 'outcome_completed' as const
+              : null
+          if (eventType) {
+            onEmitEvent?.({
+              type: eventType,
+              outcomeId: parsed.outcomeId,
+              outcomeStatus: parsed.newStatus,
+              content: parsed.blockerSummary ?? undefined,
+            })
+          }
+        }
+      }
+    } catch {
+      // Parsing failures are non-fatal
     }
 
     onEmitEvent?.({
@@ -1708,6 +1745,65 @@ export function createCaptainTools(params: CaptainToolParams) {
   })
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // OUTCOME TOOLS (3)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  const createOutcomeTool = tool({
+    name: 'create_outcome',
+    description: 'Create a multi-step tracked task (outcome). Use when a user request requires 2+ tool calls that depend on each other. Provide a title and optionally steps.',
+    parameters: z.object({
+      title: z.string(),
+      description: z.string().nullable(),
+      priority: z.enum(['critical', 'high', 'medium', 'low']).nullable(),
+      steps: z.array(z.object({
+        description: z.string(),
+        action_type: z.enum(['tool_call', 'llm_reasoning', 'wait_input', 'wait_approval']),
+        tool_name: z.string().nullable(),
+        tool_args: z.record(z.string(), z.unknown()).nullable(),
+        depends_on_step_orders: z.array(z.number()),
+        expected_output: z.string().nullable(),
+        one_clear_ask: z.string().nullable(),
+      })).nullable(),
+    }),
+    execute: async (args) => wrappedExecute('create_outcome', args as Record<string, unknown>, params, async () => {
+      return executeCreateOutcome(orgId, params.conversationId, args as Record<string, unknown>)
+    }),
+  })
+
+  const updateOutcomeTool = tool({
+    name: 'update_outcome',
+    description: 'Update an outcome or its steps. Use to mark steps as completed/failed, update outcome status, or trigger a replan.',
+    parameters: z.object({
+      outcome_id: z.string(),
+      status: z.enum(['executing', 'blocked', 'completed', 'failed', 'cancelled']).nullable(),
+      blocker_summary: z.string().nullable(),
+      step_updates: z.array(z.object({
+        step_id: z.string(),
+        status: z.enum(['executing', 'completed', 'failed', 'blocked', 'skipped']),
+        result_summary: z.string().nullable(),
+        error_message: z.string().nullable(),
+      })).nullable(),
+      replan: z.boolean().nullable(),
+      replan_reason: z.string().nullable(),
+    }),
+    execute: async (args) => wrappedExecute('update_outcome', args as Record<string, unknown>, params, async () => {
+      return executeUpdateOutcome(orgId, args as Record<string, unknown>)
+    }),
+  })
+
+  const listOutcomesTool = tool({
+    name: 'list_outcomes',
+    description: 'List active and recent outcomes for the organization. Shows status, blockers, and step progress.',
+    parameters: z.object({
+      status_filter: z.enum(['planning', 'executing', 'blocked', 'completed', 'failed', 'cancelled']).nullable(),
+      limit: z.number().nullable(),
+    }),
+    execute: async (args) => wrappedExecute('list_outcomes', args as Record<string, unknown>, params, async () => {
+      return executeListOutcomes(orgId, args as Record<string, unknown>)
+    }),
+  })
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // Named tool map — allows subagents to pick subsets by tool name
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1754,10 +1850,14 @@ export function createCaptainTools(params: CaptainToolParams) {
     // Integration (2)
     list_connected_integrations: listConnectedIntegrations,
     get_integration_health: getIntegrationHealth,
+    // Outcome (3)
+    create_outcome: createOutcomeTool,
+    update_outcome: updateOutcomeTool,
+    list_outcomes: listOutcomesTool,
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // Return all 34 tools as array (with patched schemas for OpenAI API compat)
+  // Return all 37 tools as array (with patched schemas for OpenAI API compat)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   return patchToolSchemas(Object.values(toolMap))

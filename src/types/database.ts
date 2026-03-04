@@ -264,6 +264,7 @@ export interface Database {
           confidence: number
           related_entities: string[] | null
           expires_at: string | null
+          event_date: string | null
           created_at: string
           updated_at: string
         }
@@ -277,6 +278,7 @@ export interface Database {
           confidence?: number
           related_entities?: string[] | null
           expires_at?: string | null
+          event_date?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -288,6 +290,7 @@ export interface Database {
           confidence?: number
           related_entities?: string[] | null
           expires_at?: string | null
+          event_date?: string | null
           updated_at?: string
         }
         Relationships: [

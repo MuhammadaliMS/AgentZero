@@ -234,6 +234,7 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
       source: z.string().optional().describe('Where this info came from (e.g., "user conversation", "email from Sarah", "Slack #security")'),
       confidence: z.number().min(0).max(1).optional().default(1.0),
       related_entities: z.array(z.string()).optional().describe('People, projects, tools mentioned (e.g., ["Sarah Chen", "SOC2 Remediation", "Vanta"])'),
+      event_date: z.string().optional().describe('ISO date of the real-world event this memory relates to (e.g., meeting date, decision date). Use when the memory is tied to a specific date.'),
     },
     async (args) => {
       try {
@@ -257,16 +258,19 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
             ]),
           ]
 
+          const updateData: Record<string, unknown> = {
+            content: args.content,
+            category: args.category,
+            confidence: args.confidence,
+            related_entities: mergedEntities,
+            source: args.source,
+            updated_at: new Date().toISOString(),
+          }
+          if (args.event_date) updateData.event_date = args.event_date
+
           const { data: updated, error } = await supabase
             .from('memory')
-            .update({
-              content: args.content,
-              category: args.category,
-              confidence: args.confidence,
-              related_entities: mergedEntities,
-              source: args.source,
-              updated_at: new Date().toISOString(),
-            })
+            .update(updateData)
             .eq('id', existing.id)
             .eq('org_id', orgId)
             .select()
@@ -296,17 +300,20 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
         }
 
         // ── INSERT new memory ──
+        const insertData: Record<string, unknown> = {
+          org_id: orgId,
+          category: args.category,
+          subject: args.subject,
+          content: args.content,
+          source: args.source,
+          confidence: args.confidence,
+          related_entities: args.related_entities,
+        }
+        if (args.event_date) insertData.event_date = args.event_date
+
         const { data, error } = await supabase
           .from('memory')
-          .insert({
-            org_id: orgId,
-            category: args.category,
-            subject: args.subject,
-            content: args.content,
-            source: args.source,
-            confidence: args.confidence,
-            related_entities: args.related_entities,
-          })
+          .insert(insertData as never)
           .select()
           .single()
 
@@ -630,5 +637,194 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
     { annotations: { title: 'Decision Card', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } }
   )
 
-  return [recallMemory, storeMemory, updateMemory, queryEntityGraph, getEntityTimeline, emitDecisionCard]
+  // ─── delete_memory ──────────────────────────────────────────────────
+
+  const deleteMemory = tool(
+    'delete_memory',
+    'Delete a memory entry that is outdated, incorrect, or no longer relevant. Use after recalling memories to clean up stale information. Also deletes associated embeddings.',
+    {
+      id: z.string().describe('Memory ID to delete'),
+      reason: z.string().optional().describe('Brief reason for deletion (for audit trail)'),
+    },
+    async (args) => {
+      try {
+        const { data: existing } = await supabase
+          .from('memory')
+          .select('id, subject')
+          .eq('id', args.id)
+          .eq('org_id', orgId)
+          .maybeSingle()
+        if (!existing) return { content: [{ type: 'text' as const, text: `Memory ${args.id} not found or does not belong to this organization.` }] }
+
+        await supabase.from('memory_embeddings').delete().eq('memory_id', args.id)
+        await supabase.from('memory_entity_links').delete().eq('memory_id', args.id)
+        const { error } = await supabase.from('memory').delete().eq('id', args.id).eq('org_id', orgId)
+        if (error) return { content: [{ type: 'text' as const, text: `Error deleting memory: ${error.message}` }] }
+
+        console.log(`[Memory] Deleted memory "${existing.subject}" (${args.id}). Reason: ${args.reason ?? 'not specified'}`)
+        return { content: [{ type: 'text' as const, text: `Memory deleted: "${existing.subject}" (${args.id})` }] }
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error: ${(e as Error).message}` }] }
+      }
+    },
+    { annotations: { title: 'Delete Memory', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } }
+  )
+
+  // ─── list_entities — Knowledge Graph Entity Search ─────────────────
+
+  const listEntities = tool(
+    'list_entities',
+    'List and search entities in the knowledge graph. Returns people, projects, controls, decisions, teams, tools, vendors, and other entities. Use to discover what the organization knows about.',
+    {
+      search: z.string().optional().describe('Optional search term to filter entities by name'),
+      entity_type: z.enum(['person', 'project', 'control', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process']).optional(),
+      limit: z.number().optional().default(20),
+    },
+    async (args) => {
+      try {
+        let q = supabase
+          .from('entities')
+          .select('id, name, entity_type, mention_count, first_seen_at, last_seen_at')
+          .eq('org_id', orgId)
+          .order('mention_count', { ascending: false })
+          .limit(Math.min(args.limit ?? 20, 50))
+
+        if (args.entity_type) q = q.eq('entity_type', args.entity_type)
+        if (args.search) q = q.or(`name.ilike.%${args.search}%,canonical_name.ilike.%${args.search.toLowerCase()}%`)
+
+        const { data, error } = await q
+        if (error) return { content: [{ type: 'text' as const, text: `Error listing entities: ${error.message}` }] }
+        if (!data || data.length === 0) return { content: [{ type: 'text' as const, text: 'No entities found matching the criteria.' }] }
+
+        return { content: [{ type: 'text' as const, text: JSON.stringify((data as Array<Record<string, unknown>>).map(e => ({
+          id: e.id,
+          name: e.name,
+          type: e.entity_type,
+          mentions: e.mention_count,
+          first_seen: e.first_seen_at,
+          last_seen: e.last_seen_at,
+        })), null, 2) }] }
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error: ${(e as Error).message}` }] }
+      }
+    },
+    { annotations: { title: 'List Entities', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
+  )
+
+  // ─── Strategic Narrative Tools ─────────────────────────────────────
+
+  const listNarratives = tool(
+    'list_narratives',
+    'List active strategic narratives — ongoing initiatives, political context, decision threads, risk threads, and relationship dynamics. These are high-level organizational context the agent tracks over time.',
+    {
+      narrative_type: z.enum(['initiative', 'political_context', 'decision_thread', 'risk_thread', 'relationship_dynamic']).optional(),
+      limit: z.number().optional().default(10),
+    },
+    async (args) => {
+      try {
+        const { getActiveNarratives } = await import('@/lib/graph/strategic-memory')
+        const narratives = await getActiveNarratives(orgId, {
+          narrativeType: args.narrative_type,
+          limit: args.limit ?? 10,
+        })
+        if (narratives.length === 0) return { content: [{ type: 'text' as const, text: 'No active strategic narratives found.' }] }
+        return { content: [{ type: 'text' as const, text: JSON.stringify(narratives.map(n => ({
+          id: n.id, title: n.title, type: n.narrativeType, status: n.status,
+          summary: n.summary, keyFacts: n.keyFacts.length, openQuestions: n.openQuestions.length,
+          promotionScore: n.promotionScore, updatedAt: n.updatedAt,
+        })), null, 2) }] }
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error: ${(e as Error).message}` }] }
+      }
+    },
+    { annotations: { title: 'List Narratives', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
+  )
+
+  const getNarrative = tool(
+    'get_narrative',
+    'Get full details of a specific strategic narrative including key facts, decision history, prior outcomes, and open questions.',
+    {
+      narrative_id: z.string().describe('ID of the narrative to retrieve'),
+    },
+    async (args) => {
+      try {
+        const { data, error } = await supabase
+          .from('strategic_narratives')
+          .select('*')
+          .eq('id', args.narrative_id)
+          .eq('org_id', orgId)
+          .maybeSingle()
+
+        if (error) return { content: [{ type: 'text' as const, text: `Error: ${error.message}` }] }
+        if (!data) return { content: [{ type: 'text' as const, text: `Narrative ${args.narrative_id} not found.` }] }
+
+        return { content: [{ type: 'text' as const, text: JSON.stringify({
+          id: data.id, title: data.title, type: data.narrative_type, status: data.status,
+          summary: data.summary, keyFacts: data.key_facts, decisionHistory: data.decision_history,
+          priorOutcomes: data.prior_outcomes, openQuestions: data.open_questions,
+          relatedEntityIds: data.related_entity_ids, promotionScore: data.promotion_score,
+          updatedAt: data.updated_at, createdAt: data.created_at,
+        }, null, 2) }] }
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error: ${(e as Error).message}` }] }
+      }
+    },
+    { annotations: { title: 'Get Narrative', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
+  )
+
+  const upsertNarrativeTool = tool(
+    'upsert_narrative',
+    'Create or update a strategic narrative. Narratives capture ongoing organizational context that persists across conversations — initiatives, political dynamics, decision threads, risk threads, and relationship dynamics. Auto-deduplicates on title + type.',
+    {
+      title: z.string().describe('Descriptive title (e.g., "SOC2 Audit Push", "CTO Succession Planning")'),
+      narrative_type: z.enum(['initiative', 'political_context', 'decision_thread', 'risk_thread', 'relationship_dynamic']),
+      summary: z.string().describe('Current state summary of this narrative thread'),
+      key_facts: z.array(z.object({
+        fact: z.string(),
+        source: z.string().optional(),
+        confidence: z.number().optional(),
+      })).optional(),
+      decision_history: z.array(z.object({
+        decision: z.string(),
+        date: z.string().optional(),
+        outcome: z.string().optional(),
+        lesson: z.string().optional(),
+      })).optional(),
+      open_questions: z.array(z.object({
+        question: z.string(),
+        context: z.string().optional(),
+        priority: z.enum(['high', 'medium', 'low']).optional(),
+      })).optional(),
+      related_entity_ids: z.array(z.string()).optional(),
+    },
+    async (args) => {
+      try {
+        const { upsertNarrative } = await import('@/lib/graph/strategic-memory')
+        const narrativeId = await upsertNarrative({
+          orgId,
+          title: args.title,
+          narrativeType: args.narrative_type,
+          summary: args.summary,
+          keyFacts: args.key_facts ?? [],
+          decisionHistory: args.decision_history ?? [],
+          openQuestions: args.open_questions ?? [],
+          relatedEntityIds: args.related_entity_ids ?? [],
+          lastUpdatedBy: 'agent',
+        })
+
+        if (!narrativeId) return { content: [{ type: 'text' as const, text: 'Failed to create/update narrative.' }] }
+        return { content: [{ type: 'text' as const, text: `Narrative saved: "${args.title}" (${narrativeId})` }] }
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error: ${(e as Error).message}` }] }
+      }
+    },
+    { annotations: { title: 'Save Narrative', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
+  )
+
+  return [
+    recallMemory, storeMemory, updateMemory, deleteMemory,
+    queryEntityGraph, getEntityTimeline, listEntities,
+    listNarratives, getNarrative, upsertNarrativeTool,
+    emitDecisionCard,
+  ]
 }

@@ -109,6 +109,10 @@ const READ_ONLY_TOOLS = new Set([
   'list_connected_integrations',
   'get_integration_health',
   'list_outcomes',
+  'list_entities',
+  'list_narratives',
+  'get_narrative',
+  'search_slack',
 ])
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -658,7 +662,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     parameters: z.object({
       max_results: z.number().nullable().default(15),
       query: z.string().nullable().describe('Gmail search query (e.g., "is:unread", "newer_than:1d")'),
-      label: z.enum(['inbox', 'sent', 'drafts', 'starred', 'important', 'unread']).nullable(),
+      label: z.enum(['inbox', 'sent', 'drafts', 'starred', 'important', 'unread']).nullable().default(null),
     }),
     execute: async (args) => wrappedExecute('read_recent_emails', args as Record<string, unknown>, params, async () => {
       const gmailTokens = await TokenManager.getTokens(orgId, 'gmail')
@@ -1342,7 +1346,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Search institutional memory. Uses text search + semantic vector similarity. Always recall before storing to check for duplicates.',
     parameters: z.object({
       query: z.string(),
-      category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact', 'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline']).nullable(),
+      category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact', 'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline']).nullable().default(null),
       limit: z.number().nullable().default(10),
     }),
     execute: async (args) => wrappedExecute('recall_memory', args as Record<string, unknown>, params, async () => {
@@ -1457,6 +1461,7 @@ export function createCaptainTools(params: CaptainToolParams) {
       content: z.string(),
       source: z.string().nullable(),
       related_entities: z.array(z.string()).nullable(),
+      event_date: z.string().nullable().default(null).describe('ISO date of the real-world event this memory relates to (e.g., meeting date, decision date). Use when the memory is tied to a specific date.'),
     }),
     execute: async (args) => wrappedExecute('store_memory', args as Record<string, unknown>, params, async () => {
       // Dedup check
@@ -1466,11 +1471,13 @@ export function createCaptainTools(params: CaptainToolParams) {
 
       if (existing) {
         const mergedEntities = [...new Set([...(existing.related_entities || []), ...(args.related_entities || [])])]
-        const { error } = await supabase.from('memory').update({
+        const updateData: Record<string, unknown> = {
           content: args.content, category: args.category,
           related_entities: mergedEntities, source: args.source,
           updated_at: new Date().toISOString(),
-        }).eq('id', existing.id).eq('org_id', orgId)
+        }
+        if (args.event_date) updateData.event_date = args.event_date
+        const { error } = await supabase.from('memory').update(updateData).eq('id', existing.id).eq('org_id', orgId)
         if (error) return `Error updating memory: ${error.message}`
 
         // Background embedding
@@ -1483,11 +1490,13 @@ export function createCaptainTools(params: CaptainToolParams) {
       }
 
       // New insert
-      const { data, error } = await supabase.from('memory').insert({
+      const insertData: Record<string, unknown> = {
         org_id: orgId, category: args.category, subject: args.subject,
         content: args.content, source: args.source, confidence: 0.85,
         related_entities: args.related_entities,
-      }).select('id').single()
+      }
+      if (args.event_date) insertData.event_date = args.event_date
+      const { data, error } = await supabase.from('memory').insert(insertData as never).select('id').single()
       if (error) return `Error storing memory: ${error.message}`
       const memId = (data as { id: string }).id
 
@@ -1613,6 +1622,168 @@ export function createCaptainTools(params: CaptainToolParams) {
         p_entity_id: entity.id, p_org_id: orgId, p_since: null,
       })
       return JSON.stringify({ entity, timeline: timeline ?? [] }, null, 2)
+    }),
+  })
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ENTITY SEARCH (1)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  const listEntities = tool({
+    name: 'list_entities',
+    description: 'List and search entities in the knowledge graph. Returns people, projects, controls, decisions, teams, tools, vendors, and other entities. Use to discover what the organization knows about.',
+    parameters: z.object({
+      search: z.string().nullable().default(null).describe('Optional search term to filter entities by name'),
+      entity_type: z.enum(['person', 'project', 'control', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process']).nullable().default(null).describe('Filter by entity type'),
+      limit: z.number().nullable().default(20),
+    }),
+    execute: async (args) => wrappedExecute('list_entities', args as Record<string, unknown>, params, async () => {
+      let q = supabase
+        .from('entities')
+        .select('id, name, entity_type, mention_count, first_seen_at, last_seen_at')
+        .eq('org_id', orgId)
+        .order('mention_count', { ascending: false })
+        .limit(Math.min(args.limit ?? 20, 50))
+
+      if (args.entity_type) q = q.eq('entity_type', args.entity_type)
+      if (args.search) q = q.or(`name.ilike.%${args.search}%,canonical_name.ilike.%${args.search.toLowerCase()}%`)
+
+      const { data, error } = await q
+      if (error) return `Error listing entities: ${error.message}`
+      if (!data || data.length === 0) return 'No entities found matching the criteria.'
+
+      return JSON.stringify((data as Array<Record<string, unknown>>).map(e => ({
+        id: e.id,
+        name: e.name,
+        type: e.entity_type,
+        mentions: e.mention_count,
+        first_seen: e.first_seen_at,
+        last_seen: e.last_seen_at,
+      })), null, 2)
+    }),
+  })
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STRATEGIC NARRATIVES (3)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  const listNarratives = tool({
+    name: 'list_narratives',
+    description: 'List active strategic narratives — ongoing initiatives, political context, decision threads, risk threads, and relationship dynamics. These are high-level organizational context the agent tracks over time.',
+    parameters: z.object({
+      narrative_type: z.enum(['initiative', 'political_context', 'decision_thread', 'risk_thread', 'relationship_dynamic']).nullable().default(null).describe('Filter by narrative type'),
+      limit: z.number().nullable().default(10),
+    }),
+    execute: async (args) => wrappedExecute('list_narratives', args as Record<string, unknown>, params, async () => {
+      const { getActiveNarratives } = await import('@/lib/graph/strategic-memory')
+      const narratives = await getActiveNarratives(orgId, {
+        narrativeType: args.narrative_type ?? undefined,
+        limit: args.limit ?? 10,
+      })
+      if (narratives.length === 0) return 'No active strategic narratives found.'
+      return JSON.stringify(narratives.map(n => ({
+        id: n.id,
+        title: n.title,
+        type: n.narrativeType,
+        status: n.status,
+        summary: n.summary,
+        keyFacts: n.keyFacts.length,
+        openQuestions: n.openQuestions.length,
+        promotionScore: n.promotionScore,
+        updatedAt: n.updatedAt,
+      })), null, 2)
+    }),
+  })
+
+  const getNarrative = tool({
+    name: 'get_narrative',
+    description: 'Get full details of a specific strategic narrative including key facts, decision history, prior outcomes, and open questions.',
+    parameters: z.object({
+      narrative_id: z.string().describe('ID of the narrative to retrieve'),
+    }),
+    execute: async (args) => wrappedExecute('get_narrative', args as Record<string, unknown>, params, async () => {
+      const { data, error } = await supabase
+        .from('strategic_narratives')
+        .select('*')
+        .eq('id', args.narrative_id)
+        .eq('org_id', orgId)
+        .maybeSingle()
+
+      if (error) return `Error fetching narrative: ${error.message}`
+      if (!data) return `Narrative ${args.narrative_id} not found.`
+
+      return JSON.stringify({
+        id: data.id,
+        title: data.title,
+        type: data.narrative_type,
+        status: data.status,
+        summary: data.summary,
+        keyFacts: data.key_facts,
+        decisionHistory: data.decision_history,
+        priorOutcomes: data.prior_outcomes,
+        openQuestions: data.open_questions,
+        relatedEntityIds: data.related_entity_ids,
+        promotionScore: data.promotion_score,
+        updatedAt: data.updated_at,
+        createdAt: data.created_at,
+      }, null, 2)
+    }),
+  })
+
+  const upsertNarrativeTool = tool({
+    name: 'upsert_narrative',
+    description: 'Create or update a strategic narrative. Narratives capture ongoing organizational context that persists across conversations — initiatives, political dynamics, decision threads, risk threads, and relationship dynamics. Auto-deduplicates on title + type.',
+    parameters: z.object({
+      title: z.string().describe('Descriptive title (e.g., "SOC2 Audit Push", "CTO Succession Planning")'),
+      narrative_type: z.enum(['initiative', 'political_context', 'decision_thread', 'risk_thread', 'relationship_dynamic']),
+      summary: z.string().describe('Current state summary of this narrative thread'),
+      key_facts: z.array(z.object({
+        fact: z.string(),
+        source: z.string().nullable().default(null),
+        confidence: z.number().nullable().default(null),
+      })).nullable().default(null),
+      decision_history: z.array(z.object({
+        decision: z.string(),
+        date: z.string().nullable().default(null),
+        outcome: z.string().nullable().default(null),
+        lesson: z.string().nullable().default(null),
+      })).nullable().default(null),
+      open_questions: z.array(z.object({
+        question: z.string(),
+        context: z.string().nullable().default(null),
+        priority: z.enum(['high', 'medium', 'low']).nullable().default(null),
+      })).nullable().default(null),
+      related_entity_ids: z.array(z.string()).nullable().default(null),
+    }),
+    execute: async (args) => wrappedExecute('upsert_narrative', args as Record<string, unknown>, params, async () => {
+      const { upsertNarrative } = await import('@/lib/graph/strategic-memory')
+      const narrativeId = await upsertNarrative({
+        orgId,
+        title: args.title,
+        narrativeType: args.narrative_type,
+        summary: args.summary,
+        keyFacts: (args.key_facts ?? []).map(f => ({
+          fact: f.fact,
+          source: f.source ?? undefined,
+          confidence: f.confidence ?? undefined,
+        })),
+        decisionHistory: (args.decision_history ?? []).map(d => ({
+          decision: d.decision,
+          date: d.date ?? undefined,
+          outcome: d.outcome ?? undefined,
+          lesson: d.lesson ?? undefined,
+        })),
+        openQuestions: (args.open_questions ?? []).map(q => ({
+          question: q.question,
+          context: q.context ?? undefined,
+          priority: (q.priority as 'high' | 'medium' | 'low' | undefined) ?? undefined,
+        })),
+        relatedEntityIds: args.related_entity_ids ?? [],
+        lastUpdatedBy: 'agent',
+      })
+
+      if (!narrativeId) return 'Failed to create/update narrative.'
+      return `Narrative saved: "${args.title}" (${narrativeId})`
     }),
   })
 
@@ -1907,8 +2078,8 @@ export function createCaptainTools(params: CaptainToolParams) {
     name: 'list_outcomes',
     description: 'List active and recent outcomes for the organization. Shows status, blockers, and step progress.',
     parameters: z.object({
-      status_filter: z.enum(['planning', 'executing', 'blocked', 'completed', 'failed', 'cancelled']).nullable(),
-      limit: z.number().nullable(),
+      status_filter: z.enum(['planning', 'executing', 'blocked', 'completed', 'failed', 'cancelled']).nullable().default(null),
+      limit: z.number().nullable().default(10),
     }),
     execute: async (args) => wrappedExecute('list_outcomes', args as Record<string, unknown>, params, async () => {
       return executeListOutcomes(orgId, args as Record<string, unknown>)
@@ -1945,13 +2116,18 @@ export function createCaptainTools(params: CaptainToolParams) {
     get_compliance_overview: getComplianceOverview,
     list_failing_controls: listFailingControls,
     get_audit_status: getAuditStatus,
-    // Memory (6)
+    // Memory & Knowledge Graph (10)
     recall_memory: recallMemory,
     store_memory: storeMemory,
     update_memory: updateMemory,
     delete_memory: deleteMemory,
     query_entity_graph: queryEntityGraph,
     get_entity_timeline: getEntityTimeline,
+    list_entities: listEntities,
+    // Strategic Narratives (3)
+    list_narratives: listNarratives,
+    get_narrative: getNarrative,
+    upsert_narrative: upsertNarrativeTool,
     // Reasoning (1)
     emit_decision_card: emitDecisionCard,
     // Supabase CRUD (6)
@@ -1971,7 +2147,7 @@ export function createCaptainTools(params: CaptainToolParams) {
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // Return all 37 tools as array (with patched schemas for OpenAI API compat)
+  // Return all 41 tools as array (with patched schemas for OpenAI API compat)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   return patchToolSchemas(Object.values(toolMap))

@@ -154,6 +154,12 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   delete_memory: 'Deleting Memory',
   query_entity_graph: 'Searching Knowledge Graph',
   get_entity_timeline: 'Checking Entity Timeline',
+  list_entities: 'Listing Entities',
+
+  // Strategic Narratives
+  list_narratives: 'Listing Narratives',
+  get_narrative: 'Reading Narrative',
+  upsert_narrative: 'Saving Narrative',
 
   // Supabase / CRUD
   query_commitments: 'Checking Commitments',
@@ -357,6 +363,10 @@ const TOOL_ICON_CATEGORIES: Record<string, ToolIconCategory> = {
   delete_memory: 'memory',
   query_entity_graph: 'memory',
   get_entity_timeline: 'memory',
+  list_entities: 'memory',
+  list_narratives: 'memory',
+  get_narrative: 'memory',
+  upsert_narrative: 'memory',
   query_commitments: 'database',
   create_commitment: 'database',
   update_commitment: 'database',

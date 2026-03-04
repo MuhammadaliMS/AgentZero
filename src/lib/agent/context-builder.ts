@@ -52,8 +52,12 @@ export async function buildAgentContext(orgId: string, userId: string): Promise<
   )
 
   // Build the dynamic system prompt
+  // Inject current date/time at the top of the prompt so the model always knows the time
+  const currentDatetime = formatCurrentDatetime(profile.timezone)
+  const basePromptWithTime = CAPTAIN_BASE_PROMPT.replace('{{CURRENT_DATETIME}}', currentDatetime)
+
   const systemPrompt =
-    CAPTAIN_BASE_PROMPT +
+    basePromptWithTime +
     buildCapabilitiesSection(connectedIntegrations) +
     buildUserContext(profile) +
     graphContext
@@ -110,5 +114,33 @@ async function loadGraphContext(orgId: string): Promise<string> {
   } catch {
     // Non-critical — don't block agent startup if graph query fails
     return ''
+  }
+}
+
+// ─── Date/Time Formatter ────────────────────────────────────────────────────
+// Formats a prominent date/time string for injection at the top of the system prompt.
+// Uses the user's timezone if available, otherwise falls back to UTC.
+// This ensures the model always knows the current date and time.
+
+function formatCurrentDatetime(timezone: string | null | undefined): string {
+  const now = new Date()
+  try {
+    const tz = timezone || 'UTC'
+    const formatted = now.toLocaleString('en-US', {
+      timeZone: tz,
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    })
+    // Also include ISO format for unambiguous machine-readable date
+    const isoDate = now.toLocaleDateString('en-CA', { timeZone: tz }) // YYYY-MM-DD
+    return `${formatted} (${tz}) — ISO: ${isoDate}`
+  } catch {
+    return `${now.toUTCString()} (UTC)`
   }
 }

@@ -1381,6 +1381,8 @@ export interface Database {
           model_used: string | null
           reasoning_tokens: number | null
           latency_ms: number | null
+          outcome_id: string | null
+          run_id: string | null
           created_at: string
           updated_at: string
         }
@@ -1403,6 +1405,8 @@ export interface Database {
           model_used?: string | null
           reasoning_tokens?: number | null
           latency_ms?: number | null
+          outcome_id?: string | null
+          run_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1413,11 +1417,712 @@ export interface Database {
           confidence?: number
           why_now?: string | null
           risk_notes?: string | null
+          outcome_id?: string | null
+          run_id?: string | null
           updated_at?: string
         }
         Relationships: [
           {
             foreignKeyName: 'decision_cards_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      // ─── Phase B: Outcome-Centric Runtime ──────────────────────
+      outcomes: {
+        Row: {
+          id: string
+          org_id: string
+          conversation_id: string | null
+          title: string
+          description: string | null
+          goal_type: 'user_request' | 'proactive_signal' | 'follow_up' | 'scheduled'
+          status: 'planning' | 'executing' | 'blocked' | 'completed' | 'failed' | 'cancelled'
+          owner_user_id: string | null
+          parent_outcome_id: string | null
+          related_entity_ids: string[]
+          priority: 'critical' | 'high' | 'medium' | 'low'
+          confidence: number | null
+          blocker_summary: string | null
+          created_at: string
+          started_at: string | null
+          completed_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          conversation_id?: string | null
+          title: string
+          description?: string | null
+          goal_type?: 'user_request' | 'proactive_signal' | 'follow_up' | 'scheduled'
+          status?: 'planning' | 'executing' | 'blocked' | 'completed' | 'failed' | 'cancelled'
+          owner_user_id?: string | null
+          parent_outcome_id?: string | null
+          related_entity_ids?: string[]
+          priority?: 'critical' | 'high' | 'medium' | 'low'
+          confidence?: number | null
+          blocker_summary?: string | null
+          created_at?: string
+          started_at?: string | null
+          completed_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          title?: string
+          description?: string | null
+          status?: 'planning' | 'executing' | 'blocked' | 'completed' | 'failed' | 'cancelled'
+          owner_user_id?: string | null
+          related_entity_ids?: string[]
+          priority?: 'critical' | 'high' | 'medium' | 'low'
+          confidence?: number | null
+          blocker_summary?: string | null
+          started_at?: string | null
+          completed_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'outcomes_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      outcome_runs: {
+        Row: {
+          id: string
+          org_id: string
+          outcome_id: string
+          plan_version: number
+          plan_summary: string | null
+          replan_reason: string | null
+          status: 'active' | 'completed' | 'superseded' | 'failed'
+          decision_card_id: string | null
+          created_at: string
+          started_at: string | null
+          completed_at: string | null
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          outcome_id: string
+          plan_version?: number
+          plan_summary?: string | null
+          replan_reason?: string | null
+          status?: 'active' | 'completed' | 'superseded' | 'failed'
+          decision_card_id?: string | null
+          created_at?: string
+          started_at?: string | null
+          completed_at?: string | null
+        }
+        Update: {
+          plan_summary?: string | null
+          replan_reason?: string | null
+          status?: 'active' | 'completed' | 'superseded' | 'failed'
+          decision_card_id?: string | null
+          started_at?: string | null
+          completed_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'outcome_runs_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'outcome_runs_outcome_id_fkey'
+            columns: ['outcome_id']
+            isOneToOne: false
+            referencedRelation: 'outcomes'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      outcome_steps: {
+        Row: {
+          id: string
+          org_id: string
+          run_id: string
+          step_order: number
+          depends_on: string[]
+          action_type: 'tool_call' | 'llm_reasoning' | 'wait_input' | 'wait_approval' | 'wait_dependency' | 'composite'
+          description: string
+          tool_name: string | null
+          tool_args: Json | null
+          expected_output: string | null
+          status: 'pending' | 'executing' | 'blocked' | 'completed' | 'failed' | 'skipped'
+          blocker_type: 'input_needed' | 'approval_pending' | 'dependency' | 'tool_failure' | null
+          one_clear_ask: string | null
+          result_summary: string | null
+          result_data: Json | null
+          error_message: string | null
+          decision_card_id: string | null
+          approval_id: string | null
+          created_at: string
+          started_at: string | null
+          completed_at: string | null
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          run_id: string
+          step_order: number
+          depends_on?: string[]
+          action_type: 'tool_call' | 'llm_reasoning' | 'wait_input' | 'wait_approval' | 'wait_dependency' | 'composite'
+          description: string
+          tool_name?: string | null
+          tool_args?: Json | null
+          expected_output?: string | null
+          status?: 'pending' | 'executing' | 'blocked' | 'completed' | 'failed' | 'skipped'
+          blocker_type?: 'input_needed' | 'approval_pending' | 'dependency' | 'tool_failure' | null
+          one_clear_ask?: string | null
+          result_summary?: string | null
+          result_data?: Json | null
+          error_message?: string | null
+          decision_card_id?: string | null
+          approval_id?: string | null
+          created_at?: string
+          started_at?: string | null
+          completed_at?: string | null
+        }
+        Update: {
+          step_order?: number
+          depends_on?: string[]
+          description?: string
+          tool_name?: string | null
+          tool_args?: Json | null
+          expected_output?: string | null
+          status?: 'pending' | 'executing' | 'blocked' | 'completed' | 'failed' | 'skipped'
+          blocker_type?: 'input_needed' | 'approval_pending' | 'dependency' | 'tool_failure' | null
+          one_clear_ask?: string | null
+          result_summary?: string | null
+          result_data?: Json | null
+          error_message?: string | null
+          decision_card_id?: string | null
+          approval_id?: string | null
+          started_at?: string | null
+          completed_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'outcome_steps_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'outcome_steps_run_id_fkey'
+            columns: ['run_id']
+            isOneToOne: false
+            referencedRelation: 'outcome_runs'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      // ─── Phase C: Proactive Intervention Engine ────────────────
+      intervention_triage: {
+        Row: {
+          id: string
+          org_id: string
+          user_id: string
+          source_type: 'patrol_finding' | 'graph_insight' | 'calendar_event' | 'deadline' | 'stale_blocker' | 'integration_event' | 'outcome_blocked'
+          source_id: string | null
+          source_summary: string
+          triage_decision: 'interrupt_now' | 'defer_brief' | 'watch'
+          scoring_rationale: string | null
+          confidence: number
+          user_impact: string | null
+          timing_sensitivity: string | null
+          recommended_channel: 'chat' | 'slack' | 'brief' | 'email' | null
+          routed_to: string | null
+          finding_id: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          user_id: string
+          source_type: 'patrol_finding' | 'graph_insight' | 'calendar_event' | 'deadline' | 'stale_blocker' | 'integration_event' | 'outcome_blocked'
+          source_id?: string | null
+          source_summary: string
+          triage_decision: 'interrupt_now' | 'defer_brief' | 'watch'
+          scoring_rationale?: string | null
+          confidence?: number
+          user_impact?: string | null
+          timing_sensitivity?: string | null
+          recommended_channel?: 'chat' | 'slack' | 'brief' | 'email' | null
+          routed_to?: string | null
+          finding_id?: string | null
+          created_at?: string
+        }
+        Update: {
+          triage_decision?: 'interrupt_now' | 'defer_brief' | 'watch'
+          routed_to?: string | null
+          finding_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'intervention_triage_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'intervention_triage_user_id_fkey'
+            columns: ['user_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      intervention_feedback: {
+        Row: {
+          id: string
+          org_id: string
+          user_id: string
+          triage_id: string | null
+          intervention_type: string
+          intervention_summary: string
+          user_response: 'accepted' | 'deferred' | 'ignored' | 'rejected'
+          response_latency_ms: number | null
+          source_category: string | null
+          created_at: string
+          responded_at: string | null
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          user_id: string
+          triage_id?: string | null
+          intervention_type: string
+          intervention_summary: string
+          user_response: 'accepted' | 'deferred' | 'ignored' | 'rejected'
+          response_latency_ms?: number | null
+          source_category?: string | null
+          created_at?: string
+          responded_at?: string | null
+        }
+        Update: {
+          user_response?: 'accepted' | 'deferred' | 'ignored' | 'rejected'
+          response_latency_ms?: number | null
+          responded_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'intervention_feedback_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'intervention_feedback_user_id_fkey'
+            columns: ['user_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      // ─── Phase D: Strategic Memory Layer ───────────────────────
+      strategic_narratives: {
+        Row: {
+          id: string
+          org_id: string
+          title: string
+          narrative_type: 'initiative' | 'political_context' | 'decision_thread' | 'risk_thread' | 'relationship_dynamic'
+          summary: string
+          key_facts: Json
+          decision_history: Json
+          prior_outcomes: Json
+          open_questions: Json
+          related_entity_ids: string[]
+          related_outcome_ids: string[]
+          status: 'active' | 'dormant' | 'archived' | 'pinned'
+          promotion_score: number
+          last_updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          title: string
+          narrative_type: 'initiative' | 'political_context' | 'decision_thread' | 'risk_thread' | 'relationship_dynamic'
+          summary: string
+          key_facts?: Json
+          decision_history?: Json
+          prior_outcomes?: Json
+          open_questions?: Json
+          related_entity_ids?: string[]
+          related_outcome_ids?: string[]
+          status?: 'active' | 'dormant' | 'archived' | 'pinned'
+          promotion_score?: number
+          last_updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          title?: string
+          summary?: string
+          key_facts?: Json
+          decision_history?: Json
+          prior_outcomes?: Json
+          open_questions?: Json
+          related_entity_ids?: string[]
+          related_outcome_ids?: string[]
+          status?: 'active' | 'dormant' | 'archived' | 'pinned'
+          promotion_score?: number
+          last_updated_by?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'strategic_narratives_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      memory_curation_log: {
+        Row: {
+          id: string
+          org_id: string
+          target_type: 'entity' | 'memory' | 'narrative' | 'insight' | 'relationship'
+          target_id: string
+          action: 'promote' | 'decay' | 'reactivate' | 'merge' | 'archive' | 'pin' | 'unpin' | 'update_narrative'
+          score_before: number | null
+          score_after: number | null
+          rationale: string | null
+          triggered_by: 'ghost_agent' | 'chat' | 'manual' | 'decay_cycle' | 'extraction'
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          target_type: 'entity' | 'memory' | 'narrative' | 'insight' | 'relationship'
+          target_id: string
+          action: 'promote' | 'decay' | 'reactivate' | 'merge' | 'archive' | 'pin' | 'unpin' | 'update_narrative'
+          score_before?: number | null
+          score_after?: number | null
+          rationale?: string | null
+          triggered_by: 'ghost_agent' | 'chat' | 'manual' | 'decay_cycle' | 'extraction'
+          created_at?: string
+        }
+        Update: Record<string, never>
+        Relationships: [
+          {
+            foreignKeyName: 'memory_curation_log_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      // ─── Phase E: Learning Loop ────────────────────────────────
+      outcome_impact: {
+        Row: {
+          id: string
+          org_id: string
+          outcome_id: string
+          insight_id: string | null
+          decision_card_id: string | null
+          entity_id: string | null
+          impact_type: 'insight_led_to_action' | 'decision_led_to_outcome' | 'context_improved_response' | 'intervention_prevented_risk' | 'false_positive'
+          impact_rating: number | null
+          impact_notes: string | null
+          action_taken_at: string | null
+          outcome_achieved_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          outcome_id: string
+          insight_id?: string | null
+          decision_card_id?: string | null
+          entity_id?: string | null
+          impact_type: 'insight_led_to_action' | 'decision_led_to_outcome' | 'context_improved_response' | 'intervention_prevented_risk' | 'false_positive'
+          impact_rating?: number | null
+          impact_notes?: string | null
+          action_taken_at?: string | null
+          outcome_achieved_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          impact_rating?: number | null
+          impact_notes?: string | null
+          action_taken_at?: string | null
+          outcome_achieved_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'outcome_impact_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'outcome_impact_outcome_id_fkey'
+            columns: ['outcome_id']
+            isOneToOne: false
+            referencedRelation: 'outcomes'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      user_preferences: {
+        Row: {
+          id: string
+          org_id: string
+          user_id: string
+          intervention_timing: 'aggressive' | 'moderate' | 'conservative'
+          message_style: 'brief' | 'detailed' | 'analytical'
+          risk_tolerance: number
+          escalation_preference: 'escalate_early' | 'moderate' | 'escalate_late'
+          source: 'default' | 'explicit' | 'learned'
+          learned_at: string | null
+          confidence: number
+          sample_size: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          user_id: string
+          intervention_timing?: 'aggressive' | 'moderate' | 'conservative'
+          message_style?: 'brief' | 'detailed' | 'analytical'
+          risk_tolerance?: number
+          escalation_preference?: 'escalate_early' | 'moderate' | 'escalate_late'
+          source?: 'default' | 'explicit' | 'learned'
+          learned_at?: string | null
+          confidence?: number
+          sample_size?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          intervention_timing?: 'aggressive' | 'moderate' | 'conservative'
+          message_style?: 'brief' | 'detailed' | 'analytical'
+          risk_tolerance?: number
+          escalation_preference?: 'escalate_early' | 'moderate' | 'escalate_late'
+          source?: 'default' | 'explicit' | 'learned'
+          learned_at?: string | null
+          confidence?: number
+          sample_size?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'user_preferences_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'user_preferences_user_id_fkey'
+            columns: ['user_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      weekly_tuning_log: {
+        Row: {
+          id: string
+          org_id: string
+          tuning_week: string
+          total_interactions: number
+          acceptance_rate: number | null
+          intervention_accuracy: number | null
+          false_positive_rate: number | null
+          proposals: Json
+          approved_changes: Json
+          guardrail_violations: Json
+          applied_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          tuning_week: string
+          total_interactions?: number
+          acceptance_rate?: number | null
+          intervention_accuracy?: number | null
+          false_positive_rate?: number | null
+          proposals?: Json
+          approved_changes?: Json
+          guardrail_violations?: Json
+          applied_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          total_interactions?: number
+          acceptance_rate?: number | null
+          intervention_accuracy?: number | null
+          false_positive_rate?: number | null
+          proposals?: Json
+          approved_changes?: Json
+          guardrail_violations?: Json
+          applied_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'weekly_tuning_log_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      // ─── Phase F: Rollout Management ───────────────────────────
+      org_rollout_config: {
+        Row: {
+          id: string
+          org_id: string
+          rollout_mode: 'shadow' | 'assisted' | 'auto'
+          min_acceptance_rate: number
+          max_error_rate: number
+          min_interactions: number
+          auto_allowed_actions: string[]
+          mode_changed_at: string | null
+          mode_changed_reason: string | null
+          previous_mode: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          rollout_mode?: 'shadow' | 'assisted' | 'auto'
+          min_acceptance_rate?: number
+          max_error_rate?: number
+          min_interactions?: number
+          auto_allowed_actions?: string[]
+          mode_changed_at?: string | null
+          mode_changed_reason?: string | null
+          previous_mode?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          rollout_mode?: 'shadow' | 'assisted' | 'auto'
+          min_acceptance_rate?: number
+          max_error_rate?: number
+          min_interactions?: number
+          auto_allowed_actions?: string[]
+          mode_changed_at?: string | null
+          mode_changed_reason?: string | null
+          previous_mode?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'org_rollout_config_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: true
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      rollout_measurement: {
+        Row: {
+          id: string
+          org_id: string
+          measurement_week: string
+          total_outcomes: number
+          completed_outcomes: number
+          failed_outcomes: number
+          total_decisions: number
+          avg_decision_confidence: number | null
+          total_recommendations: number
+          accepted_recommendations: number
+          rejected_recommendations: number
+          total_actions: number
+          successful_actions: number
+          failed_actions: number
+          interventions_accepted: number
+          interventions_ignored: number
+          interventions_rejected: number
+          escalation_count: number
+          acceptance_rate: number | null
+          error_rate: number | null
+          outcome_impact_score: number | null
+          recommended_mode: 'shadow' | 'assisted' | 'auto' | null
+          recommendation_reason: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          measurement_week: string
+          total_outcomes?: number
+          completed_outcomes?: number
+          failed_outcomes?: number
+          total_decisions?: number
+          avg_decision_confidence?: number | null
+          total_recommendations?: number
+          accepted_recommendations?: number
+          rejected_recommendations?: number
+          total_actions?: number
+          successful_actions?: number
+          failed_actions?: number
+          interventions_accepted?: number
+          interventions_ignored?: number
+          interventions_rejected?: number
+          escalation_count?: number
+          acceptance_rate?: number | null
+          error_rate?: number | null
+          outcome_impact_score?: number | null
+          recommended_mode?: 'shadow' | 'assisted' | 'auto' | null
+          recommendation_reason?: string | null
+          created_at?: string
+        }
+        Update: {
+          total_outcomes?: number
+          completed_outcomes?: number
+          failed_outcomes?: number
+          total_decisions?: number
+          avg_decision_confidence?: number | null
+          total_recommendations?: number
+          accepted_recommendations?: number
+          rejected_recommendations?: number
+          total_actions?: number
+          successful_actions?: number
+          failed_actions?: number
+          interventions_accepted?: number
+          interventions_ignored?: number
+          interventions_rejected?: number
+          escalation_count?: number
+          acceptance_rate?: number | null
+          error_rate?: number | null
+          outcome_impact_score?: number | null
+          recommended_mode?: 'shadow' | 'assisted' | 'auto' | null
+          recommendation_reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'rollout_measurement_org_id_fkey'
             columns: ['org_id']
             isOneToOne: false
             referencedRelation: 'organizations'
@@ -1590,6 +2295,64 @@ export interface Database {
         Returns: Array<{
           transitioned_to_dormant: number
           transitioned_to_archived: number
+        }>
+      }
+      // ─── Phase B-F RPC Functions ─────────────────────────────
+      get_active_outcomes: {
+        Args: {
+          p_org_id: string
+          p_limit?: number
+        }
+        Returns: Array<{
+          id: string
+          org_id: string
+          conversation_id: string | null
+          title: string
+          description: string | null
+          goal_type: string
+          status: string
+          owner_user_id: string | null
+          parent_outcome_id: string | null
+          related_entity_ids: string[]
+          priority: string
+          confidence: number | null
+          blocker_summary: string | null
+          created_at: string
+          started_at: string | null
+          completed_at: string | null
+          updated_at: string
+        }>
+      }
+      get_intervention_history: {
+        Args: {
+          p_org_id: string
+          p_user_id: string
+          p_source_category?: string | null
+          p_days?: number
+        }
+        Returns: Array<{
+          intervention_type: string
+          total_count: number
+          accepted_count: number
+          ignored_count: number
+          rejected_count: number
+          last_intervention_at: string
+          acceptance_rate: number
+        }>
+      }
+      compute_rollout_metrics: {
+        Args: {
+          p_org_id: string
+          p_week_start: string
+        }
+        Returns: Array<{
+          total_outcomes: number
+          completed_outcomes: number
+          failed_outcomes: number
+          total_decisions: number
+          avg_confidence: number | null
+          acceptance_rate: number | null
+          error_rate: number | null
         }>
       }
       get_decision_cards_for_conversation: {

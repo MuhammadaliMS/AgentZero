@@ -27,6 +27,10 @@
     {
       "path": "/api/cron/ghost-agent-light",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/weekly-tuning",
+      "schedule": "0 3 * * 0"
     }
   ]
 }

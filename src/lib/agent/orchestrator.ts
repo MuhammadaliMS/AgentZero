@@ -23,6 +23,7 @@ import {
 } from './tool-metadata'
 import { ensureWorkspace, getWorkspacePath } from './workspace'
 import { trackUtilityEventBatch, bumpEntityAccess } from '@/lib/graph/utility-tracker'
+import { getRolloutConfig, isActionAllowed } from '@/lib/agent/runtime/rollout-manager'
 
 // ─── Model Configuration ─────────────────────────────────────────────────
 // Supports Anthropic (default), OpenRouter, or any Anthropic-compatible proxy.
@@ -88,6 +89,14 @@ export interface StreamEvent {
     | 'integration_resolved'
     // Reasoning substrate (Phase A)
     | 'decision_card_emitted'
+    // Chief-of-Staff runtime (Phases B-F)
+    | 'outcome_started'
+    | 'outcome_blocked'
+    | 'outcome_completed'
+    | 'intervention_triaged'
+    | 'narrative_updated'
+    | 'preference_learned'
+    | 'rollout_mode_changed'
   content?: string
   toolName?: string
   toolInput?: Record<string, unknown>
@@ -127,6 +136,14 @@ export interface StreamEvent {
     riskNotes?: string
     optionsCount?: number
   }
+  // Chief-of-Staff runtime metadata (Phases B-F)
+  outcomeId?: string
+  outcomeTitle?: string
+  outcomeStatus?: string
+  triageDecision?: string
+  narrativeId?: string
+  rolloutMode?: string
+  rolloutReason?: string
 }
 
 // ─── Tool Permission System ──────────────────────────────────────────────
@@ -625,8 +642,45 @@ export async function* runCaptain(
         return { continue: true }
       }
 
+      // 2b. Rollout mode gate — progressive autonomy enforcement.
+      // Checks if the tool is allowed in the current rollout mode (shadow/assisted/auto).
+      // In shadow mode, only memory + reasoning tools execute; all others are blocked.
+      // Fire-and-forget: if rollout check fails, fall through to default allow.
+      let rolloutRequiresApproval = false
+      try {
+        const rolloutConfig = await getRolloutConfig(orgId)
+        const rolloutCheck = isActionAllowed(rolloutConfig, baseName)
+
+        if (!rolloutCheck.allowed) {
+          console.log(`[PreToolUse:RolloutGate] Blocked "${baseName}" in ${rolloutConfig.rolloutMode} mode: ${rolloutCheck.reason}`)
+          hookEventQueue.push({
+            type: 'status',
+            content: `[Rollout] ${rolloutCheck.reason}`,
+            rolloutMode: rolloutConfig.rolloutMode,
+          } as StreamEvent)
+          return {
+            continue: false,
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'deny',
+              permissionDecisionReason: rolloutCheck.reason ?? `Tool "${baseName}" is not available in ${rolloutConfig.rolloutMode} mode.`,
+            },
+          }
+        }
+
+        // If rollout says "requires approval", flag it for the approval gate below
+        if (rolloutCheck.requiresApproval) {
+          rolloutRequiresApproval = true
+          console.log(`[PreToolUse:RolloutGate] "${baseName}" requires approval in ${rolloutConfig.rolloutMode} mode`)
+        }
+      } catch (err) {
+        // Fail open — don't block tools if rollout check errors
+        console.warn('[PreToolUse:RolloutGate] Rollout check failed, allowing tool:', err)
+      }
+
       // 3. Sensitive tools — require user approval in chat UI
-      if (TOOLS_REQUIRING_APPROVAL.has(baseName)) {
+      // Also gates tools that the rollout mode says require approval.
+      if (TOOLS_REQUIRING_APPROVAL.has(baseName) || rolloutRequiresApproval) {
         const { approvalId, promise } = await createApprovalRequest(
           baseName,
           toolInput,

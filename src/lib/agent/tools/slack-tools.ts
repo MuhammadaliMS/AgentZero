@@ -6,32 +6,20 @@ import { buildIntegrationRequiredResult } from '../tool-metadata'
 
 export function createSlackTools(orgId: string) {
   /**
-   * Get a Slack client using the bot token (xoxb-).
-   * Used for write operations — messages are sent as "Zerowing".
-   */
-  async function getSlackBotClient(): Promise<WebClient | null> {
-    const tokens = await TokenManager.getTokens(orgId, 'slack')
-    if (!tokens) return null
-    return new WebClient(tokens.access_token)
-  }
-
-  /**
-   * Get a Slack client using the user token (xoxp-) for read operations.
-   * The user token sees everything the human user sees — including
-   * Slack Connect channels, external connections, and all private channels.
+   * Get a Slack client using the user token (xoxp-) for ALL operations.
+   * The user token has full visibility: Slack Connect channels, private channels,
+   * search.messages support. Messages sent appear as the authenticated user.
    * Falls back to bot token if no user token is available.
    */
-  async function getSlackUserClient(): Promise<WebClient | null> {
+  async function getSlackClient(): Promise<WebClient | null> {
     const tokens = await TokenManager.getTokens(orgId, 'slack')
     if (!tokens) return null
-    // Prefer user token for reads (sees Slack Connect channels etc.)
-    // Fall back to bot token if user token wasn't granted
-    const token = tokens.user_access_token || tokens.access_token
-    return new WebClient(token)
+    return new WebClient(tokens.user_access_token || tokens.access_token)
   }
 
-  // Keep backward-compatible alias for write tools
-  const getSlackClient = getSlackBotClient
+  // Aliases — all point to the same user-token client
+  const getSlackBotClient = getSlackClient
+  const getSlackUserClient = getSlackClient
 
   // ─── Write Tools ─────────────────────────────────────────────────────────
 
@@ -389,17 +377,13 @@ export function createSlackTools(orgId: string) {
       if (!client) return buildIntegrationRequiredResult('slack', 'Slack')
 
       try {
-        // Use bot client for lookupByEmail (needs bot token scope)
-        const botClient = await getSlackBotClient()
-        const lookupClient = botClient || client
-
-        const userResult = await lookupClient.users.lookupByEmail({ email: args.user_email })
+        // Use user client for all operations (user token has full visibility)
+        const userResult = await client.users.lookupByEmail({ email: args.user_email })
         if (!userResult.user?.id) {
           return { content: [{ type: 'text' as const, text: `Could not find Slack user: ${args.user_email}` }] }
         }
 
-        // Open DM via bot client (im:write is a bot scope)
-        const convResult = await lookupClient.conversations.open({ users: userResult.user.id })
+        const convResult = await client.conversations.open({ users: userResult.user.id })
         if (!convResult.channel?.id) {
           return { content: [{ type: 'text' as const, text: 'Could not open DM channel.' }] }
         }

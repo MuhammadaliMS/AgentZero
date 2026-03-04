@@ -1209,17 +1209,18 @@ export function createCaptainTools(params: CaptainToolParams) {
   // SLACK TOOLS (9)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  async function getSlackBotClient(): Promise<WebClient | null> {
-    const tokens = await TokenManager.getTokens(orgId, 'slack')
-    if (!tokens) return null
-    return new WebClient(tokens.access_token)
-  }
-
-  async function getSlackUserClient(): Promise<WebClient | null> {
+  // Use user token (xoxp-) for ALL Slack operations — reads AND writes.
+  // The user token has full visibility: Slack Connect channels, private channels,
+  // search.messages support. Messages sent appear as the authenticated user.
+  async function getSlackClient(): Promise<WebClient | null> {
     const tokens = await TokenManager.getTokens(orgId, 'slack')
     if (!tokens) return null
     return new WebClient(tokens.user_access_token || tokens.access_token)
   }
+
+  // Aliases — all point to the same user-token client
+  const getSlackBotClient = getSlackClient
+  const getSlackUserClient = getSlackClient
 
   const sendSlackDm = tool({
     name: 'send_slack_dm',

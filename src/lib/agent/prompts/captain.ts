@@ -202,7 +202,31 @@ export function buildUserContext(profile: {
   if (profile.full_name) parts.push(`- Name: ${profile.full_name}`)
   if (profile.title) parts.push(`- Title: ${profile.title}`)
   if (profile.role) parts.push(`- Role: ${profile.role}`)
-  if (profile.timezone) parts.push(`- Timezone: ${profile.timezone}`)
+  if (profile.timezone) {
+    parts.push(`- Timezone: ${profile.timezone}`)
+    // Inject current date/time in the user's timezone so the agent always knows what time it is
+    try {
+      const now = new Date()
+      const formatted = now.toLocaleString('en-US', {
+        timeZone: profile.timezone,
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+      })
+      parts.push(`- Current date/time: ${formatted}`)
+    } catch {
+      // Invalid timezone — fall back to UTC
+      parts.push(`- Current date/time: ${new Date().toUTCString()}`)
+    }
+  } else {
+    // No timezone set — still provide UTC time
+    parts.push(`- Current date/time (UTC): ${new Date().toUTCString()}`)
+  }
   if (profile.communication_style) parts.push(`- Communication style preference: ${profile.communication_style}`)
 
   return parts.join('\n')

@@ -30,7 +30,7 @@ import { trackUtilityEventBatch, bumpEntityAccess } from '@/lib/graph/utility-tr
 // Uses OPENAI_CAPTAIN_MODEL env var, or falls back to a sensible default.
 // Routed via OpenRouter (OPENROUTER_API_KEY) or direct OpenAI (OPENAI_API_KEY).
 
-const DEFAULT_CAPTAIN_MODEL = 'x-ai/grok-4.1-fast'
+const DEFAULT_CAPTAIN_MODEL = 'minimax/minimax-m2.5'
 export const CAPTAIN_MODEL = process.env.OPENAI_CAPTAIN_MODEL || DEFAULT_CAPTAIN_MODEL
 
 // ─── OpenRouter / OpenAI Provider ────────────────────────────────────────────
@@ -120,8 +120,8 @@ type StreamDelta =
  *   - { type: 'model', event: <raw OpenRouter chunk> } — raw chat completion chunks
  *   - { type: 'output_text_delta', delta: '...' } — text deltas (already extracted by SDK)
  *
- * Grok via OpenRouter returns reasoning in `delta.reasoning_details` array:
- *   { type: "reasoning.summary", summary: "token text", format: "xai-responses-v1" }
+ * Models via OpenRouter return reasoning in `delta.reasoning_details` array:
+ *   { type: "reasoning.text", text: "..." } or { type: "reasoning.summary", summary: "..." }
  *
  * Some models return reasoning as `delta.reasoning` (string) — we handle both.
  */
@@ -134,19 +134,19 @@ function extractStreamDelta(rawEvent: unknown): StreamDelta {
     if (typeof delta === 'string') return { kind: 'text', content: delta }
   }
 
-  // ── Raw model chunks (contains reasoning_details for Grok) ────────
+  // ── Raw model chunks (contains reasoning_details via OpenRouter) ──
   if (event.type === 'model') {
     const rawChunk = event.event as Record<string, unknown> | undefined
     const choices = rawChunk?.choices as Array<Record<string, unknown>> | undefined
     const delta = choices?.[0]?.delta as Record<string, unknown> | undefined
     if (!delta) return null
 
-    // Format 1: Grok via OpenRouter — reasoning_details array
+    // Format 1: Model via OpenRouter — reasoning_details array
     // Each entry: { type: "reasoning.summary"|"reasoning.text", summary: "...", text: "..." }
     const details = delta.reasoning_details as Array<Record<string, unknown>> | undefined
     if (Array.isArray(details) && details.length > 0) {
       const part = details[0]
-      // Grok uses "summary" field, other models may use "text"
+      // Grok uses "summary" field, MiniMax/others use "text"
       const text = (part?.summary ?? part?.text) as string | undefined
       if (typeof text === 'string' && text) {
         return { kind: 'reasoning', content: text }
@@ -458,15 +458,15 @@ export async function* runOpenAICaptain(
       }
     }
 
-    // Estimate cost (Grok 4.1 Fast: $0.20/M input, $0.50/M output)
+    // Estimate cost (MiniMax M2.5: $0.295/M input, $1.20/M output)
     const durationMs = Date.now() - startTime
     const totalUsage = {
       input_tokens: 0,
       output_tokens: 0,
     }
     const costUsd =
-      (totalUsage.input_tokens * 0.0000002) +
-      (totalUsage.output_tokens * 0.0000005)
+      (totalUsage.input_tokens * 0.000000295) +
+      (totalUsage.output_tokens * 0.0000012)
 
     // Yield done event
     yield {

@@ -68,7 +68,7 @@ export function getSDKInfo(override?: AgentSDK): {
   const sdk = getActiveSDK(override)
 
   if (sdk === 'openai') {
-    const model = process.env.OPENAI_CAPTAIN_MODEL || 'x-ai/grok-4.1-fast'
+    const model = process.env.OPENAI_CAPTAIN_MODEL || 'minimax/minimax-m2.5'
     const provider = process.env.OPENROUTER_API_KEY ? 'openrouter' : 'openai'
     return { sdk, model, provider }
   }

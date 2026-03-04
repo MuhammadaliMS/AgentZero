@@ -45,14 +45,153 @@ export interface CaptainToolParams {
 }
 
 // ─── Schema Compatibility Patch ──────────────────────────────────────────────
-// Safety net: ensures ALL properties in each tool's JSON Schema are in `required`.
+// Two-layer defence for models (like MiniMax via OpenRouter) that don't fully
+// support `strict: true` structured outputs:
+//
+//   Layer 1 – Schema patch: ensures ALL properties are in `required` so the
+//             JSON Schema sent to the model is self-consistent.
+//
+//   Layer 2 – Invoke wrapper: intercepts the raw JSON string the model sends
+//             and sanitises it *before* the SDK's internal Zod parser runs.
+//             Handles: malformed JSON, missing fields, wrong types, null body.
+//
 // Primary fix is using `.nullable()` on Zod schemas (not `.optional()`), which
-// produces proper `anyOf: [{type}, {type: "null"}]` schemas with all fields required.
-// This patch is a defense-in-depth guard for any edge cases.
+// produces proper `anyOf: [{type}, {type: "null"}]` schemas with all fields
+// required.  These patches are a defence-in-depth guard.
 
-function patchToolSchemas<T extends { parameters?: Record<string, unknown> }>(tools: T[]): T[] {
+/**
+ * Attempt to coerce `value` to the type described by a JSON Schema property.
+ * Returns the coerced value, or `null` if coercion fails (all our Zod schemas
+ * use `.nullable().default()` so null is always a safe fallback).
+ */
+function coerceToSchemaType(
+  value: unknown,
+  propSchema: Record<string, unknown>
+): unknown {
+  // Determine the target type(s) — could be `type: "string"` or
+  // `anyOf: [{ type: "string" }, { type: "null" }]` (nullable patterns).
+  const targetTypes = new Set<string>()
+  let enumValues: string[] | null = null
+  if (typeof propSchema.type === 'string') {
+    targetTypes.add(propSchema.type)
+  }
+  if (Array.isArray(propSchema.enum)) {
+    enumValues = propSchema.enum as string[]
+  }
+  if (Array.isArray(propSchema.anyOf)) {
+    for (const branch of propSchema.anyOf as Record<string, unknown>[]) {
+      if (typeof branch.type === 'string') targetTypes.add(branch.type)
+      // Collect enums from anyOf branches (nullable enum pattern)
+      if (Array.isArray(branch.enum)) {
+        enumValues = branch.enum as string[]
+      }
+    }
+  }
+
+  // null is always acceptable (all fields are nullable)
+  if (value === null || value === undefined) return null
+
+  const valueType = typeof value
+
+  // Already correct type
+  if (
+    (targetTypes.has('string') && valueType === 'string') ||
+    (targetTypes.has('number') && valueType === 'number') ||
+    (targetTypes.has('integer') && valueType === 'number') ||
+    (targetTypes.has('boolean') && valueType === 'boolean') ||
+    (targetTypes.has('object') && valueType === 'object' && !Array.isArray(value)) ||
+    (targetTypes.has('array') && Array.isArray(value))
+  ) {
+    // For enums, validate the value is in the allowed set
+    if (enumValues && valueType === 'string') {
+      return enumValues.includes(value as string) ? value : null
+    }
+    return value
+  }
+
+  // ── Type coercion attempts ──
+  if (targetTypes.has('number') || targetTypes.has('integer')) {
+    const n = Number(value)
+    if (!Number.isNaN(n)) return n
+    return null
+  }
+  if (targetTypes.has('string')) {
+    const str = String(value)
+    // If there's an enum, validate the coerced string
+    if (enumValues) {
+      return enumValues.includes(str) ? str : null
+    }
+    return str
+  }
+  if (targetTypes.has('boolean')) {
+    if (value === 'true' || value === 1) return true
+    if (value === 'false' || value === 0) return false
+    return null
+  }
+
+  // Can't coerce — fall back to null (Zod default will fill in)
+  return null
+}
+
+/**
+ * Pre-process the raw JSON string from the model:
+ *  1. Parse the JSON (or fall back to `{}`)
+ *  2. Fill missing fields with null
+ *  3. Coerce wrong types where possible
+ *  4. Return a clean JSON string
+ */
+function sanitiseToolInput(
+  raw: string | undefined | null,
+  schema: Record<string, unknown> | undefined
+): string {
+  // Step 1: parse
+  let parsed: Record<string, unknown>
+  try {
+    const result = JSON.parse(raw ?? '{}')
+    // Model might send a bare string, number, or null instead of an object
+    if (result === null || typeof result !== 'object' || Array.isArray(result)) {
+      parsed = {}
+    } else {
+      parsed = result as Record<string, unknown>
+    }
+  } catch {
+    parsed = {}
+  }
+
+  if (!schema?.properties || typeof schema.properties !== 'object') {
+    return JSON.stringify(parsed)
+  }
+
+  const properties = schema.properties as Record<string, Record<string, unknown>>
+
+  // Step 2 & 3: fill missing fields and coerce types
+  for (const key of Object.keys(properties)) {
+    if (!(key in parsed)) {
+      // Missing field → null (Zod .default() will apply)
+      parsed[key] = null
+    } else {
+      // Present but might be wrong type
+      parsed[key] = coerceToSchemaType(parsed[key], properties[key])
+    }
+  }
+
+  // Step 4: strip extra fields (additionalProperties: false)
+  const allowedKeys = new Set(Object.keys(properties))
+  for (const key of Object.keys(parsed)) {
+    if (!allowedKeys.has(key)) {
+      delete parsed[key]
+    }
+  }
+
+  return JSON.stringify(parsed)
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function patchToolSchemas<T extends { name: string; parameters?: any; invoke: (...args: any[]) => any }>(tools: T[]): T[] {
   for (const t of tools) {
     const params = t.parameters as Record<string, unknown> | undefined
+
+    // ── Layer 1: patch `required` array ──
     if (params?.properties && typeof params.properties === 'object') {
       const allKeys = Object.keys(params.properties as object)
       const currentRequired = new Set(
@@ -65,6 +204,15 @@ function patchToolSchemas<T extends { parameters?: Record<string, unknown> }>(to
         }
       }
     }
+
+    // ── Layer 2: wrap invoke to sanitise input ──
+    const originalInvoke = t.invoke.bind(t)
+    const schema = params
+    const wrappedInvoke: typeof t.invoke = (runContext, input, ...rest) => {
+      const sanitised = sanitiseToolInput(input as string, schema as Record<string, unknown> | undefined)
+      return originalInvoke(runContext, sanitised, ...rest)
+    }
+    t.invoke = wrappedInvoke
   }
   return tools
 }

@@ -1,12 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/outcome-tick",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/patrol",
-      "schedule": "0 */2 * * *"
-    }
-  ]
-}
+{}

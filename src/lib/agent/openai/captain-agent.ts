@@ -338,10 +338,10 @@ export async function* runOpenAICaptain(
             if (delta.kind === 'text') {
               fullText += delta.content
               yield { type: 'text', content: delta.content }
-            } else if (delta.kind === 'reasoning') {
-              // Emit thinking events — matches Claude SDK's extended thinking behavior
-              yield { type: 'thinking', content: delta.content }
             }
+            // Note: reasoning tokens (delta.kind === 'reasoning') are intentionally
+            // NOT emitted to the UI. MiniMax has mandatory reasoning that repeats
+            // the response content — showing it doubles up the message.
           }
           break
         }

@@ -11,45 +11,39 @@ interface ThinkingPartProps {
 export function ThinkingPartBlock({ part }: ThinkingPartProps) {
   const [expanded, setExpanded] = useState(false)
 
-  // Summarize: first ~60 chars or "Thinking..."
-  const summary = part.content
-    ? part.content.slice(0, 60) + (part.content.length > 60 ? '...' : '')
-    : 'Thinking...'
+  // Don't render empty thinking blocks
+  if (!part.content && !part.isStreaming) return null
 
   return (
-    <div className="my-1">
+    <div className="my-0.5">
       <button
         onClick={() => setExpanded(!expanded)}
         className={cn(
-          'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors',
-          'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground',
-          part.isStreaming && 'animate-pulse'
+          'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] transition-colors',
+          'text-muted-foreground/50 hover:text-muted-foreground/80 hover:bg-muted/40',
+          part.isStreaming && 'animate-pulse text-muted-foreground/70'
         )}
       >
-        {/* Brain icon */}
+        {/* Small sparkle/thought icon */}
         <svg
-          width="12"
-          height="12"
+          width="10"
+          height="10"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="shrink-0"
+          className="shrink-0 opacity-60"
         >
-          <path d="M12 2a8 8 0 0 0-8 8c0 3.4 2.1 6.3 5 7.5V20h6v-2.5c2.9-1.2 5-4.1 5-7.5a8 8 0 0 0-8-8z" />
-          <path d="M12 2v4" />
-          <path d="M8 6l2 2" />
-          <path d="M16 6l-2 2" />
+          <circle cx="12" cy="12" r="1" />
+          <circle cx="12" cy="5" r="1" />
+          <circle cx="12" cy="19" r="1" />
         </svg>
-        <span className="truncate max-w-[300px]">
-          {expanded ? 'Thinking' : summary}
-        </span>
-        {/* Chevron */}
+        <span>{part.isStreaming ? 'Reasoning…' : 'Reasoned'}</span>
         <svg
-          width="10"
-          height="10"
+          width="8"
+          height="8"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -64,8 +58,8 @@ export function ThinkingPartBlock({ part }: ThinkingPartProps) {
       </button>
 
       {expanded && part.content && (
-        <div className="mt-2 ml-1 rounded-lg border bg-muted/30 p-3">
-          <pre className="whitespace-pre-wrap text-xs text-muted-foreground font-mono leading-relaxed">
+        <div className="mt-1 ml-1 rounded border border-border/40 bg-muted/20 p-2">
+          <pre className="whitespace-pre-wrap text-[10px] text-muted-foreground/60 font-mono leading-relaxed">
             {part.content}
           </pre>
         </div>

@@ -3,6 +3,7 @@ import { resolve as resolvePath } from 'path'
 import { existsSync } from 'fs'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { buildAgentContext, getRequiredToolSets } from './context-builder'
+import { buildAssociativeContext } from '@/lib/graph/associative-recall'
 import {
   logWorkerExecution,
   completeWorkerExecution,
@@ -21,6 +22,7 @@ import {
   formatToolDisplayName,
 } from './tool-metadata'
 import { ensureWorkspace, getWorkspacePath } from './workspace'
+import { trackUtilityEventBatch, bumpEntityAccess } from '@/lib/graph/utility-tracker'
 
 // ─── Model Configuration ─────────────────────────────────────────────────
 // Supports Anthropic (default), OpenRouter, or any Anthropic-compatible proxy.
@@ -110,6 +112,8 @@ export interface StreamEvent {
   durationMs?: number
   numTurns?: number
   modelUsage?: Record<string, { input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number }>
+  // Context pack metadata (for downstream utility tracking)
+  injectedEntityIds?: string[]
 }
 
 // ─── Tool Permission System ──────────────────────────────────────────────
@@ -275,6 +279,24 @@ export async function* runCaptain(
   try {
     // Build context: loads profile, connected integrations, dynamic system prompt
     const context = await buildAgentContext(orgId, userId)
+
+    // Inject associative context pack (entity graph + insights + contradictions)
+    const assocCtx = await buildAssociativeContext(orgId, message).catch(() => null)
+    if (assocCtx?.contextBlock) {
+      context.systemPrompt += assocCtx.contextBlock
+      yield {
+        type: 'status',
+        content: `Knowledge graph: ${assocCtx.itemCount} items injected (${assocCtx.durationMs}ms)`,
+        injectedEntityIds: assocCtx.matchedEntityIds,
+      } as StreamEvent
+
+      // Track 'injected' utility events and bump access for matched entities
+      if (assocCtx.matchedEntityIds.length > 0) {
+        trackUtilityEventBatch(orgId, assocCtx.matchedEntityIds, 'injected').catch(() => {})
+        bumpEntityAccess(orgId, assocCtx.matchedEntityIds).catch(() => {})
+      }
+    }
+
     const requiredToolSets = getRequiredToolSets(context.connectedIntegrations)
 
     // Create ephemeral workspace for built-in tools (Bash, Read, Write, Glob, Grep)

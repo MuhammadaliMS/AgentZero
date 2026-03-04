@@ -46,11 +46,21 @@ export interface PatrolView {
   newSinceYesterday: number
 }
 
+export interface InsightsView {
+  contradictions: Array<{ summary: string; confidence: number; category: string }>
+  patterns: Array<{ summary: string; confidence: number }>
+  anomalies: Array<{ summary: string; confidence: number }>
+  staleItems: Array<{ summary: string; confidence: number }>
+  risks: Array<{ summary: string; confidence: number }>
+  totalActive: number
+}
+
 export interface WorkerViews {
   cole: ColeView
   rhea: RheaView
   eve: EveView
   patrol: PatrolView
+  insights: InsightsView
 }
 
 export interface BriefMetrics {
@@ -69,14 +79,15 @@ export async function gatherWorkerViews(
   supabase: SupabaseClient<Database>,
   orgId: string
 ): Promise<WorkerViews> {
-  const [cole, rhea, eve, patrol] = await Promise.all([
+  const [cole, rhea, eve, patrol, insights] = await Promise.all([
     gatherColeView(supabase, orgId),
     gatherRheaView(supabase, orgId),
     gatherEveView(supabase, orgId),
     gatherPatrolView(supabase, orgId),
+    gatherInsightsView(supabase, orgId),
   ])
 
-  return { cole, rhea, eve, patrol }
+  return { cole, rhea, eve, patrol, insights }
 }
 
 // ─── Cole (Program Management) ──────────────────────────────────────────────
@@ -358,6 +369,41 @@ export function buildBriefPrompt(
     }
   }
 
+  // ── Knowledge Graph Insights ──────────────────────────────────────────
+  if (views.insights.totalActive > 0) {
+    sections.push('\n## Knowledge Graph Insights')
+
+    if (views.insights.contradictions.length > 0) {
+      for (const c of views.insights.contradictions) {
+        sections.push(`- ⚠️ Conflicting info: ${c.summary}. Please clarify.`)
+      }
+    }
+
+    if (views.insights.risks.length > 0) {
+      for (const r of views.insights.risks) {
+        sections.push(`- 🚨 Risk detected: ${r.summary}`)
+      }
+    }
+
+    if (views.insights.anomalies.length > 0) {
+      for (const a of views.insights.anomalies) {
+        sections.push(`- 📈 Unusual activity: ${a.summary}`)
+      }
+    }
+
+    if (views.insights.staleItems.length > 0) {
+      for (const s of views.insights.staleItems) {
+        sections.push(`- 💤 ${s.summary}`)
+      }
+    }
+
+    if (views.insights.patterns.length > 0) {
+      for (const p of views.insights.patterns) {
+        sections.push(`- 🔗 FYI: ${p.summary}`)
+      }
+    }
+  }
+
   // ── vs. Yesterday ────────────────────────────────────────────────────
   if (yesterdayMetrics) {
     const current = extractMetrics(views)
@@ -382,6 +428,47 @@ export function buildBriefPrompt(
   }
 
   return sections.join('\n')
+}
+
+// ─── Insights View ──────────────────────────────────────────────────────────
+
+async function gatherInsightsView(
+  supabase: SupabaseClient<Database>,
+  orgId: string
+): Promise<InsightsView> {
+  const { data: activeInsights } = await supabase
+    .from('graph_insights')
+    .select('insight_type, summary, confidence, category')
+    .eq('org_id', orgId)
+    .eq('status', 'active')
+    .order('confidence', { ascending: false })
+    .limit(20)
+
+  const all = activeInsights ?? []
+
+  return {
+    contradictions: all
+      .filter(i => i.insight_type === 'contradiction')
+      .slice(0, 3)
+      .map(i => ({ summary: i.summary, confidence: i.confidence, category: i.category ?? 'unknown' })),
+    patterns: all
+      .filter(i => i.insight_type === 'pattern' || i.insight_type === 'correlation')
+      .slice(0, 3)
+      .map(i => ({ summary: i.summary, confidence: i.confidence })),
+    anomalies: all
+      .filter(i => i.insight_type === 'anomaly')
+      .slice(0, 3)
+      .map(i => ({ summary: i.summary, confidence: i.confidence })),
+    staleItems: all
+      .filter(i => i.insight_type === 'stale')
+      .slice(0, 3)
+      .map(i => ({ summary: i.summary, confidence: i.confidence })),
+    risks: all
+      .filter(i => i.insight_type === 'risk')
+      .slice(0, 3)
+      .map(i => ({ summary: i.summary, confidence: i.confidence })),
+    totalActive: all.length,
+  }
 }
 
 // ─── Extract Metrics ────────────────────────────────────────────────────────

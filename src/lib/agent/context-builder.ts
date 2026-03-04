@@ -86,19 +86,24 @@ async function loadGraphContext(orgId: string): Promise<string> {
   try {
     const supabase = createAdminClient()
 
-    // Fetch top 15 most recently active entities
-    const { data: entities } = await supabase
-      .from('entities')
-      .select('name, entity_type, mention_count, last_seen_at')
-      .eq('org_id', orgId)
-      .order('last_seen_at', { ascending: false })
-      .limit(15)
+    // Use decay-aware relevance scoring (per-class half-lives)
+    const { data: entities } = await supabase.rpc('get_relevant_entities', {
+      p_org_id: orgId,
+      p_limit: 20,
+      p_min_relevance: 0.1,
+    })
 
     if (!entities || entities.length === 0) return ''
 
-    // Format as a compact section for the system prompt
-    const entityList = entities
-      .map(e => `${e.name} (${e.entity_type}, ${e.mention_count}x)`)
+    // Format with relevance score and state
+    const entityList = (entities as Array<{
+      entity_name: string
+      entity_type: string
+      mention_count: number
+      relevance_score: number
+      entity_state: string
+    }>)
+      .map(e => `${e.entity_name} (${e.entity_type}, ${e.mention_count}x, rel:${e.relevance_score.toFixed(1)}${e.entity_state === 'pinned' ? ', pinned' : ''})`)
       .join(' · ')
 
     return `\n\n## Active Knowledge Graph\nKey entities tracked: ${entityList}\n\nUse \`query_entity_graph\` or \`get_entity_timeline\` to explore connections and history.`

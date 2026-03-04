@@ -399,6 +399,8 @@ export async function POST(request: NextRequest) {
 
         // Collect raw tool output data for entity extraction enrichment
         const toolOutputs: Array<{ toolName: string; output: string }> = []
+        // Capture injected entity IDs for 'cited' utility tracking in extraction
+        let injectedEntityIds: string[] = []
         const INTEGRATION_TOOLS = new Set([
           'read_recent_emails', 'search_emails', 'read_email',
           'get_today_events', 'get_upcoming_events',
@@ -450,6 +452,11 @@ export async function POST(request: NextRequest) {
           // Accumulate text for DB storage
           if (event.type === 'text' && event.content) {
             fullResponse += event.content
+          }
+
+          // Capture injected entity IDs from context pack for 'cited' tracking
+          if (event.type === 'status' && event.injectedEntityIds) {
+            injectedEntityIds = event.injectedEntityIds
           }
 
           // Accumulate parts for rich DB storage (agentic UI reload)
@@ -507,6 +514,7 @@ export async function POST(request: NextRequest) {
                     messageContent: fullResponse,
                     role: 'assistant',
                     toolOutputs: toolOutputs.length > 0 ? toolOutputs : undefined,
+                    injectedEntityIds: injectedEntityIds.length > 0 ? injectedEntityIds : undefined,
                   }),
                 ]).catch(err => console.error('[Extraction] Background failed:', err))
               )

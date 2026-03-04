@@ -19,6 +19,14 @@
     {
       "path": "/api/cron/agentic-patrol",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/ghost-agent",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/ghost-agent-light",
+      "schedule": "0 * * * *"
     }
   ]
 }

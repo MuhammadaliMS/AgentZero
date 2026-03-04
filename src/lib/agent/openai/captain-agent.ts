@@ -17,11 +17,13 @@ import { Agent, Runner } from '@openai/agents'
 import type { RunStreamEvent, RunItemStreamEvent } from '@openai/agents'
 import { OpenAIProvider, setOpenAIAPI } from '@openai/agents'
 import { buildAgentContext } from '../context-builder'
+import { buildAssociativeContext } from '@/lib/graph/associative-recall'
 import { logWorkerExecution, completeWorkerExecution } from '../hooks'
 import { cleanupConversationApprovals } from '../approval-store'
 import { createCaptainTools, type CaptainToolParams } from './captain-tools'
 import { createCaptainHandoffs } from './captain-workers'
 import type { RunCaptainParams, StreamEvent } from '../orchestrator'
+import { trackUtilityEventBatch, bumpEntityAccess } from '@/lib/graph/utility-tracker'
 
 // ─── Model Configuration ─────────────────────────────────────────────────────
 // Uses OPENAI_CAPTAIN_MODEL env var, or falls back to a sensible default.
@@ -214,6 +216,22 @@ export async function* runOpenAICaptain(
 
     // Build context: loads profile, connected integrations, dynamic system prompt
     const context = await buildAgentContext(orgId, userId)
+
+    // Inject associative recall context from knowledge graph
+    const assocCtx = await buildAssociativeContext(orgId, message).catch(() => null)
+    if (assocCtx?.contextBlock) {
+      context.systemPrompt += assocCtx.contextBlock
+      yield {
+        type: 'status',
+        content: `Knowledge graph: ${assocCtx.itemCount} items injected (${assocCtx.durationMs}ms)`,
+      } as StreamEvent
+
+      // Track 'injected' utility events and bump access for matched entities
+      if (assocCtx.matchedEntityIds.length > 0) {
+        trackUtilityEventBatch(orgId, assocCtx.matchedEntityIds, 'injected').catch(() => {})
+        bumpEntityAccess(orgId, assocCtx.matchedEntityIds).catch(() => {})
+      }
+    }
 
     // Build tool params — events emitted directly via onEmitEvent for blocking events
     const toolParams: CaptainToolParams = {

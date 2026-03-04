@@ -7,6 +7,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
+import { trackUtilityEventBatch } from '@/lib/graph/utility-tracker'
 
 type FeedbackSignalInsert = Database['public']['Tables']['feedback_signals']['Insert']
 
@@ -57,6 +58,38 @@ export async function trackNudgeAcknowledged(
     .from('nudges')
     .update({ status: 'acknowledged' as const })
     .eq('id', nudgeId)
+
+  // Track 'accepted' utility for entities involved in graph-sourced nudges.
+  // Lookup the nudge → source_finding → insight_actions → insight → entity_ids chain.
+  try {
+    const { data: nudge } = await supabase
+      .from('nudges')
+      .select('source_finding_id')
+      .eq('id', nudgeId)
+      .maybeSingle()
+
+    if (nudge?.source_finding_id) {
+      const { data: insightAction } = await supabase
+        .from('insight_actions')
+        .select('insight_id')
+        .eq('finding_id', nudge.source_finding_id)
+        .maybeSingle()
+
+      if (insightAction?.insight_id) {
+        const { data: insight } = await supabase
+          .from('graph_insights')
+          .select('related_entity_ids')
+          .eq('id', insightAction.insight_id)
+          .maybeSingle()
+
+        if (insight?.related_entity_ids && insight.related_entity_ids.length > 0) {
+          trackUtilityEventBatch(orgId, insight.related_entity_ids, 'accepted').catch(() => {})
+        }
+      }
+    }
+  } catch {
+    // Fire-and-forget — don't fail the acknowledgment
+  }
 }
 
 /** Track when a user dismisses a nudge. */

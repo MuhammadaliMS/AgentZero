@@ -14,6 +14,8 @@ import {
   type ExtractedEntity,
   type ExtractedRelationship,
 } from '@/lib/openai/client'
+import { runPreStoreGuard, storeContradictions, type ResolvedRelationship } from '@/lib/graph/contradiction-detector'
+import { trackUtilityEventBatch } from '@/lib/graph/utility-tracker'
 import type { Json } from '@/types/database'
 
 // ─── Types ───────────────────────────────────────────────────────────────
@@ -27,6 +29,9 @@ export interface ExtractionParams {
   /** Raw tool output data from integration tools (emails, calendar, Slack, etc.)
    *  for enriched entity extraction. Only present on assistant-role extractions. */
   toolOutputs?: Array<{ toolName: string; output: string }>
+  /** Entity IDs injected into context pack for this conversation turn.
+   *  Used to track 'cited' utility events when these entities are re-mentioned. */
+  injectedEntityIds?: string[]
 }
 
 // ─── Pipeline ────────────────────────────────────────────────────────────
@@ -98,15 +103,46 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
     // 3. Upsert entities
     const entityIdMap = await upsertEntities(supabase, orgId, entities)
 
-    // 4. Upsert relationships
+    // 4. Upsert relationships (with pre-store guard for contradiction detection)
     let relationshipsCreated = 0
-    for (const rel of relationships) {
-      const sourceId = entityIdMap.get(normalizeCanonical(rel.source))
-      const targetId = entityIdMap.get(normalizeCanonical(rel.target))
-      if (!sourceId || !targetId || sourceId === targetId) continue
 
-      await upsertRelationship(supabase, orgId, conversationId, sourceId, targetId, rel)
+    // Resolve relationship entity IDs
+    const resolvedRels: ResolvedRelationship[] = relationships
+      .map(rel => ({
+        sourceId: entityIdMap.get(normalizeCanonical(rel.source)) ?? '',
+        targetId: entityIdMap.get(normalizeCanonical(rel.target)) ?? '',
+        source: rel.source,
+        target: rel.target,
+        type: rel.type,
+        properties: rel.properties,
+        confidence: rel.confidence,
+      }))
+      .filter(r => r.sourceId && r.targetId && r.sourceId !== r.targetId)
+
+    // Run pre-store guard to detect contradictions
+    const { allowed, blocked, contradictions } = await runPreStoreGuard(
+      orgId, conversationId, resolvedRels
+    )
+
+    // Only upsert allowed relationships
+    for (const rel of allowed) {
+      await upsertRelationship(supabase, orgId, conversationId, rel.sourceId, rel.targetId, rel)
       relationshipsCreated++
+    }
+
+    // Log blocked relationships for observability
+    if (blocked.length > 0) {
+      console.warn(
+        `[Extraction] Pre-store guard blocked ${blocked.length} relationship(s) due to contradictions:`,
+        blocked.map(r => `${r.source} -[${r.type}]-> ${r.target}`).join(', ')
+      )
+    }
+
+    // Store contradictions (fire-and-forget)
+    if (contradictions.length > 0) {
+      storeContradictions(orgId, conversationId, contradictions).catch(err =>
+        console.error('[Extraction] Failed to store contradictions:', err)
+      )
     }
 
     // 5. Generate embeddings for new/updated entities
@@ -124,6 +160,16 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
           .update({ embedding: JSON.stringify(embedding) })
           .eq('id', entityId)
         embeddingsGenerated++
+      }
+    }
+
+    // 5b. Track 'cited' utility for entities that were injected into context
+    // and then re-mentioned by the assistant in its response
+    if (params.injectedEntityIds && params.injectedEntityIds.length > 0 && role === 'assistant') {
+      const extractedIds = new Set(entityIdMap.values())
+      const citedIds = params.injectedEntityIds.filter(id => extractedIds.has(id))
+      if (citedIds.length > 0) {
+        trackUtilityEventBatch(orgId, citedIds, 'cited', conversationId).catch(() => {})
       }
     }
 
@@ -153,7 +199,10 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
     }
 
     console.log(
-      `[Extraction] ${role} message → ${entities.length} entities, ${relationshipsCreated} relationships, ${embeddingsGenerated} embeddings (${Date.now() - startTime}ms)`
+      `[Extraction] ${role} message → ${entities.length} entities, ${relationshipsCreated} relationships` +
+      `${blocked.length > 0 ? `, ${blocked.length} blocked` : ''}` +
+      `${contradictions.length > 0 ? `, ${contradictions.length} contradictions` : ''}` +
+      `, ${embeddingsGenerated} embeddings (${Date.now() - startTime}ms)`
     )
   } catch (error) {
     console.error('[Extraction] Pipeline error:', error)

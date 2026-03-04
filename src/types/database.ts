@@ -698,6 +698,13 @@ export interface Database {
           mention_count: number
           created_at: string
           updated_at: string
+          access_count: number
+          last_accessed_at: string | null
+          utility_score: number
+          state: 'active' | 'dormant' | 'archived' | 'pinned' | 'conflicted'
+          is_pinned: boolean
+          memory_class: 'person' | 'project' | 'decision' | 'control' | 'team' | 'tool' | 'vendor' | 'framework' | 'document' | 'process' | 'default'
+          last_decay_at: string | null
         }
         Insert: {
           id?: string
@@ -713,6 +720,13 @@ export interface Database {
           mention_count?: number
           created_at?: string
           updated_at?: string
+          access_count?: number
+          last_accessed_at?: string | null
+          utility_score?: number
+          state?: 'active' | 'dormant' | 'archived' | 'pinned' | 'conflicted'
+          is_pinned?: boolean
+          memory_class?: 'person' | 'project' | 'decision' | 'control' | 'team' | 'tool' | 'vendor' | 'framework' | 'document' | 'process' | 'default'
+          last_decay_at?: string | null
         }
         Update: {
           name?: string
@@ -722,6 +736,13 @@ export interface Database {
           last_seen_at?: string
           mention_count?: number
           updated_at?: string
+          access_count?: number
+          last_accessed_at?: string | null
+          utility_score?: number
+          state?: 'active' | 'dormant' | 'archived' | 'pinned' | 'conflicted'
+          is_pinned?: boolean
+          memory_class?: 'person' | 'project' | 'decision' | 'control' | 'team' | 'tool' | 'vendor' | 'framework' | 'document' | 'process' | 'default'
+          last_decay_at?: string | null
         }
         Relationships: [
           {
@@ -995,7 +1016,7 @@ export interface Database {
         Row: {
           id: string
           org_id: string
-          type: 'deadline_approaching' | 'deadline_overdue' | 'stale_entity' | 'failing_control' | 'unresolved_blocker' | 'at_risk_commitment' | 'action_expiring' | 'cross_signal_risk' | 'discovered_commitment' | 'integration_insight' | 'compliance_gap' | 'stakeholder_signal' | 'deadline_conflict'
+          type: 'deadline_approaching' | 'deadline_overdue' | 'stale_entity' | 'failing_control' | 'unresolved_blocker' | 'at_risk_commitment' | 'action_expiring' | 'cross_signal_risk' | 'discovered_commitment' | 'integration_insight' | 'compliance_gap' | 'stakeholder_signal' | 'deadline_conflict' | 'anomaly_detected' | 'recurring_pattern' | 'opportunity_identified'
           severity: 'critical' | 'high' | 'medium' | 'low'
           title: string
           description: string | null
@@ -1015,7 +1036,7 @@ export interface Database {
         Insert: {
           id?: string
           org_id: string
-          type: 'deadline_approaching' | 'deadline_overdue' | 'stale_entity' | 'failing_control' | 'unresolved_blocker' | 'at_risk_commitment' | 'action_expiring' | 'cross_signal_risk' | 'discovered_commitment' | 'integration_insight' | 'compliance_gap' | 'stakeholder_signal' | 'deadline_conflict'
+          type: 'deadline_approaching' | 'deadline_overdue' | 'stale_entity' | 'failing_control' | 'unresolved_blocker' | 'at_risk_commitment' | 'action_expiring' | 'cross_signal_risk' | 'discovered_commitment' | 'integration_insight' | 'compliance_gap' | 'stakeholder_signal' | 'deadline_conflict' | 'anomaly_detected' | 'recurring_pattern' | 'opportunity_identified'
           severity: 'critical' | 'high' | 'medium' | 'low'
           title: string
           description?: string | null
@@ -1144,6 +1165,202 @@ export interface Database {
           },
         ]
       }
+      graph_insights: {
+        Row: {
+          id: string
+          org_id: string
+          idempotency_key: string
+          insight_type: string
+          category: string | null
+          summary: string
+          confidence: number
+          utility_score: number
+          related_entity_ids: string[]
+          evidence: Json
+          action_template: Json | null
+          source_conversation_id: string | null
+          status: string
+          routed_finding_id: string | null
+          superseded_by: string | null
+          times_triggered: number
+          last_triggered_at: string
+          expires_at: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          idempotency_key: string
+          insight_type: string
+          category?: string | null
+          summary: string
+          confidence?: number
+          utility_score?: number
+          related_entity_ids?: string[]
+          evidence?: Json
+          action_template?: Json | null
+          source_conversation_id?: string | null
+          status?: string
+          routed_finding_id?: string | null
+          superseded_by?: string | null
+          times_triggered?: number
+          last_triggered_at?: string
+          expires_at?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          insight_type?: string
+          category?: string | null
+          summary?: string
+          confidence?: number
+          utility_score?: number
+          related_entity_ids?: string[]
+          evidence?: Json
+          action_template?: Json | null
+          status?: string
+          routed_finding_id?: string | null
+          superseded_by?: string | null
+          times_triggered?: number
+          last_triggered_at?: string
+          expires_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'graph_insights_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      insight_actions: {
+        Row: {
+          id: string
+          org_id: string
+          insight_id: string
+          finding_id: string | null
+          action_id: string | null
+          decision_mode: string
+          policy_path: string | null
+          execution_result: string
+          outcome_notes: string | null
+          created_at: string
+          resolved_at: string | null
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          insight_id: string
+          finding_id?: string | null
+          action_id?: string | null
+          decision_mode: string
+          policy_path?: string | null
+          execution_result?: string
+          outcome_notes?: string | null
+          created_at?: string
+          resolved_at?: string | null
+        }
+        Update: {
+          execution_result?: string
+          outcome_notes?: string | null
+          resolved_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'insight_actions_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'insight_actions_insight_id_fkey'
+            columns: ['insight_id']
+            isOneToOne: false
+            referencedRelation: 'graph_insights'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      contradiction_resolutions: {
+        Row: {
+          id: string
+          org_id: string
+          contradiction_id: string
+          chosen_truth: Json
+          resolver_id: string | null
+          resolution_source: string
+          rationale: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          contradiction_id: string
+          chosen_truth: Json
+          resolver_id?: string | null
+          resolution_source: string
+          rationale?: string | null
+          created_at?: string
+        }
+        Update: {
+          rationale?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'contradiction_resolutions_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'contradiction_resolutions_contradiction_id_fkey'
+            columns: ['contradiction_id']
+            isOneToOne: false
+            referencedRelation: 'graph_insights'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      memory_utility_events: {
+        Row: {
+          id: string
+          org_id: string
+          entity_id: string | null
+          memory_id: string | null
+          insight_id: string | null
+          event_type: string
+          conversation_id: string | null
+          source_channel: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          entity_id?: string | null
+          memory_id?: string | null
+          insight_id?: string | null
+          event_type: string
+          conversation_id?: string | null
+          source_channel?: string | null
+          created_at?: string
+        }
+        Update: Record<string, never>
+        Relationships: [
+          {
+            foreignKeyName: 'memory_utility_events_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
     }
     Views: Record<string, never>
     Functions: {
@@ -1199,6 +1416,114 @@ export interface Database {
           similarity: number
           related_entities: string[]
           created_at: string
+        }>
+      }
+      get_relevant_entities: {
+        Args: {
+          p_org_id: string
+          p_limit?: number
+          p_min_relevance?: number
+        }
+        Returns: Array<{
+          entity_id: string
+          entity_name: string
+          entity_type: string
+          mention_count: number
+          relevance_score: number
+          entity_state: string
+        }>
+      }
+      search_entities_by_embedding: {
+        Args: {
+          p_org_id: string
+          p_embedding: string
+          p_limit?: number
+          p_min_similarity?: number
+        }
+        Returns: Array<{
+          entity_id: string
+          entity_name: string
+          entity_type: string
+          entity_description: string | null
+          canonical_name: string
+          similarity: number
+          mention_count: number
+          entity_state: string
+          utility: number
+        }>
+      }
+      bump_entity_access: {
+        Args: {
+          p_org_id: string
+          p_entity_ids: string[]
+        }
+        Returns: undefined
+      }
+      upsert_insight_with_dedupe: {
+        Args: {
+          p_org_id: string
+          p_idempotency_key: string
+          p_insight_type: string
+          p_category: string | null
+          p_summary: string
+          p_confidence: number
+          p_entity_ids: string[]
+          p_evidence: Json
+          p_action_template: Json | null
+        }
+        Returns: undefined
+      }
+      find_repetitive_relationships: {
+        Args: {
+          p_org_id: string
+          p_min_repetitions?: number
+        }
+        Returns: Array<{
+          source_entity_id: string
+          target_entity_id: string
+          relationship_type: string
+          source_name: string
+          target_name: string
+          repetition_count: number
+          avg_confidence: number
+          relationship_ids: string[]
+        }>
+      }
+      detect_velocity_spikes: {
+        Args: {
+          p_org_id: string
+          p_spike_threshold?: number
+        }
+        Returns: Array<{
+          entity_id: string
+          entity_name: string
+          entity_type: string
+          recent_7d_count: number
+          avg_30d_weekly: number
+          spike_ratio: number
+        }>
+      }
+      find_co_occurring_entities: {
+        Args: {
+          p_org_id: string
+          p_min_co_occurrences?: number
+          p_limit?: number
+        }
+        Returns: Array<{
+          entity_a_id: string
+          entity_b_id: string
+          entity_a_name: string
+          entity_b_name: string
+          co_occurrence_count: number
+        }>
+      }
+      apply_decay_cycle: {
+        Args: {
+          p_org_id: string
+        }
+        Returns: Array<{
+          transitioned_to_dormant: number
+          transitioned_to_archived: number
         }>
       }
     }

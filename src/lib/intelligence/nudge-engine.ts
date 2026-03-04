@@ -13,6 +13,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { getUserWeight } from './feedback-tracker'
+import { handleFindingResolved } from '@/lib/graph/insight-action-router'
 
 type PatrolFinding = Database['public']['Tables']['patrol_findings']['Row']
 
@@ -126,6 +127,12 @@ export async function runSmartNudge(
         .from('patrol_findings')
         .update({ status: 'acknowledged' as const })
         .in('id', findingIds)
+
+      // Close the feedback loop: notify insight-action-router so it can
+      // update insight_actions and bump utility scores for graph-sourced findings
+      for (const fid of findingIds) {
+        handleFindingResolved(batch.orgId, fid, 'approved').catch(() => {})
+      }
     }
   }
 

@@ -2,6 +2,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { generateEmbedding, isOpenAIConfigured } from '@/lib/openai/client'
+import { trackUtilityEventBatch, bumpEntityAccess } from '@/lib/graph/utility-tracker'
 import type { Database } from '@/types/database'
 
 type Memory = Database['public']['Tables']['memory']['Row']
@@ -178,6 +179,22 @@ export function createMemoryTools(orgId: string) {
           }))
 
         console.log(`[Tool:recall_memory] Hybrid result: ${ranked.length} memories (sources: ${ranked.map(r => r._relevance.sources).join(', ')})`)
+
+        // Track utility events for matched entities (fire-and-forget)
+        if (args.include_graph_context) {
+          const { data: matchedEntities } = await supabase
+            .from('entities')
+            .select('id')
+            .eq('org_id', orgId)
+            .or(`name.ilike.%${args.query}%,canonical_name.ilike.%${args.query.toLowerCase()}%`)
+            .limit(5)
+          if (matchedEntities && matchedEntities.length > 0) {
+            const entityIds = matchedEntities.map(e => e.id)
+            trackUtilityEventBatch(orgId, entityIds, 'retrieved').catch(() => {})
+            bumpEntityAccess(orgId, entityIds).catch(() => {})
+          }
+        }
+
         return { content: [{ type: 'text' as const, text: JSON.stringify(ranked, null, 2) }] }
       } catch (e) {
         console.error(`[Tool:recall_memory] EXCEPTION:`, e)
@@ -453,6 +470,14 @@ export function createMemoryTools(orgId: string) {
         }
 
         console.log(`[Tool:query_entity_graph] Found ${results.length} nodes, ${memoryContext.length} linked memories`)
+
+        // Track utility events (fire-and-forget)
+        const graphEntityIds = [startEntity.id, ...(results as Array<{ entity_id?: string }>)
+          .map(r => r.entity_id).filter(Boolean) as string[]]
+        const uniqueEntityIds = [...new Set(graphEntityIds)]
+        trackUtilityEventBatch(orgId, uniqueEntityIds, 'retrieved').catch(() => {})
+        bumpEntityAccess(orgId, uniqueEntityIds).catch(() => {})
+
         return { content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }] }
       } catch (e) {
         console.error(`[Tool:query_entity_graph] EXCEPTION:`, e)

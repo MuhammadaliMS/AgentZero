@@ -33,12 +33,14 @@ export interface TickResult {
   stepsExecuted: number
   stepsBlocked: number
   stepsSkipped: number
+  headlessRuns: number
   errors: number
 }
 
 const STEP_TIMEOUT_MS = 30_000
 const MAX_STEPS_PER_OUTCOME = 3
 const NUDGE_COOLDOWN_HOURS = 4
+const MAX_HEADLESS_PER_ORG_TICK = 3
 
 // ─── Background Tick ──────────────────────────────────────────────────────
 
@@ -53,6 +55,7 @@ export async function tickOutcomes(orgId: string): Promise<TickResult> {
     stepsExecuted: 0,
     stepsBlocked: 0,
     stepsSkipped: 0,
+    headlessRuns: 0,
     errors: 0,
   }
 
@@ -79,6 +82,30 @@ export async function tickOutcomes(orgId: string): Promise<TickResult> {
     console.error(`[BackgroundExecutor] Error fetching outcomes for org ${orgId}:`, error)
   }
 
+  // 2. Process 'planning' outcomes that need headless planning
+  try {
+    const { data: planningOutcomes } = await supabase
+      .from('outcomes')
+      .select('id, title, description, related_entity_ids')
+      .eq('org_id', orgId)
+      .eq('status', 'planning')
+      .order('created_at', { ascending: true })
+      .limit(MAX_HEADLESS_PER_ORG_TICK)
+
+    if (planningOutcomes && planningOutcomes.length > 0) {
+      for (const outcome of planningOutcomes) {
+        try {
+          await tickPlanningOutcome(orgId, outcome, result)
+        } catch (error) {
+          console.error(`[BackgroundExecutor] Headless planning error for ${outcome.id}:`, error)
+          result.errors++
+        }
+      }
+    }
+  } catch (error) {
+    console.error(`[BackgroundExecutor] Error fetching planning outcomes for org ${orgId}:`, error)
+  }
+
   return result
 }
 
@@ -96,9 +123,46 @@ async function tickSingleOutcome(
   const readySteps = await getNextExecutableSteps(plan.run.id)
 
   for (const step of readySteps) {
-    // Skip steps that need conversation context
+    // Run llm_reasoning steps via headless captain (instead of skipping)
     if (step.actionType === 'llm_reasoning') {
-      result.stepsSkipped++
+      try {
+        const { runHeadlessCaptain } = await import('../runtime/headless-captain')
+
+        const prompt = `You are executing step ${step.stepOrder} of an outcome plan.
+
+Step description: ${step.description}
+${step.expectedOutput ? `Expected output: ${step.expectedOutput}` : ''}
+
+Execute this step using the appropriate tools and return the result.`
+
+        const headlessResult = await runHeadlessCaptain(orgId, prompt, {
+          maxTurns: 10,
+          timeoutMs: 60_000,
+        })
+
+        if (headlessResult.error) {
+          await updateStep(step.id, {
+            status: 'failed',
+            errorMessage: `Headless reasoning failed: ${headlessResult.error}`,
+          }, orgId)
+          result.errors++
+        } else {
+          await updateStep(step.id, {
+            status: 'completed',
+            resultSummary: headlessResult.text.slice(0, 2000),
+          }, orgId)
+          result.stepsExecuted++
+          result.headlessRuns++
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        console.error(`[BackgroundExecutor] Headless reasoning failed for step ${step.id}:`, errMsg)
+        await updateStep(step.id, {
+          status: 'failed',
+          errorMessage: `Headless reasoning error: ${errMsg}`,
+        }, orgId)
+        result.errors++
+      }
       continue
     }
 
@@ -141,6 +205,82 @@ async function tickSingleOutcome(
 
   // Reconcile outcome status after step execution
   await reconcileOutcomeStatus(orgId, outcomeId, plan.run.id)
+}
+
+// ─── Headless Planning for Draft Outcomes ─────────────────────────────────
+
+/**
+ * Run headless captain to plan a 'planning' status outcome.
+ * The agent creates a plan with explicit tool_call steps.
+ */
+async function tickPlanningOutcome(
+  orgId: string,
+  outcome: { id: string; title: string; description: string | null; related_entity_ids: string[] | null },
+  result: TickResult
+): Promise<void> {
+  const { runHeadlessCaptain, parseAgentPlan } = await import('../runtime/headless-captain')
+  const { planOutcome } = await import('./outcome-planner')
+  const { updateOutcomeStatus } = await import('../runtime/outcome-runtime')
+
+  const prompt = `You are planning how to accomplish this task autonomously in the background.
+
+Task: ${outcome.title}
+${outcome.description ? `Details: ${outcome.description}` : ''}
+
+Create a plan using the create_outcome tool with explicit steps. Each step should be a tool_call with specific tool_name and tool_args. Do NOT use llm_reasoning placeholder steps — every step must be a concrete tool call.
+
+If this task genuinely cannot be accomplished with the available tools, explain why briefly.`
+
+  const headlessResult = await runHeadlessCaptain(orgId, prompt, {
+    maxTurns: 15,
+    timeoutMs: 90_000,
+  })
+
+  result.headlessRuns++
+
+  if (headlessResult.error) {
+    console.error(`[BackgroundExecutor] Headless planning failed for ${outcome.id}: ${headlessResult.error}`)
+    return // Leave as 'planning' — will retry next tick
+  }
+
+  // If the agent called create_outcome or update_outcome, the outcome
+  // should now have steps (the agent tools handle this directly).
+  // Check if outcome has moved past 'planning':
+  const supabase = createAdminClient()
+  const { data: updated } = await supabase
+    .from('outcomes')
+    .select('status')
+    .eq('id', outcome.id)
+    .single()
+
+  if (updated?.status === 'planning') {
+    // Agent didn't plan it via tools — try to parse the text response
+    const steps = parseAgentPlan(headlessResult.text)
+
+    if (steps && steps.length > 0) {
+      const planResult = await planOutcome({
+        orgId,
+        outcomeId: outcome.id,
+        title: outcome.title,
+        description: outcome.description ?? '',
+        providedSteps: steps,
+      })
+      if (planResult.success) {
+        await updateOutcomeStatus(outcome.id, 'executing', { orgId })
+        console.log(`[BackgroundExecutor] Headless planned outcome ${outcome.id} with ${planResult.stepCount} steps`)
+      }
+    } else {
+      // Can't parse plan — check for NEEDS_USER_INPUT signal
+      if (headlessResult.text.includes('NEEDS_USER_INPUT')) {
+        const ask = headlessResult.text.split('NEEDS_USER_INPUT:')[1]?.trim()?.slice(0, 500)
+        await updateOutcomeStatus(outcome.id, 'blocked', {
+          orgId,
+          blockerSummary: ask || 'Headless agent needs user input to plan this task',
+        })
+      }
+      // else: leave as 'planning', will retry next tick
+    }
+  }
 }
 
 // ─── Headless Tool Execution ──────────────────────────────────────────────

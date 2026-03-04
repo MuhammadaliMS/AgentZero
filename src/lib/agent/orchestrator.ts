@@ -3,6 +3,7 @@ import { resolve as resolvePath } from 'path'
 import { existsSync } from 'fs'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { buildAgentContext, getRequiredToolSets } from './context-builder'
+import { HEADLESS_PROMPT_SUPPLEMENT } from './prompts/captain'
 import { buildAssociativeContext } from '@/lib/graph/associative-recall'
 import {
   logWorkerExecution,
@@ -60,6 +61,9 @@ export interface RunCaptainParams {
   sessionId?: string
   abortController?: AbortController
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+  /** When true, runs in headless mode (background cron). Approval/integration
+   *  gates auto-reject, and HEADLESS_PROMPT_SUPPLEMENT is appended to system prompt. */
+  headlessMode?: boolean
   /** Direct SSE emission callback — bypasses the generator yield cycle.
    *  Used by permissionGateHook to emit events while blocking. */
   onEmitEvent?: (event: StreamEvent) => void
@@ -337,6 +341,11 @@ export async function* runCaptain(
         return `- ${o.title} [${status}] (${o.priority})`
       }).join('\n')
       context.systemPrompt += `\n\n## Active Outcomes\n${outcomeSummary}`
+    }
+
+    // Headless mode: append autonomous execution instructions
+    if (params.headlessMode) {
+      context.systemPrompt += HEADLESS_PROMPT_SUPPLEMENT
     }
 
     const requiredToolSets = getRequiredToolSets(context.connectedIntegrations)

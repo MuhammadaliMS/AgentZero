@@ -205,6 +205,46 @@ export async function routeInsightsToActions(
                 updateErr
               )
             }
+
+            // Trigger headless planning for the newly created outcome.
+            // Fire-and-forget — next outcome-tick will also pick it up if this fails.
+            try {
+              const { runHeadlessCaptain, parseAgentPlan } = await import('@/lib/agent/runtime/headless-captain')
+              const { planOutcome } = await import('@/lib/agent/planner/outcome-planner')
+              const { updateOutcomeStatus } = await import('@/lib/agent/runtime/outcome-runtime')
+
+              const planPrompt = `Plan how to accomplish: ${outcomeTitle}\n${outcomeDescription ? `Details: ${outcomeDescription}` : ''}\nProvide explicit tool_call steps.`
+
+              const headlessResult = await runHeadlessCaptain(orgId, planPrompt, {
+                maxTurns: 10,
+                timeoutMs: 60_000,
+              })
+
+              if (!headlessResult.error) {
+                const steps = parseAgentPlan(headlessResult.text)
+                if (steps && steps.length > 0) {
+                  const planResult = await planOutcome({
+                    orgId,
+                    outcomeId,
+                    title: outcomeTitle,
+                    description: outcomeDescription,
+                    providedSteps: steps,
+                  })
+                  if (planResult.success) {
+                    await updateOutcomeStatus(outcomeId, 'executing', { orgId })
+                    console.log(
+                      `[InsightRouter] Auto-planned outcome ${outcomeId} with ${planResult.stepCount} steps`
+                    )
+                  }
+                }
+              }
+            } catch (planErr) {
+              // Non-fatal — outcome-tick cron will pick it up
+              console.error(
+                `[InsightRouter] Failed to auto-plan outcome ${outcomeId}:`,
+                planErr
+              )
+            }
           }
         }).catch(err => {
           console.error(

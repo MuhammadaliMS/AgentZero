@@ -17,6 +17,7 @@ import { Agent, Runner } from '@openai/agents'
 import type { RunStreamEvent, RunItemStreamEvent } from '@openai/agents'
 import { OpenAIProvider, setOpenAIAPI } from '@openai/agents'
 import { buildAgentContext } from '../context-builder'
+import { HEADLESS_PROMPT_SUPPLEMENT } from '../prompts/captain'
 import { buildAssociativeContext } from '@/lib/graph/associative-recall'
 import { logWorkerExecution, completeWorkerExecution } from '../hooks'
 import { cleanupConversationApprovals } from '../approval-store'
@@ -30,11 +31,11 @@ import { trackUtilityEventBatch, bumpEntityAccess } from '@/lib/graph/utility-tr
 // Routed via OpenRouter (OPENROUTER_API_KEY) or direct OpenAI (OPENAI_API_KEY).
 
 const DEFAULT_CAPTAIN_MODEL = 'x-ai/grok-4.1-fast'
-const CAPTAIN_MODEL = process.env.OPENAI_CAPTAIN_MODEL || DEFAULT_CAPTAIN_MODEL
+export const CAPTAIN_MODEL = process.env.OPENAI_CAPTAIN_MODEL || DEFAULT_CAPTAIN_MODEL
 
 // ─── OpenRouter / OpenAI Provider ────────────────────────────────────────────
 
-function getCaptainProvider(): OpenAIProvider {
+export function getCaptainProvider(): OpenAIProvider {
   const openRouterKey = process.env.OPENROUTER_API_KEY
   if (openRouterKey) {
     return new OpenAIProvider({
@@ -234,12 +235,18 @@ export async function* runOpenAICaptain(
       }
     }
 
+    // Headless mode: append autonomous execution instructions
+    if (params.headlessMode) {
+      context.systemPrompt += HEADLESS_PROMPT_SUPPLEMENT
+    }
+
     // Build tool params — events emitted directly via onEmitEvent for blocking events
     const toolParams: CaptainToolParams = {
       orgId,
       userId,
       conversationId: params.conversationId,
       connectedIntegrations: [...context.connectedIntegrations], // Mutable copy
+      headlessMode: params.headlessMode,
       onEmitEvent: (event: StreamEvent) => {
         // Forward blocking events (approval_required, integration_required)
         // AND semantic lifecycle events so the UI can react in real-time.

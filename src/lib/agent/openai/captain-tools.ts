@@ -37,6 +37,8 @@ export interface CaptainToolParams {
   userId: string
   conversationId: string
   connectedIntegrations: string[]
+  /** When true, approval and integration gates auto-reject instead of blocking. */
+  headlessMode?: boolean
   onEmitEvent?: (event: StreamEvent) => void
   /** Callback invoked with raw tool output data (for extraction pipeline). */
   onToolOutput?: (toolName: string, output: string) => void
@@ -463,6 +465,18 @@ async function wrappedExecute(
   const requiredIntegration = requiredIntegrationsList[0] ?? null // Primary for connect prompt
   const hasAnyProvider = requiredIntegrationsList.some(i => connectedIntegrations.includes(i.key))
   if (requiredIntegration && !hasAnyProvider) {
+    // Headless mode: auto-skip instead of blocking for user interaction
+    if (params.headlessMode) {
+      const result = `[SKIPPED] Tool "${toolName}" requires ${requiredIntegration.name} integration which is not connected. Cannot prompt user in headless mode.`
+      onEmitEvent?.({
+        type: 'tool_result',
+        toolName,
+        content: 'skipped (headless — integration not connected)',
+        durationMs: Date.now() - startTime,
+      })
+      return result
+    }
+
     const displayName = formatToolDisplayName(toolName)
 
     // Create a blocking approval request (reuses pending_approvals table)
@@ -515,6 +529,18 @@ async function wrappedExecute(
 
   // 3. Approval gate: sensitive tools require explicit user approval
   if (TOOLS_REQUIRING_APPROVAL.has(toolName)) {
+    // Headless mode: auto-skip instead of blocking for user approval
+    if (params.headlessMode) {
+      const result = `[SKIPPED] Tool "${toolName}" requires user approval. Cannot execute in headless mode.`
+      onEmitEvent?.({
+        type: 'tool_result',
+        toolName,
+        content: 'skipped (headless — approval required)',
+        durationMs: Date.now() - startTime,
+      })
+      return result
+    }
+
     const { approvalId, promise } = await createApprovalRequest(
       toolName,
       toolInput,

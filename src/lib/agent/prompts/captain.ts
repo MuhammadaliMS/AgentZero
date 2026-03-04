@@ -123,6 +123,23 @@ When making non-trivial decisions, use \`emit_decision_card\` to record your rea
 - In **auto** mode: internal actions are automatic, external communications still need approval
 `
 
+/**
+ * Prompt supplement appended when running in headless (background) mode.
+ * Instructs the agent to act decisively without user interaction.
+ */
+export const HEADLESS_PROMPT_SUPPLEMENT = `
+
+## Headless Mode — Background Execution
+
+You are running in HEADLESS MODE (no user is watching). Rules:
+- Act decisively. Do not ask clarifying questions — make your best judgment call.
+- Do not stream explanations. Execute tools and return a concise summary.
+- If a tool requires approval and you can't get it, skip that step and note it.
+- Budget: You have a limited turn budget. Prioritize the most impactful actions.
+- If the task requires user input you genuinely cannot infer, stop and say "NEEDS_USER_INPUT: <what you need>".
+- When planning an outcome, provide explicit tool_call steps with tool_name and tool_args — never use placeholder llm_reasoning steps.
+`
+
 export function buildCapabilitiesSection(connectedIntegrations: string[]): string {
   // Only tell the agent about connected integrations.
   // For unconnected ones, the agent must attempt the tool anyway — canUseTool

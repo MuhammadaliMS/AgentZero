@@ -3,11 +3,12 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { generateEmbedding, isOpenAIConfigured } from '@/lib/openai/client'
 import { trackUtilityEventBatch, bumpEntityAccess } from '@/lib/graph/utility-tracker'
+import { persistDecisionCard, type DecisionCardTriggerType } from '@/lib/agent/reasoning/decision-card'
 import type { Database } from '@/types/database'
 
 type Memory = Database['public']['Tables']['memory']['Row']
 
-export function createMemoryTools(orgId: string) {
+export function createMemoryTools(orgId: string, conversationId?: string | null) {
   const supabase = createAdminClient()
 
   // ─── recall_memory — Hybrid Search (text + vector + graph) ─────────
@@ -554,5 +555,80 @@ export function createMemoryTools(orgId: string) {
     { annotations: { title: 'Check Entity Timeline', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
   )
 
-  return [recallMemory, storeMemory, updateMemory, queryEntityGraph, getEntityTimeline]
+  // ─── emit_decision_card — Reasoning Substrate ───────────────────────
+
+  const emitDecisionCard = tool(
+    'emit_decision_card',
+    `Record a structured decision card capturing your reasoning for a significant decision.
+
+**When to emit a decision card:**
+- You are choosing between multiple approaches or options
+- You are making a strategic recommendation
+- You detect a contradiction or conflict and decide how to handle it
+- You escalate a risk or change priority
+- You formulate a multi-step plan
+- You recover from a failure or change approach mid-conversation
+
+**Do NOT emit for trivial decisions** like choosing formatting or recalling a single fact.`,
+    {
+      trigger_type: z.enum([
+        'user_turn',
+        'proactive_signal',
+        'contradiction',
+        'planning',
+        'escalation',
+        'recovery',
+      ]).describe('What triggered this decision'),
+      objective: z.string().describe('What you are trying to achieve with this decision'),
+      context_summary: z.string().optional().describe('Brief relevant background for this decision'),
+      options_considered: z.array(z.object({
+        option: z.string(),
+        pros: z.array(z.string()).optional(),
+        cons: z.array(z.string()).optional(),
+        rejected_reason: z.string().optional(),
+      })).optional().describe('Options you evaluated (include at least 2 when applicable)'),
+      chosen_action: z.string().describe('What you decided to do'),
+      confidence: z.number().min(0).max(1).describe('How confident you are in this decision (0-1)'),
+      why_now: z.string().optional().describe('Why this decision matters at this moment'),
+      risk_notes: z.string().optional().describe('Known risks or caveats with this choice'),
+      related_entities: z.array(z.string()).optional().describe('Entity names involved in this decision'),
+    },
+    async (args) => {
+      console.log(`[Tool:emit_decision_card] trigger=${args.trigger_type} objective="${args.objective.slice(0, 60)}"`)
+      try {
+        const cardId = await persistDecisionCard({
+          orgId,
+          conversationId: conversationId ?? undefined,
+          triggerType: args.trigger_type as DecisionCardTriggerType,
+          triggerSource: 'chat',
+          objective: args.objective,
+          contextSummary: args.context_summary,
+          optionsConsidered: args.options_considered,
+          chosenAction: args.chosen_action,
+          confidence: args.confidence,
+          whyNow: args.why_now,
+          riskNotes: args.risk_notes,
+          relatedEntityIds: [], // Entity name resolution deferred — entities linked by name in graph
+          relatedInsightIds: [],
+        })
+
+        if (!cardId) {
+          return { content: [{ type: 'text' as const, text: 'Decision card recorded (persistence pending).' }] }
+        }
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Decision card recorded (${cardId}). Objective: ${args.objective}. Action: ${args.chosen_action}. Confidence: ${args.confidence}.`,
+          }],
+        }
+      } catch (e) {
+        console.error('[Tool:emit_decision_card] EXCEPTION:', e)
+        return { content: [{ type: 'text' as const, text: `Decision card noted (error persisting: ${(e as Error).message}).` }] }
+      }
+    },
+    { annotations: { title: 'Decision Card', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } }
+  )
+
+  return [recallMemory, storeMemory, updateMemory, queryEntityGraph, getEntityTimeline, emitDecisionCard]
 }

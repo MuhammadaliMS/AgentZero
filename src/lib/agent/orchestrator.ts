@@ -86,6 +86,8 @@ export interface StreamEvent {
     // Agentic chat: integration prompting
     | 'integration_required'
     | 'integration_resolved'
+    // Reasoning substrate (Phase A)
+    | 'decision_card_emitted'
   content?: string
   toolName?: string
   toolInput?: Record<string, unknown>
@@ -114,6 +116,17 @@ export interface StreamEvent {
   modelUsage?: Record<string, { input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number }>
   // Context pack metadata (for downstream utility tracking)
   injectedEntityIds?: string[]
+  // Decision card metadata (Phase A reasoning substrate)
+  decisionCardId?: string
+  decisionCard?: {
+    objective: string
+    chosenAction: string
+    confidence: number
+    triggerType: string
+    whyNow?: string
+    riskNotes?: string
+    optionsCount?: number
+  }
 }
 
 // ─── Tool Permission System ──────────────────────────────────────────────
@@ -910,7 +923,7 @@ function buildMcpServers(
     memory: () =>
       createSdkMcpServer({
         name: 'memory-tools',
-        tools: createMemoryTools(orgId),
+        tools: createMemoryTools(orgId, conversationId),
       }),
     integration: () =>
       createSdkMcpServer({

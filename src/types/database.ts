@@ -1361,6 +1361,70 @@ export interface Database {
           },
         ]
       }
+      decision_cards: {
+        Row: {
+          id: string
+          org_id: string
+          conversation_id: string | null
+          trigger_type: string
+          trigger_source: string | null
+          objective: string
+          context_summary: string | null
+          hypotheses: Json
+          options_considered: Json
+          chosen_action: string
+          confidence: number
+          why_now: string | null
+          risk_notes: string | null
+          related_entity_ids: string[]
+          related_insight_ids: string[]
+          model_used: string | null
+          reasoning_tokens: number | null
+          latency_ms: number | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          org_id: string
+          conversation_id?: string | null
+          trigger_type: string
+          trigger_source?: string | null
+          objective: string
+          context_summary?: string | null
+          hypotheses?: Json
+          options_considered?: Json
+          chosen_action: string
+          confidence: number
+          why_now?: string | null
+          risk_notes?: string | null
+          related_entity_ids?: string[]
+          related_insight_ids?: string[]
+          model_used?: string | null
+          reasoning_tokens?: number | null
+          latency_ms?: number | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          objective?: string
+          context_summary?: string | null
+          chosen_action?: string
+          confidence?: number
+          why_now?: string | null
+          risk_notes?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'decision_cards_org_id_fkey'
+            columns: ['org_id']
+            isOneToOne: false
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
     }
     Views: Record<string, never>
     Functions: {
@@ -1526,6 +1590,35 @@ export interface Database {
         Returns: Array<{
           transitioned_to_dormant: number
           transitioned_to_archived: number
+        }>
+      }
+      get_decision_cards_for_conversation: {
+        Args: {
+          p_org_id: string
+          p_conversation_id: string
+          p_limit?: number
+        }
+        Returns: Array<{
+          id: string
+          org_id: string
+          conversation_id: string | null
+          trigger_type: string
+          trigger_source: string | null
+          objective: string
+          context_summary: string | null
+          hypotheses: Json
+          options_considered: Json
+          chosen_action: string
+          confidence: number
+          why_now: string | null
+          risk_notes: string | null
+          related_entity_ids: string[]
+          related_insight_ids: string[]
+          model_used: string | null
+          reasoning_tokens: number | null
+          latency_ms: number | null
+          created_at: string
+          updated_at: string
         }>
       }
     }

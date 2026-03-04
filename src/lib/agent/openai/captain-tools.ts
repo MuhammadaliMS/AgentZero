@@ -17,6 +17,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { generateEmbedding, isOpenAIConfigured } from '@/lib/openai/client'
 import { WebClient } from '@slack/web-api'
 import { trackActionResolvedAfterNudge } from '@/lib/intelligence/feedback-tracker'
+import { persistDecisionCard, type DecisionCardTriggerType } from '@/lib/agent/reasoning/decision-card'
 import { createApprovalRequest } from '../approval-store'
 import {
   getRequiredIntegration,
@@ -1467,6 +1468,74 @@ export function createCaptainTools(params: CaptainToolParams) {
   })
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // REASONING SUBSTRATE (1)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  const emitDecisionCard = tool({
+    name: 'emit_decision_card',
+    description: 'Record a structured decision card capturing your reasoning for a significant decision. Use when choosing between approaches, making strategic recommendations, handling contradictions, escalating risks, formulating plans, or recovering from failures. Do NOT use for trivial decisions.',
+    parameters: z.object({
+      trigger_type: z.enum([
+        'user_turn', 'proactive_signal', 'contradiction',
+        'planning', 'escalation', 'recovery',
+      ]),
+      objective: z.string(),
+      context_summary: z.string().nullable(),
+      options_considered: z.array(z.object({
+        option: z.string(),
+        pros: z.array(z.string()).nullable(),
+        cons: z.array(z.string()).nullable(),
+        rejected_reason: z.string().nullable(),
+      })).nullable(),
+      chosen_action: z.string(),
+      confidence: z.number(),
+      why_now: z.string().nullable(),
+      risk_notes: z.string().nullable(),
+      related_entities: z.array(z.string()).nullable(),
+    }),
+    execute: async (args) => wrappedExecute('emit_decision_card', args as Record<string, unknown>, params, async () => {
+      const cardId = await persistDecisionCard({
+        orgId,
+        conversationId: params.conversationId,
+        triggerType: args.trigger_type as DecisionCardTriggerType,
+        triggerSource: 'chat',
+        objective: args.objective,
+        contextSummary: nu(args.context_summary),
+        optionsConsidered: (args.options_considered ?? []).map(o => ({
+          option: o.option,
+          pros: o.pros ?? undefined,
+          cons: o.cons ?? undefined,
+          rejected_reason: o.rejected_reason ?? undefined,
+        })),
+        chosenAction: args.chosen_action,
+        confidence: Math.max(0, Math.min(1, args.confidence)),
+        whyNow: nu(args.why_now),
+        riskNotes: nu(args.risk_notes),
+      })
+
+      // Emit stream event for real-time UI
+      params.onEmitEvent?.({
+        type: 'decision_card_emitted',
+        content: `Decision: ${args.objective}`,
+        decisionCardId: cardId ?? undefined,
+        decisionCard: {
+          objective: args.objective,
+          chosenAction: args.chosen_action,
+          confidence: args.confidence,
+          triggerType: args.trigger_type,
+          whyNow: nu(args.why_now),
+          riskNotes: nu(args.risk_notes),
+          optionsCount: args.options_considered?.length ?? 0,
+        },
+      })
+
+      return cardId
+        ? `Decision card recorded (${cardId}). Objective: ${args.objective}. Action: ${args.chosen_action}. Confidence: ${args.confidence}.`
+        : 'Decision card recorded (persistence pending).'
+    }),
+  })
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // SUPABASE / CRUD TOOLS (6)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1673,6 +1742,8 @@ export function createCaptainTools(params: CaptainToolParams) {
     update_memory: updateMemory,
     query_entity_graph: queryEntityGraph,
     get_entity_timeline: getEntityTimeline,
+    // Reasoning (1)
+    emit_decision_card: emitDecisionCard,
     // Supabase CRUD (6)
     query_commitments: queryCommitments,
     create_commitment: createCommitment,
@@ -1686,7 +1757,7 @@ export function createCaptainTools(params: CaptainToolParams) {
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // Return all 33 tools as array (with patched schemas for OpenAI API compat)
+  // Return all 34 tools as array (with patched schemas for OpenAI API compat)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   return patchToolSchemas(Object.values(toolMap))

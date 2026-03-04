@@ -1,36 +1,3 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/morning-brief",
-      "schedule": "0 11 * * *"
-    },
-    {
-      "path": "/api/cron/eod-wrap",
-      "schedule": "0 21 * * *"
-    },
-    {
-      "path": "/api/cron/nudge",
-      "schedule": "0 14 * * *"
-    },
-    {
-      "path": "/api/cron/patrol",
-      "schedule": "0 12 * * *"
-    },
-    {
-      "path": "/api/cron/agentic-patrol",
-      "schedule": "0 13 * * *"
-    },
-    {
-      "path": "/api/cron/ghost-agent",
-      "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron/ghost-agent-light",
-      "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/cron/weekly-tuning",
-      "schedule": "0 3 * * 0"
-    }
-  ]
+  "crons": []
 }

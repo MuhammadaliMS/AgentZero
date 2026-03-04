@@ -1455,14 +1455,20 @@ export function createCaptainTools(params: CaptainToolParams) {
     }),
     execute: async (args) => wrappedExecute('search_slack', args as Record<string, unknown>, params, async () => {
       const client = await getSlackUserClient()
-      if (!client) return 'Slack not connected.'
+      if (!client) {
+        console.warn('[search_slack] No Slack client — tokens missing or integration not connected')
+        return 'Slack not connected.'
+      }
       try {
+        console.log(`[search_slack] Searching: query="${args.query}" count=${args.count ?? 20} sort=${args.sort ?? 'timestamp'}`)
         const searchRes = await client.search.messages({
           query: args.query,
           count: Math.min(args.count ?? 20, 50),
           sort: args.sort ?? 'timestamp',
           sort_dir: 'desc',
         })
+        const matchCount = searchRes.messages?.matches?.length ?? 0
+        console.log(`[search_slack] Got ${matchCount} matches (ok=${searchRes.ok})`)
         if (!searchRes.messages?.matches || searchRes.messages.matches.length === 0) {
           return `No Slack messages found for query: "${args.query}"`
         }
@@ -1475,7 +1481,10 @@ export function createCaptainTools(params: CaptainToolParams) {
           permalink: match.permalink,
         }))
         return JSON.stringify(results, null, 2)
-      } catch (e) { return handleSlackError(e) }
+      } catch (e) {
+        console.error(`[search_slack] Error:`, (e as Error).message || e)
+        return handleSlackError(e)
+      }
     }),
   })
 

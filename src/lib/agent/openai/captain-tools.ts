@@ -661,7 +661,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Fetch recent emails with subjects, senders, dates, and snippets. Supports Gmail and Outlook.',
     parameters: z.object({
       max_results: z.number().nullable().default(15),
-      query: z.string().nullable().describe('Gmail search query (e.g., "is:unread", "newer_than:1d")'),
+      query: z.string().nullable().default(null).describe('Gmail search query (e.g., "is:unread", "newer_than:1d")'),
       label: z.enum(['inbox', 'sent', 'drafts', 'starred', 'important', 'unread']).nullable().default(null),
     }),
     execute: async (args) => wrappedExecute('read_recent_emails', args as Record<string, unknown>, params, async () => {
@@ -830,8 +830,8 @@ export function createCaptainTools(params: CaptainToolParams) {
       to: z.string(),
       subject: z.string(),
       body: z.string(),
-      cc: z.string().nullable(),
-      bcc: z.string().nullable(),
+      cc: z.string().nullable().default(null),
+      bcc: z.string().nullable().default(null),
     }),
     execute: async (args) => wrappedExecute('draft_email', args as Record<string, unknown>, params, async () => {
       const gmailTokens = await TokenManager.getTokens(orgId, 'gmail')
@@ -881,10 +881,10 @@ export function createCaptainTools(params: CaptainToolParams) {
       to: z.string(),
       subject: z.string(),
       body: z.string(),
-      cc: z.string().nullable(),
-      bcc: z.string().nullable(),
-      reply_to: z.string().nullable(),
-      in_reply_to: z.string().nullable().describe('Message-ID header for threading replies'),
+      cc: z.string().nullable().default(null),
+      bcc: z.string().nullable().default(null),
+      reply_to: z.string().nullable().default(null),
+      in_reply_to: z.string().nullable().default(null).describe('Message-ID header for threading replies'),
     }),
     execute: async (args) => wrappedExecute('send_email', args as Record<string, unknown>, params, async () => {
       const gmailTokens = await TokenManager.getTokens(orgId, 'gmail')
@@ -974,7 +974,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     parameters: z.object({
       channel_id: z.string(),
       message: z.string(),
-      thread_ts: z.string().nullable().describe('Reply in a specific thread'),
+      thread_ts: z.string().nullable().default(null).describe('Reply in a specific thread'),
     }),
     execute: async (args) => wrappedExecute('post_to_channel', args as Record<string, unknown>, params, async () => {
       const client = await getSlackBotClient()
@@ -996,8 +996,8 @@ export function createCaptainTools(params: CaptainToolParams) {
     parameters: z.object({
       channel_id: z.string(),
       title: z.string(),
-      description: z.string().nullable(),
-      action_id: z.string().nullable().describe('Action ID to link approval to'),
+      description: z.string().nullable().default(null),
+      action_id: z.string().nullable().default(null).describe('Action ID to link approval to'),
     }),
     execute: async (args) => wrappedExecute('send_approval_message', args as Record<string, unknown>, params, async () => {
       const client = await getSlackBotClient()
@@ -1459,8 +1459,8 @@ export function createCaptainTools(params: CaptainToolParams) {
       category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact', 'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline']),
       subject: z.string().describe('Short label (e.g., "SOC2 audit deadline", "Sarah Chen role")'),
       content: z.string(),
-      source: z.string().nullable(),
-      related_entities: z.array(z.string()).nullable(),
+      source: z.string().nullable().default(null),
+      related_entities: z.array(z.string()).nullable().default(null),
       event_date: z.string().nullable().default(null).describe('ISO date of the real-world event this memory relates to (e.g., meeting date, decision date). Use when the memory is tied to a specific date.'),
     }),
     execute: async (args) => wrappedExecute('store_memory', args as Record<string, unknown>, params, async () => {
@@ -1515,9 +1515,9 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Update specific fields on an existing memory entry.',
     parameters: z.object({
       id: z.string(),
-      content: z.string().nullable(),
-      category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact', 'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline']).nullable(),
-      confidence: z.number().nullable(),
+      content: z.string().nullable().default(null),
+      category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact', 'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline']).nullable().default(null),
+      confidence: z.number().nullable().default(null),
     }),
     execute: async (args) => wrappedExecute('update_memory', args as Record<string, unknown>, params, async () => {
       const { id, ...updates } = args
@@ -1537,7 +1537,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Delete a memory entry that is outdated, incorrect, or no longer relevant. Use after recalling memories to clean up stale information. Also deletes associated embeddings.',
     parameters: z.object({
       id: z.string().describe('Memory ID to delete'),
-      reason: z.string().nullable().describe('Brief reason for deletion (for audit trail)'),
+      reason: z.string().nullable().default(null).describe('Brief reason for deletion (for audit trail)'),
     }),
     execute: async (args) => wrappedExecute('delete_memory', args as Record<string, unknown>, params, async () => {
       // Verify memory exists and belongs to this org
@@ -1800,18 +1800,18 @@ export function createCaptainTools(params: CaptainToolParams) {
         'planning', 'escalation', 'recovery',
       ]),
       objective: z.string(),
-      context_summary: z.string().nullable(),
+      context_summary: z.string().nullable().default(null),
       options_considered: z.array(z.object({
         option: z.string(),
-        pros: z.array(z.string()).nullable(),
-        cons: z.array(z.string()).nullable(),
-        rejected_reason: z.string().nullable(),
-      })).nullable(),
+        pros: z.array(z.string()).nullable().default(null),
+        cons: z.array(z.string()).nullable().default(null),
+        rejected_reason: z.string().nullable().default(null),
+      })).nullable().default(null),
       chosen_action: z.string(),
       confidence: z.number(),
-      why_now: z.string().nullable(),
-      risk_notes: z.string().nullable(),
-      related_entities: z.array(z.string()).nullable(),
+      why_now: z.string().nullable().default(null),
+      risk_notes: z.string().nullable().default(null),
+      related_entities: z.array(z.string()).nullable().default(null),
     }),
     execute: async (args) => wrappedExecute('emit_decision_card', args as Record<string, unknown>, params, async () => {
       const cardId = await persistDecisionCard({
@@ -1863,8 +1863,8 @@ export function createCaptainTools(params: CaptainToolParams) {
     name: 'query_commitments',
     description: 'Query commitments for the organization. Filter by status, priority, or due date.',
     parameters: z.object({
-      status: z.enum(['active', 'at_risk', 'overdue', 'completed', 'cancelled']).nullable(),
-      priority: z.enum(['critical', 'high', 'medium', 'low']).nullable(),
+      status: z.enum(['active', 'at_risk', 'overdue', 'completed', 'cancelled']).nullable().default(null),
+      priority: z.enum(['critical', 'high', 'medium', 'low']).nullable().default(null),
       limit: z.number().nullable().default(20),
     }),
     execute: async (args) => wrappedExecute('query_commitments', args as Record<string, unknown>, params, async () => {
@@ -1884,11 +1884,11 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Create a new commitment to track. Requires user approval.',
     parameters: z.object({
       title: z.string(),
-      description: z.string().nullable(),
+      description: z.string().nullable().default(null),
       priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
-      due_date: z.string().nullable(),
-      source: z.string().nullable(),
-      tags: z.array(z.string()).nullable(),
+      due_date: z.string().nullable().default(null),
+      source: z.string().nullable().default(null),
+      tags: z.array(z.string()).nullable().default(null),
     }),
     execute: async (args) => wrappedExecute('create_commitment', args as Record<string, unknown>, params, async () => {
       const { data, error } = await supabase.from('commitments').insert({
@@ -1906,10 +1906,10 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Update an existing commitment status, priority, or description.',
     parameters: z.object({
       id: z.string(),
-      status: z.enum(['active', 'at_risk', 'overdue', 'completed', 'cancelled']).nullable(),
-      priority: z.enum(['critical', 'high', 'medium', 'low']).nullable(),
-      due_date: z.string().nullable(),
-      description: z.string().nullable(),
+      status: z.enum(['active', 'at_risk', 'overdue', 'completed', 'cancelled']).nullable().default(null),
+      priority: z.enum(['critical', 'high', 'medium', 'low']).nullable().default(null),
+      due_date: z.string().nullable().default(null),
+      description: z.string().nullable().default(null),
     }),
     execute: async (args) => wrappedExecute('update_commitment', args as Record<string, unknown>, params, async () => {
       const { id, ...updates } = args
@@ -1948,9 +1948,9 @@ export function createCaptainTools(params: CaptainToolParams) {
       user_id: z.string(),
       type: z.string(),
       title: z.string(),
-      description: z.string().nullable(),
+      description: z.string().nullable().default(null),
       priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
-      payload: z.string().nullable().describe('JSON string of additional data for this action'),
+      payload: z.string().nullable().default(null).describe('JSON string of additional data for this action'),
     }),
     execute: async (args) => wrappedExecute('create_action', args as Record<string, unknown>, params, async () => {
       let parsedPayload: Json = null
@@ -1974,7 +1974,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     parameters: z.object({
       id: z.string(),
       status: z.enum(['approved', 'rejected', 'deferred']),
-      resolved_by: z.string().nullable(),
+      resolved_by: z.string().nullable().default(null),
     }),
     execute: async (args) => wrappedExecute('resolve_action', args as Record<string, unknown>, params, async () => {
       const { error } = await supabase.from('actions').update({
@@ -2036,17 +2036,17 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Create a multi-step tracked task (outcome). Use when a user request requires 2+ tool calls that depend on each other. Provide a title and optionally steps.',
     parameters: z.object({
       title: z.string(),
-      description: z.string().nullable(),
-      priority: z.enum(['critical', 'high', 'medium', 'low']).nullable(),
+      description: z.string().nullable().default(null),
+      priority: z.enum(['critical', 'high', 'medium', 'low']).nullable().default(null),
       steps: z.array(z.object({
         description: z.string(),
         action_type: z.enum(['tool_call', 'llm_reasoning', 'wait_input', 'wait_approval']),
-        tool_name: z.string().nullable(),
-        tool_args: z.record(z.string(), z.unknown()).nullable(),
+        tool_name: z.string().nullable().default(null),
+        tool_args: z.record(z.string(), z.unknown()).nullable().default(null),
         depends_on_step_orders: z.array(z.number()),
-        expected_output: z.string().nullable(),
-        one_clear_ask: z.string().nullable(),
-      })).nullable(),
+        expected_output: z.string().nullable().default(null),
+        one_clear_ask: z.string().nullable().default(null),
+      })).nullable().default(null),
     }),
     execute: async (args) => wrappedExecute('create_outcome', args as Record<string, unknown>, params, async () => {
       return executeCreateOutcome(orgId, params.conversationId, args as Record<string, unknown>)
@@ -2058,16 +2058,16 @@ export function createCaptainTools(params: CaptainToolParams) {
     description: 'Update an outcome or its steps. Use to mark steps as completed/failed, update outcome status, or trigger a replan.',
     parameters: z.object({
       outcome_id: z.string(),
-      status: z.enum(['executing', 'blocked', 'completed', 'failed', 'cancelled']).nullable(),
-      blocker_summary: z.string().nullable(),
+      status: z.enum(['executing', 'blocked', 'completed', 'failed', 'cancelled']).nullable().default(null),
+      blocker_summary: z.string().nullable().default(null),
       step_updates: z.array(z.object({
         step_id: z.string(),
         status: z.enum(['executing', 'completed', 'failed', 'blocked', 'skipped']),
-        result_summary: z.string().nullable(),
-        error_message: z.string().nullable(),
-      })).nullable(),
-      replan: z.boolean().nullable(),
-      replan_reason: z.string().nullable(),
+        result_summary: z.string().nullable().default(null),
+        error_message: z.string().nullable().default(null),
+      })).nullable().default(null),
+      replan: z.boolean().nullable().default(null),
+      replan_reason: z.string().nullable().default(null),
     }),
     execute: async (args) => wrappedExecute('update_outcome', args as Record<string, unknown>, params, async () => {
       return executeUpdateOutcome(orgId, args as Record<string, unknown>)

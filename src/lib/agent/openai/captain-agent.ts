@@ -253,9 +253,11 @@ export async function* runOpenAICaptain(
         // Non-blocking tool events (tool_call, tool_result) are emitted
         // from the stream loop below instead of being queued here.
         const forwardedTypes = new Set([
-          // Blocking events (same as Claude SDK)
+          // Blocking events + resolution events (same as Claude SDK)
           'approval_required',
+          'approval_resolved',
           'integration_required',
+          'integration_resolved',
           // Semantic lifecycle events from tool execution
           'decision_card_emitted',
           'outcome_started',

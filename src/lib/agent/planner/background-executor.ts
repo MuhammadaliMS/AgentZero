@@ -293,7 +293,7 @@ If this task genuinely cannot be accomplished with the available tools, explain 
  * External tools (send_email, etc.) were already forced to wait_approval
  * by the plan validator — they never reach background execution.
  */
-async function executeToolDirectly(
+export async function executeToolDirectly(
   orgId: string,
   toolName: string,
   toolArgs: Record<string, unknown>,
@@ -360,7 +360,7 @@ async function invokeSdkTool(
  * Map tool names to shared tool implementations.
  * This is the dispatch table for headless execution.
  */
-async function callToolFunction(
+export async function callToolFunction(
   orgId: string,
   toolName: string,
   toolArgs: Record<string, unknown>
@@ -443,7 +443,7 @@ async function callToolFunction(
  * Send a Slack nudge when a step is blocked and needs user input/approval.
  * Respects cooldown to avoid spamming.
  */
-async function maybeNudgeForBlockedStep(
+export async function maybeNudgeForBlockedStep(
   orgId: string,
   outcomeId: string,
   step: OutcomeStep

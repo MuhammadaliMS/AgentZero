@@ -1,12 +1,11 @@
 /**
- * Agentic Scanner — Tier 2 patrol scanning with LLM reasoning.
+ * @deprecated — Chief Loop v2 absorbs all agentic scanning.
  *
- * Orchestrates the OpenAI Agents SDK patrol agent:
- * 1. Pre-flight checks (dedup, budget, integration availability)
- * 2. Gathers DB context (zero cost)
- * 3. Runs the patrol agent
- * 4. Inserts structured findings into patrol_findings
- * 5. Logs execution for cost tracking
+ * This module was called by the now-deleted /api/cron/agentic-patrol route.
+ * No active callers remain. Safe to delete entirely.
+ *
+ * Previously: Agentic Scanner — Tier 2 patrol scanning with LLM reasoning.
+ * Orchestrated the OpenAI Agents SDK patrol agent for LLM-based scanning.
  */
 
 import { createAdminClient } from '@/lib/supabase/admin'

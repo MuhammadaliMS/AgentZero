@@ -1684,7 +1684,7 @@ export function createCaptainTools(params: CaptainToolParams) {
           const embedding = await generateEmbedding(args.query)
           if (embedding) {
             const { data: vd } = await supabase.rpc('search_memories_by_embedding', {
-              p_org_id: orgId, p_embedding: JSON.stringify(embedding), p_limit: args.limit ?? 10, p_category: args.category ?? null,
+              p_org_id: orgId, p_embedding: JSON.stringify(embedding), p_limit: args.limit ?? 10, p_category: args.category ?? undefined,
             })
             vectorData = vd as Array<Record<string, unknown>> | null
           }
@@ -1949,7 +1949,7 @@ export function createCaptainTools(params: CaptainToolParams) {
       if (!entity) return `No entity found matching "${args.entity_name}".`
 
       const { data: timeline } = await supabase.rpc('get_entity_timeline', {
-        p_entity_id: entity.id, p_org_id: orgId, p_since: null,
+        p_entity_id: entity.id, p_org_id: orgId, p_since: undefined,
       })
       return JSON.stringify({ entity, timeline: timeline ?? [] }, null, 2)
     }),

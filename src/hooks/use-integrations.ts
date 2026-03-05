@@ -60,6 +60,8 @@ export function useIntegrations() {
           const conn = connectedMap.get(i.key)
           return {
             ...i,
+            auth_type: i.auth_type as IntegrationWithStatus['auth_type'],
+            status: i.status as IntegrationWithStatus['status'],
             manifest: i.manifest as IntegrationWithStatus['manifest'],
             instructions: i.instructions as IntegrationWithStatus['instructions'],
             connected: !!conn,

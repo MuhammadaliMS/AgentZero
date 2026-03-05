@@ -229,7 +229,7 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
 /**
  * Normalize entity name to canonical form for dedup.
  */
-function normalizeCanonical(name: string): string {
+export function normalizeCanonical(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, ' ')
 }
 
@@ -237,7 +237,7 @@ function normalizeCanonical(name: string): string {
  * Upsert entities into the entities table.
  * Returns a map of canonical_name → entity UUID.
  */
-async function upsertEntities(
+export async function upsertEntities(
   supabase: ReturnType<typeof createAdminClient>,
   orgId: string,
   entities: ExtractedEntity[]
@@ -303,7 +303,7 @@ async function upsertEntities(
  * exists between the same entities, either update its properties or
  * close it (set valid_to) and create a new one if properties differ.
  */
-async function upsertRelationship(
+export async function upsertRelationship(
   supabase: ReturnType<typeof createAdminClient>,
   orgId: string,
   conversationId: string,

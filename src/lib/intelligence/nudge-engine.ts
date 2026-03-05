@@ -427,6 +427,140 @@ function severityEmoji(severity: string): string {
   }
 }
 
+// ─── Direct Blocker DM (for chief-loop Phase F) ─────────────────────────────
+
+/**
+ * Send a blocker DM for a specific outcome step.
+ * Creates a patrol_finding, posts to Slack, records nudge, and only marks
+ * finding as acknowledged AFTER successful Slack delivery.
+ *
+ * If Slack delivery fails, finding stays 'open' so nudge cron can pick it up.
+ *
+ * Returns { sent: true } if DM was delivered, { sent: false, reason } if skipped.
+ */
+export async function sendBlockerDM(
+  supabase: SupabaseClient<Database>,
+  orgId: string,
+  userId: string,
+  opts: {
+    findingId?: string
+    outcomeId: string
+    outcomeTitle: string
+    stepId: string
+    oneClearAsk: string
+    severity?: 'critical' | 'high' | 'medium' | 'low'
+    cooldownHours?: number
+  }
+): Promise<{ sent: boolean; findingId?: string; reason?: string }> {
+  const cooldownHours = opts.cooldownHours ?? 4
+  const severity = opts.severity ?? 'medium'
+
+  // 1. Cooldown check — skip if we already nudged this outcome+step recently
+  const cooldownCutoff = new Date(Date.now() - cooldownHours * 3_600_000).toISOString()
+
+  const { data: recentFindings } = await supabase
+    .from('patrol_findings')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('type', 'unresolved_blocker')
+    .gte('created_at', cooldownCutoff)
+    .contains('metadata', { outcome_id: opts.outcomeId, step_id: opts.stepId })
+    .limit(1)
+
+  if (recentFindings && recentFindings.length > 0) {
+    return { sent: false, reason: `Cooldown active (finding ${recentFindings[0].id})` }
+  }
+
+  // 2. Create patrol_finding (canonical blocker artifact) — stays 'open' until Slack delivers
+  const slackMessage =
+    `${severityEmoji(severity)} *Outcome blocked: ${opts.outcomeTitle}*\n` +
+    `I need to know: ${opts.oneClearAsk}`
+
+  const { data: finding, error: findingErr } = await supabase
+    .from('patrol_findings')
+    .insert({
+      org_id: orgId,
+      type: 'unresolved_blocker',
+      severity,
+      title: `Outcome blocked: ${opts.outcomeTitle}`,
+      description: `📋 "${opts.outcomeTitle}" is blocked — I need to know: ${opts.oneClearAsk}`,
+      metadata: {
+        outcome_id: opts.outcomeId,
+        step_id: opts.stepId,
+        source: 'chief_loop',
+      },
+      status: 'open',
+    })
+    .select('id')
+    .single()
+
+  if (findingErr || !finding) {
+    return { sent: false, reason: `Failed to create finding: ${findingErr?.message}` }
+  }
+
+  const findingId = (finding as { id: string }).id
+
+  // 3. Actually deliver via Slack DM
+  let slackDelivered = false
+  try {
+    const { getSlackClient } = await import('@/lib/slack/client')
+    const slackClient = await getSlackClient(orgId)
+
+    if (slackClient) {
+      // Look up user email → Slack user → open DM
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('email')
+        .eq('id', userId)
+        .maybeSingle()
+
+      if (profile?.email) {
+        const userResult = await slackClient.users.lookupByEmail({ email: profile.email })
+        if (userResult.user?.id) {
+          const conversation = await slackClient.conversations.open({ users: userResult.user.id })
+          if (conversation.channel?.id) {
+            await slackClient.chat.postMessage({
+              channel: conversation.channel.id,
+              text: slackMessage,
+            })
+            slackDelivered = true
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`[sendBlockerDM] Slack delivery failed for org=${orgId}:`, (err as Error).message)
+    // Fall through — finding stays 'open' for nudge cron to pick up
+  }
+
+  // 4. Create nudge record
+  const batchId = `chief_loop_${Date.now()}`
+  await supabase.from('nudges').insert({
+    org_id: orgId,
+    user_id: userId,
+    type: 'unresolved_blocker',
+    title: `Outcome blocked: ${opts.outcomeTitle}`,
+    content: `📋 "${opts.outcomeTitle}" is blocked — I need to know: ${opts.oneClearAsk}`,
+    priority: severity,
+    status: slackDelivered ? 'sent' : 'pending',
+    sent_at: slackDelivered ? new Date().toISOString() : null,
+    source_finding_id: findingId,
+    urgency_score: severity === 'critical' ? 90 : severity === 'high' ? 70 : 50,
+    batch_id: batchId,
+  })
+
+  // 5. Only mark finding as acknowledged AFTER successful Slack delivery.
+  //    If Slack failed, finding stays 'open' → nudge cron picks it up as fallback.
+  if (slackDelivered) {
+    await supabase
+      .from('patrol_findings')
+      .update({ status: 'acknowledged' as const })
+      .eq('id', findingId)
+  }
+
+  return { sent: slackDelivered, findingId, reason: slackDelivered ? undefined : 'Slack delivery failed — finding left open for nudge cron fallback' }
+}
+
 // ─── Batch Message Builder ──────────────────────────────────────────────────
 
 /**

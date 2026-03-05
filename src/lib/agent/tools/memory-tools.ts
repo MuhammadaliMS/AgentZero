@@ -79,7 +79,7 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
                 p_org_id: orgId,
                 p_embedding: JSON.stringify(queryEmbedding),
                 p_limit: args.limit,
-                p_category: args.category ?? null,
+                p_category: args.category ?? undefined,
               })
 
               if (vectorData) {
@@ -555,7 +555,7 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
         const { data: timeline, error } = await supabase.rpc('get_entity_timeline', {
           p_entity_id: entity.id,
           p_org_id: orgId,
-          p_since: args.since ?? null,
+          p_since: args.since ?? undefined,
         })
 
         if (error) {

@@ -41,7 +41,7 @@ export interface ValidationResult {
 const MAX_STEPS = 8
 
 /** External/destructive tools that MUST have action_type: 'wait_approval' */
-const EXTERNAL_TOOLS = [
+export const EXTERNAL_TOOLS = [
   'send_email',
   'send_slack_dm',
   'post_to_channel',

@@ -1,4 +1,14 @@
 /**
+ * @deprecated — ORPHANED MODULE as of Chief Loop v2 rewrite (March 2026).
+ *
+ * All SQL detection functions (detectVelocitySpikes, detectCoOccurrencePatterns,
+ * detectOrphanedEntities, detectStaleHighValueEntities) are no longer called.
+ * The chief loop's LLM agent now handles all analysis directly from raw data.
+ * The cron routes (ghost-agent, ghost-agent-light) that called this have been deleted.
+ *
+ * Safe to delete entirely — no active callers remain.
+ *
+ * --- Original description ---
  * Ghost Agent — Dual-Cadence Background Intelligence
  *
  * Hourly light pass:
@@ -196,7 +206,7 @@ export async function runGhostAgentDeep(
 
 // ─── Detection: Velocity Spikes ──────────────────────────────────────────
 
-async function detectVelocitySpikes(
+export async function detectVelocitySpikes(
   supabase: ReturnType<typeof createAdminClient>,
   orgId: string
 ): Promise<number> {
@@ -243,7 +253,7 @@ async function detectVelocitySpikes(
 
 // ─── Detection: Co-Occurrence Patterns ───────────────────────────────────
 
-async function detectCoOccurrencePatterns(
+export async function detectCoOccurrencePatterns(
   supabase: ReturnType<typeof createAdminClient>,
   orgId: string
 ): Promise<number> {
@@ -287,7 +297,7 @@ async function detectCoOccurrencePatterns(
 
 // ─── Detection: Orphaned Entities ────────────────────────────────────────
 
-async function detectOrphanedEntities(
+export async function detectOrphanedEntities(
   supabase: ReturnType<typeof createAdminClient>,
   orgId: string
 ): Promise<number> {
@@ -361,7 +371,7 @@ async function detectOrphanedEntities(
 
 // ─── Detection: Stale High-Value Entities ────────────────────────────────
 
-async function detectStaleHighValueEntities(
+export async function detectStaleHighValueEntities(
   supabase: ReturnType<typeof createAdminClient>,
   orgId: string
 ): Promise<number> {

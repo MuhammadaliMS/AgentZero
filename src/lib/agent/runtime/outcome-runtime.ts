@@ -97,6 +97,7 @@ export interface StepParams {
   toolName?: string
   toolArgs?: Record<string, unknown>
   expectedOutput?: string
+  riskClass?: 'internal' | 'external'
 }
 
 export interface OutcomeStep {
@@ -362,6 +363,7 @@ export async function addSteps(steps: StepParams[]): Promise<string[]> {
       tool_name: s.toolName ?? null,
       tool_args: (s.toolArgs ?? null) as unknown as Json,
       expected_output: s.expectedOutput ?? null,
+      risk_class: s.riskClass ?? 'internal',
       status: 'pending' as const,
     }))
 

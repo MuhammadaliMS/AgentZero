@@ -558,7 +558,7 @@ export function createPatrolTools(orgId: string) {
               p_org_id: orgId,
               p_embedding: JSON.stringify(embedding),
               p_limit: args.limit,
-              p_category: args.category ?? null,
+              p_category: args.category ?? undefined,
             })
             vectorData = vd as Array<Record<string, unknown>> | null
           }

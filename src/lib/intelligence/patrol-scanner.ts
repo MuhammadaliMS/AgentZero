@@ -1,4 +1,13 @@
 /**
+ * @deprecated — ORPHANED MODULE as of Chief Loop v2 rewrite (March 2026).
+ *
+ * The patrol cron route that called runPatrolScan() has been deleted.
+ * The chief loop's LLM agent now handles all proactive scanning directly.
+ * No active callers remain for this module.
+ *
+ * Safe to delete entirely.
+ *
+ * --- Original description ---
  * Patrol Scanner — Background scan logic for proactive intelligence.
  *
  * All pure DB queries + risk engine scoring. Zero LLM calls.

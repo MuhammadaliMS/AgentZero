@@ -126,10 +126,10 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
         // ── Strategy 3: Graph traversal (entity-linked memories) ─────
         if (args.include_graph_context) {
           try {
-            // Find entities matching the query
+            // Find entities matching the query — include attributes (email, role, etc.)
             const { data: matchingEntities } = await supabase
               .from('entities')
-              .select('id')
+              .select('id, name, entity_type, attributes')
               .eq('org_id', orgId)
               .or(`name.ilike.%${args.query}%,canonical_name.ilike.%${args.query.toLowerCase()}%`)
               .limit(5)
@@ -181,11 +181,13 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
 
         console.log(`[Tool:recall_memory] Hybrid result: ${ranked.length} memories (sources: ${ranked.map(r => r._relevance.sources).join(', ')})`)
 
-        // Track utility events for matched entities (fire-and-forget)
+        // ── Enrich with entity attributes (email, role, etc.) ──────
+        // When recalling about a person/entity, include their stored attributes
+        let entityProfiles: Array<{ name: string; type: string; attributes: Record<string, unknown> }> = []
         if (args.include_graph_context) {
           const { data: matchedEntities } = await supabase
             .from('entities')
-            .select('id')
+            .select('id, name, entity_type, attributes')
             .eq('org_id', orgId)
             .or(`name.ilike.%${args.query}%,canonical_name.ilike.%${args.query.toLowerCase()}%`)
             .limit(5)
@@ -193,10 +195,23 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
             const entityIds = matchedEntities.map(e => e.id)
             trackUtilityEventBatch(orgId, entityIds, 'retrieved').catch(() => {})
             bumpEntityAccess(orgId, entityIds).catch(() => {})
+            // Include entities that have non-empty attributes (email, role, phone, etc.)
+            entityProfiles = matchedEntities
+              .filter(e => e.attributes && Object.keys(e.attributes as Record<string, unknown>).length > 0)
+              .map(e => ({
+                name: e.name,
+                type: e.entity_type,
+                attributes: e.attributes as Record<string, unknown>,
+              }))
           }
         }
 
-        return { content: [{ type: 'text' as const, text: JSON.stringify(ranked, null, 2) }] }
+        const response: Record<string, unknown> = { memories: ranked }
+        if (entityProfiles.length > 0) {
+          response.entity_profiles = entityProfiles
+        }
+
+        return { content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }] }
       } catch (e) {
         console.error(`[Tool:recall_memory] EXCEPTION:`, e)
         return { content: [{ type: 'text' as const, text: `Error recalling memory: ${(e as Error).message}` }] }
@@ -280,6 +295,11 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
           mem = updated as Memory
           console.log(`[Tool:store_memory] UPDATED existing memory: "${args.subject}" (${mem.id})`)
 
+          // Extract and upsert contact attributes on update too
+          if (args.category === 'relationship' && args.related_entities?.length) {
+            extractAndUpsertEntityAttributes(supabase, orgId, args.related_entities, args.content).catch(() => {})
+          }
+
           // Re-generate embedding for updated content
           if (isOpenAIConfigured()) {
             const embeddingText = `${args.subject}: ${args.content}`
@@ -359,6 +379,11 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
           }
         }
 
+        // Background: extract contact attributes (email, phone, role, title) and upsert to entity
+        if (args.category === 'relationship' && args.related_entities?.length) {
+          extractAndUpsertEntityAttributes(supabase, orgId, args.related_entities, args.content).catch(() => {})
+        }
+
         return { content: [{ type: 'text' as const, text: `Memory stored: ${mem.subject} (${mem.id})` }] }
       } catch (e) {
         return { content: [{ type: 'text' as const, text: `Error storing memory: ${(e as Error).message}` }] }
@@ -418,7 +443,7 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
         // Find the starting entity
         let entityQuery = supabase
           .from('entities')
-          .select('id, name, entity_type, description, mention_count')
+          .select('id, name, entity_type, description, attributes, mention_count')
           .eq('org_id', orgId)
           .ilike('canonical_name', `%${args.entity_name.toLowerCase().trim()}%`)
 
@@ -684,7 +709,7 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
       try {
         let q = supabase
           .from('entities')
-          .select('id, name, entity_type, mention_count, first_seen_at, last_seen_at')
+          .select('id, name, entity_type, attributes, mention_count, first_seen_at, last_seen_at')
           .eq('org_id', orgId)
           .order('mention_count', { ascending: false })
           .limit(Math.min(args.limit ?? 20, 50))
@@ -827,4 +852,56 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
     listNarratives, getNarrative, upsertNarrativeTool,
     emitDecisionCard,
   ]
+}
+
+// ─── Helper: Extract contact attributes from memory content and upsert to entity ───
+async function extractAndUpsertEntityAttributes(
+  supabase: ReturnType<typeof createAdminClient>,
+  orgId: string,
+  entityNames: string[],
+  content: string,
+) {
+  // Extract common contact attributes from the content
+  const extractedAttrs: Record<string, string> = {}
+
+  // Email
+  const emailMatch = content.match(/[\w.+-]+@[\w-]+\.[\w.]+/i)
+  if (emailMatch) extractedAttrs.email = emailMatch[0].toLowerCase()
+
+  // Phone
+  const phoneMatch = content.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}/)
+  if (phoneMatch) extractedAttrs.phone = phoneMatch[0]
+
+  // Title/Role (common patterns)
+  const titleMatch = content.match(/(?:title|role|position|designation)[:\s]+["']?([^"'\n,]+)/i)
+  if (titleMatch) extractedAttrs.title = titleMatch[1].trim()
+
+  // Company/Organization
+  const companyMatch = content.match(/(?:company|org|organization|works at|from)[:\s]+["']?([^"'\n,]+)/i)
+  if (companyMatch) extractedAttrs.company = companyMatch[1].trim()
+
+  if (Object.keys(extractedAttrs).length === 0) return
+
+  // For each related entity, try to find and update their attributes
+  for (const entityName of entityNames) {
+    const { data: entity } = await supabase
+      .from('entities')
+      .select('id, attributes')
+      .eq('org_id', orgId)
+      .ilike('canonical_name', entityName.toLowerCase().trim())
+      .limit(1)
+      .maybeSingle()
+
+    if (entity) {
+      const existingAttrs = (entity.attributes as Record<string, unknown>) || {}
+      const mergedAttrs = { ...existingAttrs, ...extractedAttrs }
+
+      await supabase
+        .from('entities')
+        .update({ attributes: mergedAttrs as unknown as Record<string, never> })
+        .eq('id', entity.id)
+
+      console.log(`[store_memory] Upserted entity attributes for "${entityName}":`, extractedAttrs)
+    }
+  }
 }

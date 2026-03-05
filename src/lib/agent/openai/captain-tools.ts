@@ -1714,15 +1714,21 @@ export function createCaptainTools(params: CaptainToolParams) {
         if (fallback) for (const mem of fallback) merged.push({ ...mem, _source: 'ilike' })
       }
 
-      // Graph context (entity links)
+      // Graph context (entity links + entity attributes like email, role, etc.)
+      let entityProfiles: Array<{ name: string; type: string; attributes: Record<string, unknown> }> = []
       try {
         const { data: entities } = await supabase
           .from('entities')
-          .select('id, name')
+          .select('id, name, entity_type, attributes')
           .eq('org_id', orgId)
           .ilike('canonical_name', `%${args.query.toLowerCase()}%`)
           .limit(3)
         if (entities?.length) {
+          // Collect entity profiles with non-empty attributes (email, role, phone, etc.)
+          entityProfiles = entities
+            .filter(e => e.attributes && Object.keys(e.attributes as Record<string, unknown>).length > 0)
+            .map(e => ({ name: e.name, type: e.entity_type, attributes: e.attributes as Record<string, unknown> }))
+
           const entityIds = entities.map((e) => e.id)
           const { data: links } = await supabase
             .from('memory_entity_links')
@@ -1761,7 +1767,10 @@ export function createCaptainTools(params: CaptainToolParams) {
         return scoreB - scoreA
       })
 
-      return merged.length > 0 ? JSON.stringify(merged, null, 2) : 'No memories found matching query.'
+      if (merged.length === 0 && entityProfiles.length === 0) return 'No memories found matching query.'
+      const response: Record<string, unknown> = { memories: merged }
+      if (entityProfiles.length > 0) response.entity_profiles = entityProfiles
+      return JSON.stringify(response, null, 2)
     }),
   })
 
@@ -1799,6 +1808,10 @@ export function createCaptainTools(params: CaptainToolParams) {
             if (emb) await supabase.from('memory_embeddings').upsert({ memory_id: existing.id, embedding: JSON.stringify(emb) }, { onConflict: 'memory_id' })
           }).catch(() => {})
         }
+        // Extract and upsert entity attributes (email, phone, etc.)
+        if (args.category === 'relationship' && args.related_entities?.length) {
+          extractAndUpsertEntityAttrs(supabase, orgId, args.related_entities, args.content).catch(() => {})
+        }
         return `Memory updated (merged): ${args.subject} (${existing.id})`
       }
 
@@ -1818,6 +1831,10 @@ export function createCaptainTools(params: CaptainToolParams) {
         generateEmbedding(`${args.subject}: ${args.content}`).then(async (emb) => {
           if (emb) await supabase.from('memory_embeddings').insert({ memory_id: memId, embedding: JSON.stringify(emb) })
         }).catch(() => {})
+      }
+      // Extract and upsert entity attributes (email, phone, etc.)
+      if (args.category === 'relationship' && args.related_entities?.length) {
+        extractAndUpsertEntityAttrs(supabase, orgId, args.related_entities, args.content).catch(() => {})
       }
       return `Memory stored: ${args.subject} (${memId})`
     }),
@@ -1883,10 +1900,10 @@ export function createCaptainTools(params: CaptainToolParams) {
       depth: z.number().nullable().default(1),
     }),
     execute: async (args) => wrappedExecute('query_entity_graph', args as Record<string, unknown>, params, async () => {
-      // Find the entity
+      // Find the entity — include attributes (email, role, phone, etc.)
       const { data: entity } = await supabase
         .from('entities')
-        .select('id, name, entity_type, mention_count, first_seen_at, last_seen_at')
+        .select('id, name, entity_type, attributes, mention_count, first_seen_at, last_seen_at')
         .eq('org_id', orgId)
         .ilike('canonical_name', `%${args.entity_name.toLowerCase()}%`)
         .limit(1)
@@ -1953,7 +1970,7 @@ export function createCaptainTools(params: CaptainToolParams) {
     execute: async (args) => wrappedExecute('list_entities', args as Record<string, unknown>, params, async () => {
       let q = supabase
         .from('entities')
-        .select('id, name, entity_type, mention_count, first_seen_at, last_seen_at')
+        .select('id, name, entity_type, attributes, mention_count, first_seen_at, last_seen_at')
         .eq('org_id', orgId)
         .order('mention_count', { ascending: false })
         .limit(Math.min(args.limit ?? 20, 50))
@@ -2481,4 +2498,54 @@ export function createCaptainToolsMap(params: CaptainToolParams): Record<string,
     map[t.name] = t
   }
   return map
+}
+
+// ─── Helper: Extract contact attributes from memory content and upsert to entity ───
+async function extractAndUpsertEntityAttrs(
+  supabase: ReturnType<typeof createAdminClient>,
+  orgId: string,
+  entityNames: string[],
+  content: string,
+) {
+  const extractedAttrs: Record<string, string> = {}
+
+  // Email
+  const emailMatch = content.match(/[\w.+-]+@[\w-]+\.[\w.]+/i)
+  if (emailMatch) extractedAttrs.email = emailMatch[0].toLowerCase()
+
+  // Phone
+  const phoneMatch = content.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}/)
+  if (phoneMatch) extractedAttrs.phone = phoneMatch[0]
+
+  // Title/Role
+  const titleMatch = content.match(/(?:title|role|position|designation)[:\s]+["']?([^"'\n,]+)/i)
+  if (titleMatch) extractedAttrs.title = titleMatch[1].trim()
+
+  // Company/Organization
+  const companyMatch = content.match(/(?:company|org|organization|works at|from)[:\s]+["']?([^"'\n,]+)/i)
+  if (companyMatch) extractedAttrs.company = companyMatch[1].trim()
+
+  if (Object.keys(extractedAttrs).length === 0) return
+
+  for (const entityName of entityNames) {
+    const { data: entity } = await supabase
+      .from('entities')
+      .select('id, attributes')
+      .eq('org_id', orgId)
+      .ilike('canonical_name', entityName.toLowerCase().trim())
+      .limit(1)
+      .maybeSingle()
+
+    if (entity) {
+      const existingAttrs = (entity.attributes as Record<string, unknown>) || {}
+      const mergedAttrs = { ...existingAttrs, ...extractedAttrs }
+
+      await supabase
+        .from('entities')
+        .update({ attributes: mergedAttrs as unknown as Record<string, never> })
+        .eq('id', entity.id)
+
+      console.log(`[store_memory] Upserted entity attributes for "${entityName}":`, extractedAttrs)
+    }
+  }
 }

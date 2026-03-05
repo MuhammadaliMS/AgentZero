@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { runAgenticScan, type AgenticScanResult } from '@/lib/intelligence/agentic-scanner'
+import { runAgenticScan } from '@/lib/intelligence/agentic-scanner'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -14,6 +15,9 @@ export const dynamic = 'force-dynamic'
  * correlate signals with LLM reasoning, and discover new commitments/risks.
  *
  * Runs per-org (not per-user) — picks the primary onboarded user as scan context.
+ *
+ * Uses waitUntil to respond immediately (so cron-job.org doesn't timeout)
+ * while the heavy LLM work continues in the background.
  */
 export async function GET(request: NextRequest) {
   // ── Auth check ──────────────────────────────────────────────────────────
@@ -30,6 +34,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Neither OPENROUTER_API_KEY nor OPENAI_API_KEY configured' }, { status: 500 })
   }
 
+  // Respond immediately — heavy work runs in background via waitUntil
+  waitUntil(runAgenticPatrolBackground())
+
+  return NextResponse.json({ ok: true, status: 'accepted' })
+}
+
+async function runAgenticPatrolBackground() {
   const admin = createAdminClient()
 
   // ── Get all organizations with onboarded users ──────────────────────────
@@ -38,17 +49,10 @@ export async function GET(request: NextRequest) {
     .select('org_id')
     .not('onboarded_at', 'is', null)
 
-  if (!orgs || orgs.length === 0) {
-    return NextResponse.json({ ok: true, processed: 0, skipped: 0 })
-  }
+  if (!orgs || orgs.length === 0) return
 
   // Deduplicate org IDs
   const uniqueOrgIds = [...new Set(orgs.map((p) => p.org_id))]
-
-  let processed = 0
-  let skipped = 0
-  const errors: string[] = []
-  const results: Array<{ orgId: string; result: AgenticScanResult }> = []
 
   for (const orgId of uniqueOrgIds) {
     try {
@@ -62,45 +66,19 @@ export async function GET(request: NextRequest) {
         .limit(1)
         .single()
 
-      if (!primaryUser) {
-        skipped++
-        continue
-      }
+      if (!primaryUser) continue
 
       const result = await runAgenticScan(orgId, primaryUser.id)
 
       if (result.skipped) {
-        skipped++
         console.log(`[agentic-patrol] Skipped org ${orgId}: ${result.skipReason}`)
       } else {
-        processed++
         console.log(
           `[agentic-patrol] Completed org ${orgId}: ${result.findingsCreated} findings, ${result.durationMs}ms`
         )
       }
-
-      results.push({ orgId, result })
     } catch (err) {
-      const errorMsg = `[agentic-patrol] Error for org ${orgId}: ${(err as Error).message}`
-      console.error(errorMsg)
-      errors.push(errorMsg)
+      console.error(`[agentic-patrol] Error for org ${orgId}: ${(err as Error).message}`)
     }
   }
-
-  return NextResponse.json({
-    ok: true,
-    processed,
-    skipped,
-    total_orgs: uniqueOrgIds.length,
-    errors: errors.length > 0 ? errors : undefined,
-    results: results.map((r) => ({
-      orgId: r.orgId,
-      skipped: r.result.skipped,
-      skipReason: r.result.skipReason,
-      findingsCreated: r.result.findingsCreated,
-      commitmentsDiscovered: r.result.commitmentsDiscovered,
-      durationMs: r.result.durationMs,
-      tokensUsed: r.result.tokensUsed,
-    })),
-  })
 }

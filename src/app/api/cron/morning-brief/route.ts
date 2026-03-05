@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSlackClient } from '@/lib/slack/client'
@@ -26,6 +27,12 @@ function getLocalDateString(timezone: string): string {
   }
 }
 
+/**
+ * Cron: Morning Brief
+ *
+ * Uses waitUntil to respond immediately (so cron-job.org doesn't timeout)
+ * while the heavy LLM work continues in the background.
+ */
 export async function GET(request: NextRequest) {
   if (!process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
@@ -35,6 +42,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Respond immediately — heavy work runs in background via waitUntil
+  waitUntil(runMorningBriefBackground())
+
+  return NextResponse.json({ ok: true, status: 'accepted' })
+}
+
+async function runMorningBriefBackground() {
   const admin = createAdminClient()
 
   // Get all onboarded profiles with timezone info
@@ -43,14 +57,7 @@ export async function GET(request: NextRequest) {
     .select('id, org_id, email, full_name, timezone')
     .not('onboarded_at', 'is', null)
 
-  if (!profiles || profiles.length === 0) {
-    return NextResponse.json({ ok: true, processed: 0, skipped: 0 })
-  }
-
-  let processed = 0
-  let skipped = 0
-  const errors: string[] = []
-  const diagnostics: Array<{ userId: string; status: string; reason?: string }> = []
+  if (!profiles || profiles.length === 0) return
 
   for (const profile of profiles) {
     try {
@@ -58,7 +65,6 @@ export async function GET(request: NextRequest) {
       const tz = profile.timezone ?? 'UTC'
 
       // ── Deduplication ─────────────────────────────────────────────────────
-      // Skip if a morning brief was already sent today in the user's timezone.
       const todayLocal = getLocalDateString(tz)
       const { data: existing } = await admin
         .from('briefs')
@@ -70,19 +76,11 @@ export async function GET(request: NextRequest) {
         .limit(1)
         .maybeSingle()
 
-      if (existing) {
-        skipped++
-        diagnostics.push({ userId: profile.id, status: 'skipped', reason: `dedup: brief already exists for ${todayLocal}` })
-        continue
-      }
+      if (existing) continue
 
       // ── Slack client ───────────────────────────────────────────────────────
       const slackClient = await getSlackClient(profile.org_id)
-      if (!slackClient) {
-        skipped++
-        diagnostics.push({ userId: profile.id, status: 'skipped', reason: `no slack client for org ${profile.org_id}` })
-        continue
-      }
+      if (!slackClient) continue
 
       // ── Generate brief via agent (with cross-worker synthesis) ────────────
       const firstName = profile.full_name?.split(' ')[0] ?? 'there'
@@ -95,14 +93,12 @@ export async function GET(request: NextRequest) {
         year: 'numeric',
       })
 
-      // Gather cross-worker data (pure DB queries, no LLM cost)
       const workerViews = await gatherWorkerViews(admin, profile.org_id)
       const yesterdayMetrics = await getYesterdayMetrics(admin, profile.id, 'morning')
       const enrichedPrompt = buildBriefPrompt('morning', workerViews, yesterdayMetrics, firstName, dateLabel)
       const briefMetrics = extractMetrics(workerViews)
 
       let fullResponse = ''
-      let agentError = ''
       try {
         const agentStream = runCaptainWithSDK({
           orgId: profile.org_id,
@@ -116,28 +112,16 @@ export async function GET(request: NextRequest) {
             fullResponse += event.content
           }
           if (event.type === 'error' && event.content) {
-            agentError = event.content
             console.error(`[morning-brief] Captain error event for ${profile.id}: ${event.content}`)
           }
         }
       } catch (agentErr) {
-        agentError = (agentErr as Error).message
         console.error(`[morning-brief] Captain threw for ${profile.id}:`, agentErr)
       }
 
-      if (!fullResponse) {
-        skipped++
-        diagnostics.push({
-          userId: profile.id,
-          status: 'skipped',
-          reason: agentError
-            ? `Captain error: ${agentError}`
-            : 'empty response from Captain agent (no text events)',
-        })
-        continue
-      }
+      if (!fullResponse) continue
 
-      // ── Store in DB (with metrics for next-day comparison) ─────────────────
+      // ── Store in DB ─────────────────────────────────────────────────────────
       const { data: brief } = await admin
         .from('briefs')
         .insert({
@@ -200,15 +184,9 @@ export async function GET(request: NextRequest) {
         console.error(`[morning-brief] Extraction failed for ${profile.id}:`, extractErr)
       }
 
-      processed++
-      diagnostics.push({ userId: profile.id, status: 'sent' })
+      console.log(`[morning-brief] Completed for ${profile.id}`)
     } catch (err) {
-      const errorMsg = `[morning-brief] Error for user ${profile.id}: ${(err as Error).message}`
-      console.error(errorMsg)
-      errors.push(errorMsg)
-      diagnostics.push({ userId: profile.id, status: 'error', reason: (err as Error).message })
+      console.error(`[morning-brief] Error for user ${profile.id}: ${(err as Error).message}`)
     }
   }
-
-  return NextResponse.json({ ok: true, processed, skipped, errors, diagnostics })
 }

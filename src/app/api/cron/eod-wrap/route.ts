@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSlackClient } from '@/lib/slack/client'
@@ -26,6 +27,12 @@ function getLocalDateString(timezone: string): string {
   }
 }
 
+/**
+ * Cron: EOD Wrap
+ *
+ * Uses waitUntil to respond immediately (so cron-job.org doesn't timeout)
+ * while the heavy LLM work continues in the background.
+ */
 export async function GET(request: NextRequest) {
   if (!process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
@@ -35,6 +42,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Respond immediately — heavy work runs in background via waitUntil
+  waitUntil(runEodWrapBackground())
+
+  return NextResponse.json({ ok: true, status: 'accepted' })
+}
+
+async function runEodWrapBackground() {
   const admin = createAdminClient()
 
   // Get all onboarded profiles with timezone info
@@ -43,13 +57,7 @@ export async function GET(request: NextRequest) {
     .select('id, org_id, email, full_name, timezone')
     .not('onboarded_at', 'is', null)
 
-  if (!profiles || profiles.length === 0) {
-    return NextResponse.json({ ok: true, processed: 0, skipped: 0 })
-  }
-
-  let processed = 0
-  let skipped = 0
-  const errors: string[] = []
+  if (!profiles || profiles.length === 0) return
 
   for (const profile of profiles) {
     try {
@@ -57,7 +65,6 @@ export async function GET(request: NextRequest) {
       const tz = profile.timezone ?? 'UTC'
 
       // ── Deduplication ─────────────────────────────────────────────────────
-      // Skip if an EOD wrap was already sent today in the user's timezone.
       const todayLocal = getLocalDateString(tz)
       const { data: existing } = await admin
         .from('briefs')
@@ -69,17 +76,11 @@ export async function GET(request: NextRequest) {
         .limit(1)
         .maybeSingle()
 
-      if (existing) {
-        skipped++
-        continue
-      }
+      if (existing) continue
 
       // ── Slack client ───────────────────────────────────────────────────────
       const slackClient = await getSlackClient(profile.org_id)
-      if (!slackClient) {
-        skipped++
-        continue
-      }
+      if (!slackClient) continue
 
       // ── Generate EOD wrap via agent (with cross-worker synthesis) ─────────
       const firstName = profile.full_name?.split(' ')[0] ?? 'there'
@@ -92,7 +93,6 @@ export async function GET(request: NextRequest) {
         year: 'numeric',
       })
 
-      // Gather cross-worker data (pure DB queries, no LLM cost)
       const workerViews = await gatherWorkerViews(admin, profile.org_id)
       const yesterdayMetrics = await getYesterdayMetrics(admin, profile.id, 'eod')
       const enrichedPrompt = buildBriefPrompt('eod', workerViews, yesterdayMetrics, firstName, dateLabel)
@@ -112,12 +112,9 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      if (!fullResponse) {
-        skipped++
-        continue
-      }
+      if (!fullResponse) continue
 
-      // ── Store in DB (with metrics for next-day comparison) ─────────────────
+      // ── Store in DB ─────────────────────────────────────────────────────────
       const { data: brief } = await admin
         .from('briefs')
         .insert({
@@ -180,13 +177,9 @@ export async function GET(request: NextRequest) {
         console.error(`[eod-wrap] Extraction failed for ${profile.id}:`, extractErr)
       }
 
-      processed++
+      console.log(`[eod-wrap] Completed for ${profile.id}`)
     } catch (err) {
-      const errorMsg = `[eod-wrap] Error for user ${profile.id}: ${(err as Error).message}`
-      console.error(errorMsg)
-      errors.push(errorMsg)
+      console.error(`[eod-wrap] Error for user ${profile.id}: ${(err as Error).message}`)
     }
   }
-
-  return NextResponse.json({ ok: true, processed, skipped, errors })
 }

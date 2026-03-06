@@ -767,6 +767,15 @@ async function phaseAct(
     blockersEscalated: 0, graphUpdates: 0, deferred: 0, errors: 0,
   }
 
+  // ── Per-decision-type rate limits ──
+  const MAX_GRAPH_UPDATES_PER_HOUR = 30
+  const MAX_INSIGHTS_PER_HOUR = 15
+  const MAX_MEMORIES_PER_HOUR = 15
+  const MAX_REPLANS_PER_HOUR = 3
+  const MAX_ESCALATIONS_PER_HOUR = 5
+  let insightsCreated = 0
+  let memoriesCreated = 0
+
   // ── Process agent decisions ──
   for (const decision of decisions) {
     try {
@@ -791,6 +800,14 @@ async function phaseAct(
         }
 
         case 'branch_replan': {
+          if (r.replans >= MAX_REPLANS_PER_HOUR) {
+            await logChiefLoopEvent(supabase, orgId, leaseId, 'budget_deferred', {
+              rationale: decision.rationale, policyResult: 'deferred',
+              policyReason: `Replan rate limit: ${r.replans}/${MAX_REPLANS_PER_HOUR}`,
+            })
+            r.deferred++
+            continue
+          }
           const p = decision.payload as {
             outcomeId: string; reason: string; materialChanges: string[]
             newSteps: Array<{
@@ -1066,6 +1083,7 @@ async function phaseAct(
         }
 
         case 'store_insight': {
+          if (insightsCreated >= MAX_INSIGHTS_PER_HOUR) { r.deferred++; continue }
           const p = decision.payload as {
             type: string; summary: string; confidence: number
             severity?: string
@@ -1082,10 +1100,12 @@ async function phaseAct(
             p_evidence: { source: 'chief_loop', rationale: decision.rationale },
             p_action_template: p.action_template ?? null,
           })
+          insightsCreated++
           break
         }
 
         case 'store_memory': {
+          if (memoriesCreated >= MAX_MEMORIES_PER_HOUR) { r.deferred++; continue }
           const p = decision.payload as {
             category: string; subject: string; content: string; entities?: string[]
           }
@@ -1098,12 +1118,14 @@ async function phaseAct(
             confidence: 0.8,
             related_entities: p.entities ?? [],
           })
+          memoriesCreated++
           break
         }
 
         // ── Graph Update Decisions (NEW) ──
 
         case 'create_entity': {
+          if (r.graphUpdates >= MAX_GRAPH_UPDATES_PER_HOUR) { r.deferred++; continue }
           const p = decision.payload as {
             name: string; entityType: string; description?: string
             attributes: Record<string, unknown>
@@ -1137,6 +1159,7 @@ async function phaseAct(
         }
 
         case 'create_relationship': {
+          if (r.graphUpdates >= MAX_GRAPH_UPDATES_PER_HOUR) { r.deferred++; continue }
           const p = decision.payload as {
             sourceEntityId: string; targetEntityId: string
             relationshipType: string; properties: Record<string, unknown>
@@ -1194,6 +1217,7 @@ async function phaseAct(
         }
 
         case 'update_entity': {
+          if (r.graphUpdates >= MAX_GRAPH_UPDATES_PER_HOUR) { r.deferred++; continue }
           const p = decision.payload as {
             entityId: string; description?: string
             attributes?: Record<string, unknown>
@@ -1239,6 +1263,7 @@ async function phaseAct(
         }
 
         case 'escalate_blocker': {
+          if (r.blockersEscalated >= MAX_ESCALATIONS_PER_HOUR) { r.deferred++; continue }
           const p = decision.payload as {
             outcomeId: string; stepId: string; userId?: string
             oneClearAsk: string; severity: string

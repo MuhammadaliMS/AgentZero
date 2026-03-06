@@ -10,6 +10,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { executeToolDirectly } from '@/lib/agent/planner/background-executor'
 import { getNextExecutableSteps, updateStep } from '@/lib/agent/runtime/outcome-runtime'
@@ -25,8 +26,12 @@ export async function GET(request: Request) {
   if (!cronSecret) {
     return NextResponse.json({ error: 'Server misconfiguration' }, { status: 500 })
   }
-  const authHeader = request.headers.get('authorization')
-  if (authHeader !== `Bearer ${cronSecret}`) {
+  const authHeader = request.headers.get('authorization') ?? ''
+  const expected = `Bearer ${cronSecret}`
+  if (
+    authHeader.length !== expected.length ||
+    !timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))
+  ) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

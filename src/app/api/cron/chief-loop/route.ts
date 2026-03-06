@@ -12,6 +12,7 @@
 
 import { NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
+import { timingSafeEqual } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runChiefLoopForOrg } from '@/lib/intelligence/chief-loop'
 
@@ -26,8 +27,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Server misconfiguration' }, { status: 500 })
   }
 
-  const authHeader = request.headers.get('authorization')
-  if (authHeader !== `Bearer ${cronSecret}`) {
+  const authHeader = request.headers.get('authorization') ?? ''
+  const expected = `Bearer ${cronSecret}`
+  if (
+    authHeader.length !== expected.length ||
+    !timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))
+  ) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -47,8 +52,19 @@ export async function GET(request: Request) {
   const uniqueOrgIds = [...new Set(orgs.map(p => p.org_id))]
 
   // Respond immediately, run work in background
+  const TIME_BUDGET_MS = 270_000 // 4.5 min — leave 30s safety margin before Vercel's 5-min limit
   const work = (async () => {
+    const startMs = Date.now()
+    let processed = 0
     for (const orgId of uniqueOrgIds) {
+      const elapsed = Date.now() - startMs
+      if (elapsed >= TIME_BUDGET_MS) {
+        console.warn(
+          `[chief-loop] Time budget exhausted after ${processed}/${uniqueOrgIds.length} orgs (${elapsed}ms). ` +
+          `Skipped: ${uniqueOrgIds.slice(processed).join(', ')}`
+        )
+        break
+      }
       try {
         const result = await runChiefLoopForOrg(orgId, now)
         console.log(
@@ -59,6 +75,7 @@ export async function GET(request: Request) {
       } catch (err) {
         console.error(`[chief-loop] Fatal error for org ${orgId}:`, err)
       }
+      processed++
     }
   })()
 

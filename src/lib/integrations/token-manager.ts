@@ -54,7 +54,7 @@ export class TokenManager {
     orgId: string,
     integrationKey: string
   ): Promise<TokenData | null> {
-    console.log(`[TokenManager] getTokens called: orgId=${orgId}, key=${integrationKey}`)
+    // Avoid logging orgId to prevent correlation attacks in shared log aggregators
     const supabase = createAdminClient()
 
     const { data, error: fetchError } = await supabase
@@ -66,12 +66,11 @@ export class TokenManager {
       .single()
 
     if (fetchError) {
-      console.error(`[TokenManager] Supabase query error for ${integrationKey}:`, fetchError.message)
+      console.error(`[TokenManager] Query error for ${integrationKey}: ${fetchError.message}`)
     }
 
     const orgIntegration = data as (OrgIntegrationRow & { integrations: { key: string } }) | null
     if (!orgIntegration?.token_data) {
-      console.log(`[TokenManager] No token_data found for ${integrationKey}`)
       return null
     }
 
@@ -79,9 +78,8 @@ export class TokenManager {
     let tokens: TokenData
     try {
       tokens = decryptTokenData<TokenData>(tokenData.encrypted)
-      console.log(`[TokenManager] Decrypted tokens for ${integrationKey}: expires_at=${tokens.expires_at}, has_refresh=${!!tokens.refresh_token}`)
     } catch (decryptErr) {
-      console.error(`[TokenManager] Decrypt failed for ${integrationKey}:`, decryptErr)
+      console.error(`[TokenManager] Decrypt failed for ${integrationKey}: ${(decryptErr as Error).message}`)
       return null
     }
 
@@ -90,16 +88,12 @@ export class TokenManager {
       const expiresAt = new Date(tokens.expires_at)
       const now = new Date()
       const diff = expiresAt.getTime() - now.getTime()
-      console.log(`[TokenManager] Token expiry check for ${integrationKey}: expiresAt=${expiresAt.toISOString()}, now=${now.toISOString()}, diff=${diff}ms`)
       // Refresh if expires within 5 minutes
       if (diff < 5 * 60 * 1000) {
-        console.log(`[TokenManager] Token expired or expiring soon for ${integrationKey}, attempting refresh...`)
         if (tokens.refresh_token) {
           try {
             const provider = getProvider(integrationKey)
-            console.log(`[TokenManager] Got provider for ${integrationKey}, calling refreshToken...`)
             const refreshed = await provider.refreshToken(tokens.refresh_token)
-            console.log(`[TokenManager] Token refreshed for ${integrationKey}: new expires_at=${refreshed.expires_at}`)
 
             // Store refreshed tokens
             await TokenManager.storeTokens(
@@ -118,7 +112,7 @@ export class TokenManager {
               token_type: refreshed.token_type,
             }
           } catch (refreshErr) {
-            console.error(`[TokenManager] Token refresh FAILED for ${integrationKey}:`, refreshErr)
+            console.error(`[TokenManager] Token refresh failed for ${integrationKey}: ${(refreshErr as Error).message}`)
             // Mark as unhealthy if refresh fails
             await supabase
               .from('organization_integrations')
@@ -130,12 +124,11 @@ export class TokenManager {
             return null
           }
         }
-        console.log(`[TokenManager] No refresh_token for ${integrationKey}, returning null`)
+        // No refresh_token available — token expired without recourse
         return null
       }
     }
 
-    console.log(`[TokenManager] Returning valid tokens for ${integrationKey}`)
     return tokens
   }
 

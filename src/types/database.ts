@@ -174,6 +174,7 @@ export type Database = {
           policy_reason: string | null
           policy_result: string | null
           rationale: string | null
+          risk_score: number | null
           target_id: string | null
           target_type: string | null
         }
@@ -187,6 +188,7 @@ export type Database = {
           policy_reason?: string | null
           policy_result?: string | null
           rationale?: string | null
+          risk_score?: number | null
           target_id?: string | null
           target_type?: string | null
         }
@@ -200,6 +202,7 @@ export type Database = {
           policy_reason?: string | null
           policy_result?: string | null
           rationale?: string | null
+          risk_score?: number | null
           target_id?: string | null
           target_type?: string | null
         }
@@ -223,6 +226,7 @@ export type Database = {
       chief_loop_leases: {
         Row: {
           acquired_at: string
+          carry_forward: string | null
           completed_at: string | null
           cost_usd: number | null
           error: string | null
@@ -238,6 +242,7 @@ export type Database = {
         }
         Insert: {
           acquired_at?: string
+          carry_forward?: string | null
           completed_at?: string | null
           cost_usd?: number | null
           error?: string | null
@@ -253,6 +258,7 @@ export type Database = {
         }
         Update: {
           acquired_at?: string
+          carry_forward?: string | null
           completed_at?: string | null
           cost_usd?: number | null
           error?: string | null
@@ -269,6 +275,66 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "chief_loop_leases_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chief_loop_notifications: {
+        Row: {
+          created_at: string
+          decision_summary: string
+          decision_type: string
+          id: string
+          lease_id: string | null
+          notification_channel: string
+          org_id: string
+          risk_score: number
+          sent_at: string | null
+          status: string
+          target_id: string | null
+          target_type: string | null
+        }
+        Insert: {
+          created_at?: string
+          decision_summary: string
+          decision_type: string
+          id?: string
+          lease_id?: string | null
+          notification_channel?: string
+          org_id: string
+          risk_score: number
+          sent_at?: string | null
+          status?: string
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Update: {
+          created_at?: string
+          decision_summary?: string
+          decision_type?: string
+          id?: string
+          lease_id?: string | null
+          notification_channel?: string
+          org_id?: string
+          risk_score?: number
+          sent_at?: string | null
+          status?: string
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chief_loop_notifications_lease_id_fkey"
+            columns: ["lease_id"]
+            isOneToOne: false
+            referencedRelation: "chief_loop_leases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chief_loop_notifications_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -566,6 +632,84 @@ export type Database = {
             columns: ["run_id"]
             isOneToOne: false
             referencedRelation: "outcome_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      decision_outcomes: {
+        Row: {
+          accuracy_score: number | null
+          actual_result: string | null
+          created_at: string
+          decision_payload: Json
+          decision_rationale: string | null
+          decision_type: string
+          evaluate_after: string
+          evaluated_at: string | null
+          evaluation_method: string | null
+          id: string
+          lease_id: string | null
+          org_id: string
+          prediction: string | null
+          prediction_confidence: number | null
+          risk_score: number | null
+          target_id: string | null
+          target_type: string | null
+          updated_at: string
+        }
+        Insert: {
+          accuracy_score?: number | null
+          actual_result?: string | null
+          created_at?: string
+          decision_payload?: Json
+          decision_rationale?: string | null
+          decision_type: string
+          evaluate_after: string
+          evaluated_at?: string | null
+          evaluation_method?: string | null
+          id?: string
+          lease_id?: string | null
+          org_id: string
+          prediction?: string | null
+          prediction_confidence?: number | null
+          risk_score?: number | null
+          target_id?: string | null
+          target_type?: string | null
+          updated_at?: string
+        }
+        Update: {
+          accuracy_score?: number | null
+          actual_result?: string | null
+          created_at?: string
+          decision_payload?: Json
+          decision_rationale?: string | null
+          decision_type?: string
+          evaluate_after?: string
+          evaluated_at?: string | null
+          evaluation_method?: string | null
+          id?: string
+          lease_id?: string | null
+          org_id?: string
+          prediction?: string | null
+          prediction_confidence?: number | null
+          risk_score?: number | null
+          target_id?: string | null
+          target_type?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "decision_outcomes_lease_id_fkey"
+            columns: ["lease_id"]
+            isOneToOne: false
+            referencedRelation: "chief_loop_leases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_outcomes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
@@ -2070,6 +2214,7 @@ export type Database = {
           result_data: Json | null
           result_summary: string | null
           risk_class: string | null
+          risk_score: number | null
           run_id: string
           started_at: string | null
           status: string
@@ -2095,6 +2240,7 @@ export type Database = {
           result_data?: Json | null
           result_summary?: string | null
           risk_class?: string | null
+          risk_score?: number | null
           run_id: string
           started_at?: string | null
           status?: string
@@ -2120,6 +2266,7 @@ export type Database = {
           result_data?: Json | null
           result_summary?: string | null
           risk_class?: string | null
+          risk_score?: number | null
           run_id?: string
           started_at?: string | null
           status?: string
@@ -2351,9 +2498,13 @@ export type Database = {
           approval_id: string
           conversation_id: string
           created_at: string
+          decision_rationale: string | null
+          decision_type: string | null
           expires_at: string
           org_id: string
           resolved_at: string | null
+          risk_score: number | null
+          source: string | null
           status: string
           tool_input: Json
           tool_name: string
@@ -2362,9 +2513,13 @@ export type Database = {
           approval_id: string
           conversation_id: string
           created_at?: string
+          decision_rationale?: string | null
+          decision_type?: string | null
           expires_at: string
           org_id: string
           resolved_at?: string | null
+          risk_score?: number | null
+          source?: string | null
           status?: string
           tool_input?: Json
           tool_name: string
@@ -2373,9 +2528,13 @@ export type Database = {
           approval_id?: string
           conversation_id?: string
           created_at?: string
+          decision_rationale?: string | null
+          decision_type?: string | null
           expires_at?: string
           org_id?: string
           resolved_at?: string | null
+          risk_score?: number | null
+          source?: string | null
           status?: string
           tool_input?: Json
           tool_name?: string
@@ -2386,6 +2545,56 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      procedural_memory: {
+        Row: {
+          context_tags: string[] | null
+          created_at: string | null
+          embedding: string | null
+          failure_count: number | null
+          id: string
+          last_applied_at: string | null
+          org_id: string
+          success_count: number | null
+          successful_approach: string
+          trigger_pattern: string
+          updated_at: string | null
+        }
+        Insert: {
+          context_tags?: string[] | null
+          created_at?: string | null
+          embedding?: string | null
+          failure_count?: number | null
+          id?: string
+          last_applied_at?: string | null
+          org_id: string
+          success_count?: number | null
+          successful_approach: string
+          trigger_pattern: string
+          updated_at?: string | null
+        }
+        Update: {
+          context_tags?: string[] | null
+          created_at?: string | null
+          embedding?: string | null
+          failure_count?: number | null
+          id?: string
+          last_applied_at?: string | null
+          org_id?: string
+          success_count?: number | null
+          successful_approach?: string
+          trigger_pattern?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "procedural_memory_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
@@ -2845,6 +3054,56 @@ export type Database = {
           },
         ]
       }
+      working_memory: {
+        Row: {
+          accuracy_stats: Json
+          attention_items: Json
+          created_at: string
+          decision_log: Json
+          deferred_items: Json
+          id: string
+          org_id: string
+          predictions: Json
+          running_summary: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          accuracy_stats?: Json
+          attention_items?: Json
+          created_at?: string
+          decision_log?: Json
+          deferred_items?: Json
+          id?: string
+          org_id: string
+          predictions?: Json
+          running_summary?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          accuracy_stats?: Json
+          attention_items?: Json
+          created_at?: string
+          decision_log?: Json
+          deferred_items?: Json
+          id?: string
+          org_id?: string
+          predictions?: Json
+          running_summary?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "working_memory_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -3039,18 +3298,32 @@ export type Database = {
           utility: number
         }[]
       }
-      release_chief_lease: {
-        Args: {
-          p_cost_usd?: number
-          p_lease_id: string
-          p_outcomes_created?: number
-          p_result_summary?: string
-          p_signals_ingested?: number
-          p_status?: string
-          p_steps_executed?: number
-        }
-        Returns: undefined
-      }
+      release_chief_lease:
+        | {
+            Args: {
+              p_cost_usd?: number
+              p_lease_id: string
+              p_outcomes_created?: number
+              p_result_summary?: string
+              p_signals_ingested?: number
+              p_status?: string
+              p_steps_executed?: number
+            }
+            Returns: undefined
+          }
+        | {
+            Args: {
+              p_carry_forward?: string
+              p_cost_usd?: number
+              p_lease_id: string
+              p_outcomes_created?: number
+              p_result_summary?: string
+              p_signals_ingested?: number
+              p_status?: string
+              p_steps_executed?: number
+            }
+            Returns: undefined
+          }
       search_entities_by_embedding: {
         Args: {
           p_embedding: string

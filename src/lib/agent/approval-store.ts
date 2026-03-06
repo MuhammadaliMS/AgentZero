@@ -30,15 +30,25 @@ const POLL_INTERVAL_MS = 300        // Poll DB every 300ms
  * Create a new approval request that blocks until resolved.
  * Inserts a pending_approvals row and polls for status changes.
  * Returns approvalId and a Promise that resolves with the user's decision.
+ *
+ * Feature 8: Optional risk-tier params for chief loop approvals.
  */
 export async function createApprovalRequest(
   toolName: string,
   toolInput: Record<string, unknown>,
   conversationId: string,
-  orgId: string
+  orgId: string,
+  opts?: {
+    timeoutMs?: number
+    riskScore?: number
+    source?: 'chat' | 'chief_loop'
+    decisionType?: string
+    decisionRationale?: string
+  }
 ): Promise<{ approvalId: string; promise: Promise<'approve' | 'reject'> }> {
   const approvalId = randomUUID()
-  const expiresAt = new Date(Date.now() + APPROVAL_TIMEOUT_MS).toISOString()
+  const effectiveTimeout = opts?.timeoutMs ?? APPROVAL_TIMEOUT_MS
+  const expiresAt = new Date(Date.now() + effectiveTimeout).toISOString()
 
   // Single admin client reused across insert, polling, and timeout cleanup.
   // Avoids creating a new Supabase client every 300ms poll tick.
@@ -53,6 +63,11 @@ export async function createApprovalRequest(
     tool_input: toolInput as unknown as Json,
     status: 'pending',
     expires_at: expiresAt,
+    // Feature 8: Risk-tier metadata
+    ...(opts?.riskScore != null && { risk_score: opts.riskScore }),
+    ...(opts?.source && { source: opts.source }),
+    ...(opts?.decisionType && { decision_type: opts.decisionType }),
+    ...(opts?.decisionRationale && { decision_rationale: opts.decisionRationale }),
   })
 
   if (insertError) {
@@ -104,7 +119,7 @@ export async function createApprovalRequest(
           .eq('approval_id', approvalId)
           .eq('status', 'pending')
       }
-    }, APPROVAL_TIMEOUT_MS)
+    }, effectiveTimeout)
   })
 
   return { approvalId, promise }

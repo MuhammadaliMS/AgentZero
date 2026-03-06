@@ -3,12 +3,13 @@
  *
  * Single entrypoint: runChiefLoopForOrg(orgId, now)
  *
- * 5 Phases:
+ * 6 Phases:
  *   A. LOCK     — Acquire org lease, skip if busy
  *   B. GATHER   — Fetch ALL raw data (zero LLM, pure SQL + integration API reads)
- *   C. THINK    — LLM agent analyzes everything, makes decisions
+ *   C. THINK    — 4 sub-agents analyze data (triage → analysis → execution → graph)
  *   D. ACT      — Execute decisions (steps, graph updates, escalations)
- *   E. CLOSEOUT — Persist metrics, release lease, emit events
+ *   E. REFLECT  — Self-evaluate decisions, store procedural memories
+ *   F. CLOSEOUT — Persist metrics, release lease, emit events
  *
  * Key design choices:
  *   - NO deterministic scoring. LLM sees all data with timestamps and decides.
@@ -67,6 +68,9 @@ import type { Json } from '@/types/database'
 // Chief analyst agent
 import type { ChiefAnalystInput, ChiefDecision } from '@/lib/agent/openai/chief-analyst-agent'
 
+// Risk tier engine (Feature 8)
+import { computeEffectiveRisk, getRiskTier } from '@/lib/intelligence/risk-tier'
+
 // ─── Types ────────────────────────────────────────────────────────────────
 
 export interface ChiefLoopResult {
@@ -92,6 +96,53 @@ const MAX_STEP_EXECUTIONS_PER_HOUR = 10
 const REPLAN_COOLDOWN_MS = 4 * 60 * 60 * 1000 // 4 hours
 const LEASE_DURATION_MINUTES = 55
 const AGENT_TIMEOUT_MS = 180_000 // 3 minutes
+
+// ─── Working Memory Types (Feature 5) ───────────────────────────────────
+
+interface AttentionItem {
+  id: string
+  type: 'outcome' | 'signal' | 'entity' | 'blocker'
+  description: string
+  priority: 'critical' | 'high' | 'medium' | 'low'
+  addedAt: string
+  ttlHours: number
+}
+
+interface Prediction {
+  id: string
+  prediction: string
+  confidence: number
+  deadline: string
+  decisionType: string
+  targetId?: string
+  createdAt: string
+}
+
+interface DeferredItem {
+  id: string
+  signalType: string
+  signalId: string
+  reason: string
+  deferUntil: string
+  createdAt: string
+}
+
+interface DecisionLogEntry {
+  type: string
+  rationaleAbbrev: string
+  targetId?: string
+  createdAt: string
+}
+
+export interface WorkingMemory {
+  runningSummary: string
+  attentionItems: AttentionItem[]
+  predictions: Prediction[]
+  deferredItems: DeferredItem[]
+  decisionLog: DecisionLogEntry[]
+  accuracyStats: Record<string, { avg: number; count: number; trend: 'improving' | 'stable' | 'declining' }>
+  version: number
+}
 
 // ─── Main Entry ───────────────────────────────────────────────────────────
 
@@ -148,22 +199,38 @@ export async function runChiefLoopForOrg(
     status: 'running',
   })
 
+  // Hoist for carry-forward generation in closeout and reflect phase
+  let gatherResult: GatherResult | null = null
+  let thinkDecisions: ChiefDecision[] = []
+  let previousCarryForward: string | null = null
+
   try {
     // ═════════════════════════════════════════════════════════════════════
     // Phase B: GATHER — Fetch ALL raw data (zero LLM)
     // ═════════════════════════════════════════════════════════════════════
-    const gatherResult = await phaseGather(supabase, orgId, now)
+    gatherResult = await phaseGather(supabase, orgId, now)
     result.phases.gather = { durationMs: gatherResult.durationMs }
     if (gatherResult.error) result.phases.gather.error = gatherResult.error
     result.signalsGathered = gatherResult.totalSignals
 
+    // Feature 5: Derive previousCarryForward from working memory (backward compat)
+    previousCarryForward = gatherResult.workingMemory?.runningSummary ?? null
+    if (!previousCarryForward) {
+      // Fallback: fetch from lease table for orgs that don't have working memory yet
+      previousCarryForward = await fetchPreviousCarryForward(supabase, orgId).catch(e => {
+        console.error('[ChiefLoop] carry-forward fetch error:', e)
+        return null
+      })
+    }
+
     // ═════════════════════════════════════════════════════════════════════
     // Phase C: THINK — LLM agent analyzes everything
     // ═════════════════════════════════════════════════════════════════════
-    const thinkResult = await phaseThink(supabase, orgId, now, gatherResult)
+    const thinkResult = await phaseThink(supabase, orgId, now, gatherResult, previousCarryForward)
     result.phases.think = { durationMs: thinkResult.durationMs }
     if (thinkResult.error) result.phases.think.error = thinkResult.error
     result.costUsd += thinkResult.costUsd
+    thinkDecisions = thinkResult.decisions
 
     // ═════════════════════════════════════════════════════════════════════
     // Phase D: ACT — Execute decisions + steps + graph + escalation
@@ -178,19 +245,52 @@ export async function runChiefLoopForOrg(
     result.graphUpdates = actResult.graphUpdates
     result.deferredItems = actResult.deferred
 
+    // ═════════════════════════════════════════════════════════════════════
+    // Phase E: REFLECT — Self-evaluate decisions, store procedural memories
+    // ═════════════════════════════════════════════════════════════════════
+    if (thinkDecisions.length > 0 && gatherResult) {
+      const reflectResult = await phaseReflect(
+        supabase, orgId, thinkDecisions, gatherResult, previousCarryForward
+      ).catch(e => {
+        console.error('[ChiefLoop] reflect error:', e)
+        return { durationMs: 0, memoriesStored: 0, error: (e as Error).message } as ReflectResult
+      })
+      result.phases.reflect = { durationMs: reflectResult.durationMs }
+      if (reflectResult.error) result.phases.reflect.error = reflectResult.error
+    }
+
   } catch (error) {
     console.error(`[ChiefLoop] Unhandled error for org ${orgId}:`, error)
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // Phase E: CLOSEOUT — Persist metrics, release lease
+  // Phase F: CLOSEOUT — Persist metrics, release lease
   // ═══════════════════════════════════════════════════════════════════════
   const closeoutStart = Date.now()
   result.durationMs = closeoutStart - startTime
 
-  // Release lease
+  // Feature 5: Build and persist structured working memory
+  let carryForward: string | null = null
+  if (gatherResult) {
+    try {
+      const workingMemory = buildWorkingMemory(result, thinkDecisions, gatherResult)
+      await upsertWorkingMemory(supabase, orgId, workingMemory)
+      // Derive carry_forward TEXT for lease audit trail (backward compat)
+      carryForward = workingMemory.runningSummary.slice(0, 2000)
+    } catch (error) {
+      console.error('[ChiefLoop] working memory build/persist error:', error)
+      // Fallback: build legacy carry-forward
+      try {
+        carryForward = buildCarryForward(result, thinkDecisions, gatherResult)
+      } catch (fallbackErr) {
+        console.error('[ChiefLoop] carry-forward fallback error:', fallbackErr)
+      }
+    }
+  }
+
+  // Release lease (with carry-forward)
   try {
-    await releaseLease(supabase, leaseId, result)
+    await releaseLease(supabase, leaseId, result, carryForward)
   } catch (error) {
     console.error(`[ChiefLoop] Lease release failed for org ${orgId} (will TTL-expire):`, error)
   }
@@ -282,7 +382,8 @@ async function acquireLease(
 async function releaseLease(
   supabase: SupabaseClient,
   leaseId: string,
-  result: ChiefLoopResult
+  result: ChiefLoopResult,
+  carryForward?: string | null
 ): Promise<void> {
   const { error } = await supabase.rpc('release_chief_lease', {
     p_lease_id: leaseId,
@@ -292,6 +393,7 @@ async function releaseLease(
     p_outcomes_created: result.newOutcomes,
     p_steps_executed: result.stepsExecuted,
     p_cost_usd: result.costUsd,
+    p_carry_forward: carryForward ?? null,
   })
 
   if (error) {
@@ -321,6 +423,10 @@ interface GatherResult {
   recentMemories: ChiefAnalystInput['recentMemories']
   workerViews: Awaited<ReturnType<typeof gatherWorkerViews>> | null
   connectedIntegrations: string[]
+  proceduralMemories: Array<{ id: string; triggerPattern: string; successfulApproach: string; successRate: number }>
+  workingMemory: WorkingMemory | null
+  // Feature 7: Decision accuracy stats (last 30 days)
+  decisionAccuracy: Record<string, { avg: number; count: number }> | null
 }
 
 async function phaseGather(
@@ -345,6 +451,9 @@ async function phaseGather(
     recentMemories: [],
     workerViews: null,
     connectedIntegrations: [],
+    proceduralMemories: [],
+    workingMemory: null,
+    decisionAccuracy: null,
   }
 
   try {
@@ -362,6 +471,10 @@ async function phaseGather(
       emails,
       slackMessages,
       calendarEvents,
+      proceduralMems,
+      workingMem,
+      accuracyStats,
+      _evalCount,
     ] = await Promise.all([
       // Org name
       supabase.from('organizations').select('name').eq('id', orgId).single()
@@ -453,6 +566,30 @@ async function phaseGather(
         console.error('[ChiefLoop:gather] calendar fetch error:', e)
         return [] as GatherResult['todayEvents']
       }),
+
+      // Procedural memory (proven approaches from past runs)
+      fetchProceduralMemories(supabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] procedural memory fetch error:', e)
+        return [] as GatherResult['proceduralMemories']
+      }),
+
+      // Working memory (Feature 5 — structured inter-run state)
+      fetchWorkingMemory(supabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] working memory fetch error:', e)
+        return null as WorkingMemory | null
+      }),
+
+      // Feature 7: Decision accuracy stats (last 30 days)
+      fetchAccuracyStats(supabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] accuracy stats fetch error:', e)
+        return null as Record<string, { avg: number; count: number }> | null
+      }),
+
+      // Feature 7: Auto-evaluate mature pending decisions
+      evaluatePendingDecisions(supabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] decision evaluation error:', e)
+        return 0
+      }),
     ])
 
     r.orgName = orgData?.name ?? 'Unknown'
@@ -462,6 +599,9 @@ async function phaseGather(
     r.todayEvents = calendarEvents
     r.workerViews = workerViews
     r.connectedIntegrations = integrations
+    r.proceduralMemories = proceduralMems
+    r.workingMemory = workingMem
+    r.decisionAccuracy = accuracyStats
 
     // Map DB rows to typed arrays
     r.recentInsights = (insights as any[]).map(i => ({
@@ -524,6 +664,299 @@ async function phaseGather(
 
   r.durationMs = Date.now() - startTime
   return r
+}
+
+// ─── Procedural Memory (Feature 11) ──────────────────────────────────────
+// Fetch proven approach patterns from past runs. Agents use these to make
+// better decisions based on historical success/failure data.
+
+/** Fetch top procedural memories (proven approaches) for this org */
+async function fetchProceduralMemories(
+  supabase: SupabaseClient,
+  orgId: string,
+  limit: number = 10
+): Promise<GatherResult['proceduralMemories']> {
+  const { data } = await supabase
+    .from('procedural_memory')
+    .select('id, trigger_pattern, successful_approach, success_count, failure_count')
+    .eq('org_id', orgId)
+    .order('success_count', { ascending: false })
+    .limit(limit)
+
+  return (data ?? []).map((m: any) => ({
+    id: m.id,
+    triggerPattern: m.trigger_pattern,
+    successfulApproach: m.successful_approach,
+    successRate: m.success_count / Math.max(1, m.success_count + m.failure_count),
+  }))
+}
+
+// ─── Carry-Forward Context (QW1) ─────────────────────────────────────────
+// Template-based summary of what happened in the last run, persisted in the
+// chief_loop_leases table. No LLM call — pure string interpolation.
+
+/** Fetch the carry_forward text from the most recent completed lease for this org */
+async function fetchPreviousCarryForward(
+  supabase: SupabaseClient,
+  orgId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('chief_loop_leases')
+    .select('carry_forward')
+    .eq('org_id', orgId)
+    .eq('status', 'completed')
+    .order('completed_at', { ascending: false })
+    .limit(1)
+
+  const row = data?.[0] as { carry_forward: string | null } | undefined
+  return row?.carry_forward ?? null
+}
+
+/** Build a carry-forward summary from this run's results (no LLM) */
+function buildCarryForward(
+  result: ChiefLoopResult,
+  thinkDecisions: ChiefDecision[],
+  gatherResult: GatherResult
+): string {
+  const lines: string[] = []
+
+  // Key metrics
+  lines.push(`Last run: signals=${result.signalsGathered} outcomes=${result.newOutcomes} replans=${result.replans} steps=${result.stepsExecuted} blockers=${result.blockersEscalated} graph=${result.graphUpdates} deferred=${result.deferredItems}`)
+
+  // Active outcomes summary
+  if (gatherResult.activeOutcomes.length > 0) {
+    lines.push(`Active outcomes (${gatherResult.activeOutcomes.length}):`)
+    for (const o of gatherResult.activeOutcomes.slice(0, 5)) {
+      const completed = o.steps.filter(s => s.status === 'completed').length
+      const blocked = o.steps.filter(s => s.status === 'blocked').length
+      lines.push(`  - "${o.title}" [${o.priority}]: ${completed}/${o.steps.length} done${blocked > 0 ? `, ${blocked} blocked` : ''}`)
+    }
+    if (gatherResult.activeOutcomes.length > 5) {
+      lines.push(`  ... and ${gatherResult.activeOutcomes.length - 5} more`)
+    }
+  }
+
+  // Newly created outcomes this run
+  const newOutcomeDecisions = thinkDecisions.filter(d => d.type === 'create_outcome')
+  if (newOutcomeDecisions.length > 0) {
+    lines.push(`Created this run:`)
+    for (const d of newOutcomeDecisions) {
+      lines.push(`  + "${(d.payload as { title?: string }).title ?? 'unknown'}"`)
+    }
+  }
+
+  // Escalated blockers
+  const escalations = thinkDecisions.filter(d => d.type === 'escalate_blocker')
+  if (escalations.length > 0) {
+    lines.push(`Escalated blockers:`)
+    for (const e of escalations) {
+      lines.push(`  ! ${(e.payload as { oneClearAsk?: string }).oneClearAsk ?? e.rationale}`)
+    }
+  }
+
+  // Deferred items
+  const deferred = thinkDecisions.filter(d => d.type === 'defer')
+  if (deferred.length > 0) {
+    lines.push(`Deferred (revisit next cycle):`)
+    for (const d of deferred) {
+      lines.push(`  ~ ${(d.payload as { candidateId?: string }).candidateId}: ${d.rationale.slice(0, 100)}`)
+    }
+  }
+
+  // Key insights stored
+  const insights = thinkDecisions.filter(d => d.type === 'store_insight')
+  if (insights.length > 0) {
+    lines.push(`Insights stored: ${insights.length}`)
+    for (const i of insights.slice(0, 3)) {
+      lines.push(`  * ${i.rationale.slice(0, 100)}`)
+    }
+  }
+
+  // Cap at 2000 chars to avoid bloating the prompt
+  const text = lines.join('\n')
+  return text.length > 2000 ? text.slice(0, 1997) + '...' : text
+}
+
+// ─── Working Memory (Feature 5) ──────────────────────────────────────────
+// Structured JSON working memory per org. Replaces carry-forward TEXT with
+// rich state: attention items, predictions, deferred items, decision log.
+
+/** Fetch structured working memory for this org (one row per org) */
+async function fetchWorkingMemory(
+  supabase: SupabaseClient,
+  orgId: string
+): Promise<WorkingMemory | null> {
+  const { data } = await supabase
+    .from('working_memory')
+    .select('running_summary, attention_items, predictions, deferred_items, decision_log, accuracy_stats, version')
+    .eq('org_id', orgId)
+    .single()
+
+  if (!data) return null
+
+  const row = data as any
+  return {
+    runningSummary: row.running_summary ?? '',
+    attentionItems: (row.attention_items ?? []) as AttentionItem[],
+    predictions: (row.predictions ?? []) as Prediction[],
+    deferredItems: (row.deferred_items ?? []) as DeferredItem[],
+    decisionLog: (row.decision_log ?? []) as DecisionLogEntry[],
+    accuracyStats: (row.accuracy_stats ?? {}) as WorkingMemory['accuracyStats'],
+    version: row.version ?? 1,
+  }
+}
+
+/** Build structured working memory from this run's results (no LLM) */
+function buildWorkingMemory(
+  result: ChiefLoopResult,
+  decisions: ChiefDecision[],
+  gatherResult: GatherResult
+): WorkingMemory {
+  const now = new Date().toISOString()
+  const previousMemory = gatherResult.workingMemory
+
+  // ── Running summary (same logic as buildCarryForward but richer) ──
+  const summaryLines: string[] = []
+  summaryLines.push(`Run at ${now}: signals=${result.signalsGathered} outcomes=${result.newOutcomes} replans=${result.replans} steps=${result.stepsExecuted} blockers=${result.blockersEscalated} graph=${result.graphUpdates} deferred=${result.deferredItems}`)
+
+  if (gatherResult.activeOutcomes.length > 0) {
+    summaryLines.push(`Active outcomes (${gatherResult.activeOutcomes.length}):`)
+    for (const o of gatherResult.activeOutcomes.slice(0, 5)) {
+      const completed = o.steps.filter(s => s.status === 'completed').length
+      const blocked = o.steps.filter(s => s.status === 'blocked').length
+      summaryLines.push(`  - "${o.title}" [${o.priority}]: ${completed}/${o.steps.length} done${blocked > 0 ? `, ${blocked} blocked` : ''}`)
+    }
+    if (gatherResult.activeOutcomes.length > 5) {
+      summaryLines.push(`  ... and ${gatherResult.activeOutcomes.length - 5} more`)
+    }
+  }
+
+  const newOutcomeDecisions = decisions.filter(d => d.type === 'create_outcome')
+  if (newOutcomeDecisions.length > 0) {
+    summaryLines.push(`Created this run:`)
+    for (const d of newOutcomeDecisions) {
+      summaryLines.push(`  + "${(d.payload as { title?: string }).title ?? 'unknown'}"`)
+    }
+  }
+
+  const escalations = decisions.filter(d => d.type === 'escalate_blocker')
+  if (escalations.length > 0) {
+    summaryLines.push(`Escalated blockers:`)
+    for (const e of escalations) {
+      summaryLines.push(`  ! ${(e.payload as { oneClearAsk?: string }).oneClearAsk ?? e.rationale}`)
+    }
+  }
+
+  const runningSummary = summaryLines.join('\n').slice(0, 3000)
+
+  // ── Attention items: outcomes with blockers + carry forward unexpired ──
+  const attentionItems: AttentionItem[] = gatherResult.activeOutcomes
+    .filter(o => o.steps.some(s => s.status === 'blocked'))
+    .map(o => ({
+      id: o.id,
+      type: 'outcome' as const,
+      description: `"${o.title}" has ${o.steps.filter(s => s.status === 'blocked').length} blocked steps`,
+      priority: o.priority as AttentionItem['priority'],
+      addedAt: now,
+      ttlHours: 24,
+    }))
+
+  // Carry forward unexpired attention items from previous memory
+  if (previousMemory) {
+    const cutoff = Date.now()
+    for (const item of previousMemory.attentionItems) {
+      const expiresAt = new Date(item.addedAt).getTime() + item.ttlHours * 3600_000
+      if (expiresAt > cutoff && !attentionItems.some(a => a.id === item.id)) {
+        attentionItems.push(item)
+      }
+    }
+  }
+
+  // ── Predictions: carry forward unexpired predictions ──
+  const predictions: Prediction[] = (previousMemory?.predictions ?? [])
+    .filter(p => new Date(p.deadline).getTime() > Date.now())
+
+  // ── Deferred items from defer decisions ──
+  const deferredItems: DeferredItem[] = decisions
+    .filter(d => d.type === 'defer')
+    .map(d => ({
+      id: crypto.randomUUID(),
+      signalType: 'unknown',
+      signalId: (d.payload as { candidateId?: string }).candidateId ?? '',
+      reason: d.rationale.slice(0, 200),
+      deferUntil: new Date(Date.now() + 3600_000).toISOString(), // revisit next hour
+      createdAt: now,
+    }))
+
+  // ── Decision log: this run + carry forward (keep last 20) ──
+  const decisionLog: DecisionLogEntry[] = [
+    ...decisions.map(d => ({
+      type: d.type,
+      rationaleAbbrev: d.rationale.slice(0, 100),
+      targetId: (d.payload as { outcomeId?: string; stepId?: string }).outcomeId
+        ?? (d.payload as { stepId?: string }).stepId,
+      createdAt: now,
+    })),
+    ...(previousMemory?.decisionLog ?? []),
+  ].slice(0, 20)
+
+  // ── Accuracy stats: merge fresh DB stats with trend from previous memory ──
+  const accuracyStats: WorkingMemory['accuracyStats'] = {}
+  const freshStats = gatherResult.decisionAccuracy
+  const prevStats = previousMemory?.accuracyStats ?? {}
+
+  if (freshStats && Object.keys(freshStats).length > 0) {
+    for (const [type, stats] of Object.entries(freshStats)) {
+      const prev = prevStats[type]
+      let trend: 'improving' | 'stable' | 'declining' = 'stable'
+      if (prev) {
+        const delta = stats.avg - prev.avg
+        if (delta > 0.05) trend = 'improving'
+        else if (delta < -0.05) trend = 'declining'
+      }
+      accuracyStats[type] = { avg: stats.avg, count: stats.count, trend }
+    }
+    // Carry forward types that exist in previous memory but have no recent decisions
+    for (const [type, prev] of Object.entries(prevStats)) {
+      if (!accuracyStats[type]) {
+        accuracyStats[type] = prev // keep stale data with its existing trend
+      }
+    }
+  } else {
+    // No fresh stats — carry forward previous memory's accuracy stats as-is
+    Object.assign(accuracyStats, prevStats)
+  }
+
+  return {
+    runningSummary,
+    attentionItems: attentionItems.slice(0, 20),
+    predictions: predictions.slice(0, 15),
+    deferredItems: deferredItems.slice(0, 10),
+    decisionLog,
+    accuracyStats,
+    version: (previousMemory?.version ?? 0) + 1,
+  }
+}
+
+/** Upsert working memory for this org (one row per org) */
+async function upsertWorkingMemory(
+  supabase: SupabaseClient,
+  orgId: string,
+  memory: WorkingMemory
+): Promise<void> {
+  const { error } = await supabase
+    .from('working_memory')
+    .upsert({
+      org_id: orgId,
+      running_summary: memory.runningSummary,
+      attention_items: memory.attentionItems as unknown as Json,
+      predictions: memory.predictions as unknown as Json,
+      deferred_items: memory.deferredItems as unknown as Json,
+      decision_log: memory.decisionLog as unknown as Json,
+      accuracy_stats: memory.accuracyStats as unknown as Json,
+    }, { onConflict: 'org_id' })
+
+  if (error) console.error('[ChiefLoop] Working memory upsert error:', error.message)
 }
 
 // ─── Integration Data Fetchers ───────────────────────────────────────────
@@ -684,7 +1117,8 @@ async function phaseThink(
   supabase: SupabaseClient,
   orgId: string,
   now: Date,
-  gather: GatherResult
+  gather: GatherResult,
+  previousCarryForward?: string | null
 ): Promise<ThinkResult> {
   const startTime = Date.now()
   const r: ThinkResult = { durationMs: 0, decisions: [], costUsd: 0 }
@@ -696,8 +1130,6 @@ async function phaseThink(
   }
 
   try {
-    const { runChiefAnalyst } = await import('@/lib/agent/openai/chief-analyst-agent')
-
     // Detect timezone from calendar events or default to UTC
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 
@@ -717,20 +1149,48 @@ async function phaseThink(
       recentMemories: gather.recentMemories,
       workerViews: gather.workerViews,
       connectedIntegrations: gather.connectedIntegrations,
+
+      // QW1: Carry-forward context from previous run
+      previousCarryForward: previousCarryForward ?? undefined,
+
+      // Feature 11: Procedural memories (proven approaches)
+      proceduralMemories: gather.proceduralMemories,
+
+      // Feature 5: Structured working memory from previous runs
+      workingMemory: gather.workingMemory ?? undefined,
+
+      // Feature 7: Decision accuracy stats
+      decisionAccuracy: gather.decisionAccuracy ?? undefined,
     }
 
-    // Timeout: abort if agent takes too long
-    const agentResult = await Promise.race([
-      runChiefAnalyst(input),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Chief analyst timed out after ${AGENT_TIMEOUT_MS / 1000}s`)), AGENT_TIMEOUT_MS)
-      ),
-    ])
+    // Feature 10: Try sub-agents first, fall back to monolithic on error
+    let agentResult: { decisions: ChiefDecision[]; usage: { input: number; output: number }; turns: number; durationMs: number }
+
+    try {
+      const { runSubAgents } = await import('@/lib/agent/openai/chief-sub-agents')
+      agentResult = await Promise.race([
+        runSubAgents(input),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Sub-agents timed out after ${AGENT_TIMEOUT_MS / 1000}s`)), AGENT_TIMEOUT_MS)
+        ),
+      ])
+      console.log(`[ChiefLoop:think] Sub-agents completed: ${agentResult.decisions.length} decisions, ${agentResult.turns} turns, ${agentResult.durationMs}ms`)
+    } catch (subAgentError) {
+      console.warn('[ChiefLoop:think] Sub-agent error, falling back to monolithic:', (subAgentError as Error).message)
+
+      // Fallback: original monolithic runChiefAnalyst — zero regression risk
+      const { runChiefAnalyst } = await import('@/lib/agent/openai/chief-analyst-agent')
+      agentResult = await Promise.race([
+        runChiefAnalyst(input),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Chief analyst timed out after ${AGENT_TIMEOUT_MS / 1000}s`)), AGENT_TIMEOUT_MS)
+        ),
+      ])
+      console.log(`[ChiefLoop:think] Monolithic fallback completed: ${agentResult.decisions.length} decisions, ${agentResult.turns} turns, ${agentResult.durationMs}ms`)
+    }
 
     r.decisions = agentResult.decisions
     r.costUsd = estimateCost(agentResult.usage.input, agentResult.usage.output)
-
-    console.log(`[ChiefLoop:think] Agent completed: ${agentResult.decisions.length} decisions, ${agentResult.turns} turns, ${agentResult.durationMs}ms`)
   } catch (error) {
     console.error('[ChiefLoop:think] Agent error:', error)
     r.error = (error as Error).message
@@ -753,6 +1213,9 @@ interface ActResult {
   deferred: number
   errors: number
   error?: string
+  // Feature 8: Risk tier tracking
+  approvalsPending: number
+  notificationsQueued: number
 }
 
 async function phaseAct(
@@ -765,6 +1228,7 @@ async function phaseAct(
   const r: ActResult = {
     durationMs: 0, replans: 0, newOutcomes: 0, stepsExecuted: 0,
     blockersEscalated: 0, graphUpdates: 0, deferred: 0, errors: 0,
+    approvalsPending: 0, notificationsQueued: 0,
   }
 
   // ── Per-decision-type rate limits ──
@@ -776,9 +1240,66 @@ async function phaseAct(
   let insightsCreated = 0
   let memoriesCreated = 0
 
+  // Feature 8: Collect notifications to batch-send after all decisions
+  const pendingNotifications: Array<{
+    decisionType: string; decisionSummary: string; riskScore: number
+    targetType?: string; targetId?: string
+  }> = []
+
   // ── Process agent decisions ──
   for (const decision of decisions) {
     try {
+      // ── Feature 8: Risk Tier Gate ──
+      // Compute effective risk score (with safety floors for external tools)
+      const stepToolName = (decision.payload as Record<string, unknown>).toolName as string | undefined
+      const stepRiskClass = (decision.payload as Record<string, unknown>).riskClass as string | undefined
+      const effectiveRisk = computeEffectiveRisk(decision, { stepToolName, stepRiskClass })
+      const riskTier = getRiskTier(effectiveRisk)
+
+      if (riskTier === 'approval') {
+        // APPROVAL tier → block execution, create pending approval
+        try {
+          await supabase.from('pending_approvals').insert({
+            approval_id: crypto.randomUUID(),
+            conversation_id: `chief_loop:${leaseId}`,
+            org_id: orgId,
+            tool_name: decision.type,
+            tool_input: decision.payload as Json,
+            status: 'pending',
+            expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(), // 30-min timeout
+            risk_score: effectiveRisk,
+            source: 'chief_loop',
+            decision_type: decision.type,
+            decision_rationale: decision.rationale.slice(0, 500),
+          })
+          await logChiefLoopEvent(supabase, orgId, leaseId, 'decision_blocked_by_risk', {
+            rationale: decision.rationale,
+            policyResult: 'blocked_by_risk_tier',
+            policyReason: `Risk score ${effectiveRisk.toFixed(2)} → approval tier (>0.7). Awaiting user approval.`,
+            metadata: { riskScore: effectiveRisk, riskTier, decisionType: decision.type },
+          })
+          r.approvalsPending++
+          r.deferred++
+          console.log(`[ChiefLoop:act] Risk tier APPROVAL for ${decision.type} (score=${effectiveRisk.toFixed(2)}) — blocked pending approval`)
+        } catch (err) {
+          console.error('[ChiefLoop:act] Failed to create risk-tier approval:', err)
+          r.errors++
+        }
+        continue // Skip execution — awaiting approval
+      }
+
+      if (riskTier === 'notify') {
+        // NOTIFY tier → execute normally, then queue notification
+        pendingNotifications.push({
+          decisionType: decision.type,
+          decisionSummary: decision.rationale.slice(0, 300),
+          riskScore: effectiveRisk,
+          targetType: (decision.payload as Record<string, unknown>).outcomeId ? 'outcome' : undefined,
+          targetId: ((decision.payload as Record<string, unknown>).outcomeId ?? (decision.payload as Record<string, unknown>).stepId ?? (decision.payload as Record<string, unknown>).entityId) as string | undefined,
+        })
+      }
+      // AUTO tier → execute normally, no notification
+
       switch (decision.type) {
         case 'attach_signal': {
           const p = decision.payload as {
@@ -1332,9 +1853,26 @@ async function phaseAct(
           break
         }
       }
+
+      // Feature 7: Record decision outcome for future evaluation
+      try {
+        await recordDecisionOutcome(supabase, orgId, leaseId, decision)
+      } catch (err) {
+        console.error(`[ChiefLoop:act] Failed to record decision outcome (${decision.type}):`, err)
+      }
     } catch (error) {
       console.error(`[ChiefLoop:act] Decision error (${decision.type}):`, error)
       r.errors++
+    }
+  }
+
+  // ── Feature 8: Batch-send notifications for NOTIFY tier decisions ──
+  if (pendingNotifications.length > 0) {
+    try {
+      const queued = await sendBatchedNotifications(supabase, orgId, leaseId, pendingNotifications)
+      r.notificationsQueued += queued
+    } catch (err) {
+      console.error('[ChiefLoop:act] Notification batching error:', err)
     }
   }
 
@@ -1539,6 +2077,390 @@ async function escalateBlockedOutcomes(
   return { escalated }
 }
 
+// ─── Feature 8: Batched Notifications (NOTIFY tier) ──────────────────────
+// After all decisions are processed, batch-insert notification rows for
+// NOTIFY-tier decisions and send a single Slack DM summary to the org owner.
+
+async function sendBatchedNotifications(
+  supabase: SupabaseClient,
+  orgId: string,
+  leaseId: string,
+  notifications: Array<{
+    decisionType: string; decisionSummary: string; riskScore: number
+    targetType?: string; targetId?: string
+  }>
+): Promise<number> {
+  if (notifications.length === 0) return 0
+
+  // Insert notification rows
+  const rows = notifications.map(n => ({
+    org_id: orgId,
+    lease_id: leaseId,
+    decision_type: n.decisionType,
+    decision_summary: n.decisionSummary,
+    risk_score: n.riskScore,
+    target_type: n.targetType ?? null,
+    target_id: n.targetId ?? null,
+    notification_channel: 'slack' as const,
+    status: 'pending' as const,
+  }))
+
+  const { error: insertError } = await supabase
+    .from('chief_loop_notifications')
+    .insert(rows)
+
+  if (insertError) {
+    console.error('[ChiefLoop:notify] Failed to insert notifications:', insertError.message)
+    return 0
+  }
+
+  // Send a single batched Slack DM to the org owner
+  try {
+    // Find the org owner (first onboarded user)
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('org_id', orgId)
+      .not('onboarded_at', 'is', null)
+      .limit(1)
+    const ownerId = profiles?.[0] ? (profiles[0] as { id: string }).id : null
+    if (!ownerId) return notifications.length
+
+    // Get Slack tokens
+    const slackTokens = await TokenManager.getTokens(orgId, 'slack')
+    if (!slackTokens) return notifications.length
+
+    // Get user's Slack ID
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('slack_user_id')
+      .eq('id', ownerId)
+      .single()
+    const slackUserId = (profile as { slack_user_id?: string } | null)?.slack_user_id
+    if (!slackUserId) return notifications.length
+
+    // Build summary message
+    const lines = notifications.map(n =>
+      `• *${n.decisionType}* (risk: ${n.riskScore.toFixed(2)}): ${n.decisionSummary.slice(0, 150)}`
+    )
+    const message = `🔔 *Chief Loop Notification* — ${notifications.length} decision(s) executed:\n\n${lines.join('\n')}\n\n_These ran automatically. Review in your dashboard if needed._`
+
+    const client = new WebClient(slackTokens.user_access_token || slackTokens.access_token)
+    await client.chat.postMessage({
+      channel: slackUserId,
+      text: message,
+    })
+
+    // Mark notifications as sent
+    const sentAt = new Date().toISOString()
+    await supabase
+      .from('chief_loop_notifications')
+      .update({ status: 'sent', sent_at: sentAt })
+      .eq('org_id', orgId)
+      .eq('lease_id', leaseId)
+      .eq('status', 'pending')
+
+    console.log(`[ChiefLoop:notify] Sent ${notifications.length} notification(s) to Slack user ${slackUserId}`)
+  } catch (err) {
+    console.error('[ChiefLoop:notify] Slack notification error:', err)
+    // Mark as failed
+    await supabase
+      .from('chief_loop_notifications')
+      .update({ status: 'failed' })
+      .eq('org_id', orgId)
+      .eq('lease_id', leaseId)
+      .eq('status', 'pending')
+  }
+
+  return notifications.length
+}
+
+// ─── Feature 7: Decision Outcome Tracking ─────────────────────────────────
+// Records predictions at decision time, auto-evaluates after delay.
+
+/** Determine when to auto-evaluate a decision based on its type */
+function getEvaluateAfter(decisionType: string): Date {
+  const now = Date.now()
+  switch (decisionType) {
+    case 'execute_step':
+      return new Date(now + 5 * 60 * 1000)          // 5 minutes (step should complete quickly)
+    case 'skip_step':
+    case 'block_step':
+      return new Date(now + 2 * 60 * 60 * 1000)     // 2 hours
+    case 'defer':
+      return new Date(now + 2 * 60 * 60 * 1000)     // 2 hours
+    case 'dismiss':
+      return new Date(now + 24 * 60 * 60 * 1000)    // 24 hours (check if signal reappeared)
+    case 'create_outcome':
+      return new Date(now + 24 * 60 * 60 * 1000)    // 24 hours
+    case 'branch_replan':
+      return new Date(now + 12 * 60 * 60 * 1000)    // 12 hours
+    case 'escalate_blocker':
+      return new Date(now + 4 * 60 * 60 * 1000)     // 4 hours
+    case 'store_insight':
+    case 'store_memory':
+      return new Date(now + 48 * 60 * 60 * 1000)    // 48 hours (long-term value)
+    default:
+      return new Date(now + 24 * 60 * 60 * 1000)    // Default: 24 hours
+  }
+}
+
+/** Record a decision outcome row for future evaluation */
+async function recordDecisionOutcome(
+  supabase: SupabaseClient,
+  orgId: string,
+  leaseId: string,
+  decision: ChiefDecision
+): Promise<void> {
+  const payload = decision.payload as Record<string, unknown>
+  const targetType =
+    payload.outcomeId ? 'outcome' :
+    payload.stepId ? 'step' :
+    payload.entityId ? 'entity' :
+    payload.candidateId ? 'signal' :
+    undefined
+  const targetId = (payload.outcomeId ?? payload.stepId ?? payload.entityId ?? payload.candidateId) as string | undefined
+
+  await supabase.from('decision_outcomes').insert({
+    org_id: orgId,
+    lease_id: leaseId,
+    decision_type: decision.type,
+    decision_payload: decision.payload,
+    decision_rationale: decision.rationale?.slice(0, 1000),
+    risk_score: decision.riskScore ?? null,
+    prediction: decision.expectedOutcome ?? null,
+    prediction_confidence: decision.riskScore != null ? (1 - decision.riskScore) : null,
+    target_type: targetType ?? null,
+    target_id: targetId ?? null,
+    evaluate_after: getEvaluateAfter(decision.type).toISOString(),
+  })
+}
+
+/** Auto-evaluate mature pending decisions. Returns number evaluated. */
+async function evaluatePendingDecisions(
+  supabase: SupabaseClient,
+  orgId: string
+): Promise<number> {
+  const now = new Date().toISOString()
+
+  // Fetch decisions ready for evaluation
+  const { data: pending } = await supabase
+    .from('decision_outcomes')
+    .select('id, decision_type, target_type, target_id, prediction')
+    .eq('org_id', orgId)
+    .is('accuracy_score', null)
+    .lte('evaluate_after', now)
+    .limit(50)
+
+  if (!pending || pending.length === 0) return 0
+
+  let evaluated = 0
+
+  for (const row of pending) {
+    const d = row as {
+      id: string; decision_type: string
+      target_type: string | null; target_id: string | null
+      prediction: string | null
+    }
+
+    let accuracyScore: number | null = null
+    let actualResult = ''
+    let evaluationMethod = ''
+
+    try {
+      switch (d.decision_type) {
+        case 'execute_step': {
+          if (!d.target_id) break
+          const { data: step } = await supabase
+            .from('outcome_steps')
+            .select('status')
+            .eq('id', d.target_id)
+            .single()
+          if (!step) break
+          const s = (step as { status: string }).status
+          if (s === 'completed') { accuracyScore = 1.0; actualResult = 'Step completed successfully' }
+          else if (s === 'failed') { accuracyScore = 0.0; actualResult = 'Step failed' }
+          else if (s === 'skipped') { accuracyScore = 0.3; actualResult = 'Step was skipped' }
+          else { continue } // Still pending — skip for now
+          evaluationMethod = 'auto_step_result'
+          break
+        }
+
+        case 'create_outcome': {
+          if (!d.target_id) break
+          const { data: outcome } = await supabase
+            .from('outcomes')
+            .select('status')
+            .eq('id', d.target_id)
+            .single()
+          if (!outcome) break
+          const s = (outcome as { status: string }).status
+          if (s === 'completed') { accuracyScore = 1.0; actualResult = 'Outcome completed' }
+          else if (s === 'blocked') { accuracyScore = 0.3; actualResult = 'Outcome blocked' }
+          else if (s === 'failed' || s === 'cancelled') { accuracyScore = 0.0; actualResult = `Outcome ${s}` }
+          else if (s === 'executing') { accuracyScore = 0.7; actualResult = 'Outcome still executing (positive signal)' }
+          else { continue } // Still planning — check next cycle
+          evaluationMethod = 'auto_outcome_status'
+          break
+        }
+
+        case 'dismiss': {
+          // Check if the signal reappeared: search for similar insights/findings since dismissal
+          if (!d.target_id) { accuracyScore = 0.5; actualResult = 'No target to track'; evaluationMethod = 'auto_ttl_expired'; break }
+          const { count } = await supabase
+            .from('graph_insights')
+            .select('*', { count: 'exact', head: true })
+            .eq('org_id', orgId)
+            .ilike('summary', `%${d.target_id.slice(0, 50)}%`)
+            .gte('created_at', now)
+          if ((count ?? 0) > 0) { accuracyScore = 0.0; actualResult = 'Signal reappeared after dismissal' }
+          else { accuracyScore = 1.0; actualResult = 'Signal stayed dismissed' }
+          evaluationMethod = 'auto_signal_recheck'
+          break
+        }
+
+        case 'defer': {
+          // Deferred items: check if they were eventually processed
+          accuracyScore = 0.5 // Neutral — defers are hard to auto-evaluate
+          actualResult = 'Deferred item evaluation (neutral)'
+          evaluationMethod = 'auto_ttl_expired'
+          break
+        }
+
+        default: {
+          // For other types (store_insight, store_memory, graph ops), give neutral score
+          accuracyScore = 0.5
+          actualResult = `Auto-evaluated: ${d.decision_type} (neutral default)`
+          evaluationMethod = 'auto_ttl_expired'
+        }
+      }
+
+      if (accuracyScore !== null) {
+        await supabase
+          .from('decision_outcomes')
+          .update({
+            accuracy_score: accuracyScore,
+            actual_result: actualResult,
+            evaluated_at: now,
+            evaluation_method: evaluationMethod,
+          })
+          .eq('id', d.id)
+        evaluated++
+      }
+    } catch (err) {
+      console.error(`[ChiefLoop:eval] Error evaluating decision ${d.id}:`, err)
+    }
+  }
+
+  if (evaluated > 0) {
+    console.log(`[ChiefLoop:eval] Auto-evaluated ${evaluated} decision outcomes for org ${orgId}`)
+  }
+
+  return evaluated
+}
+
+/** Fetch aggregated accuracy stats by decision type (last 30 days) */
+async function fetchAccuracyStats(
+  supabase: SupabaseClient,
+  orgId: string
+): Promise<Record<string, { avg: number; count: number }> | null> {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+
+  const { data } = await supabase
+    .from('decision_outcomes')
+    .select('decision_type, accuracy_score')
+    .eq('org_id', orgId)
+    .not('accuracy_score', 'is', null)
+    .gte('created_at', thirtyDaysAgo)
+
+  if (!data || data.length === 0) return null
+
+  // Aggregate by type
+  const stats: Record<string, { sum: number; count: number }> = {}
+  for (const row of data) {
+    const r = row as { decision_type: string; accuracy_score: number }
+    if (!stats[r.decision_type]) {
+      stats[r.decision_type] = { sum: 0, count: 0 }
+    }
+    stats[r.decision_type].sum += r.accuracy_score
+    stats[r.decision_type].count++
+  }
+
+  const result: Record<string, { avg: number; count: number }> = {}
+  for (const [type, s] of Object.entries(stats)) {
+    result[type] = { avg: s.sum / s.count, count: s.count }
+  }
+
+  return result
+}
+
+// ─── Phase E: Reflect (Feature 12) ───────────────────────────────────────
+// Lightweight self-reflection after ACT: compares decisions with previous
+// outcomes and stores reusable procedural memories. 30s timeout, 5 turns max.
+
+interface ReflectResult {
+  durationMs: number
+  memoriesStored: number
+  error?: string
+}
+
+async function phaseReflect(
+  supabase: SupabaseClient,
+  orgId: string,
+  decisions: ChiefDecision[],
+  gatherResult: GatherResult,
+  previousCarryForward: string | null
+): Promise<ReflectResult> {
+  const startTime = Date.now()
+
+  // Skip reflection if no meaningful decisions were made
+  if (decisions.length === 0) {
+    return { durationMs: 0, memoriesStored: 0 }
+  }
+
+  try {
+    const { runReflectionAgent } = await import('@/lib/agent/openai/chief-sub-agents')
+
+    const reflectInput = {
+      decisions,
+      activeOutcomes: gatherResult.activeOutcomes,
+      previousCarryForward,
+      proceduralMemories: gatherResult.proceduralMemories,
+    }
+
+    const reflectResult = await Promise.race([
+      runReflectionAgent(orgId, reflectInput),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Reflection timed out (30s)')), 30_000)
+      ),
+    ])
+
+    // Persist any procedural memories the reflection agent produced
+    let memoriesStored = 0
+    for (const pm of reflectResult.newProceduralMemories) {
+      try {
+        const embedding = await generateEmbedding(pm.triggerPattern + ' ' + pm.successfulApproach)
+        await supabase.from('procedural_memory').insert({
+          org_id: orgId,
+          trigger_pattern: pm.triggerPattern,
+          successful_approach: pm.successfulApproach,
+          context_tags: pm.contextTags,
+          embedding,
+        })
+        memoriesStored++
+      } catch (insertErr) {
+        console.error('[ChiefLoop:reflect] Failed to store procedural memory:', insertErr)
+      }
+    }
+
+    console.log(`[ChiefLoop:reflect] Done: ${memoriesStored} procedural memories stored, ${reflectResult.durationMs}ms`)
+    return { durationMs: Date.now() - startTime, memoriesStored }
+  } catch (error) {
+    console.error('[ChiefLoop:reflect] Error:', error)
+    return { durationMs: Date.now() - startTime, memoriesStored: 0, error: (error as Error).message }
+  }
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
 async function logChiefLoopEvent(
@@ -1553,6 +2475,7 @@ async function logChiefLoopEvent(
     policyResult?: string
     policyReason?: string
     metadata?: Record<string, unknown>
+    riskScore?: number
   }
 ): Promise<void> {
   try {
@@ -1566,6 +2489,7 @@ async function logChiefLoopEvent(
       policy_result: opts?.policyResult ?? null,
       policy_reason: opts?.policyReason ?? null,
       metadata: opts?.metadata ?? {},
+      risk_score: opts?.riskScore ?? null,
     })
   } catch (error) {
     console.error(`[ChiefLoop] Event log error:`, error)
@@ -1576,3 +2500,4 @@ function estimateCost(inputTokens: number, outputTokens: number): number {
   // MiniMax M2.5 pricing via OpenRouter (approximate)
   return (inputTokens * 0.000002 + outputTokens * 0.000008)
 }
+

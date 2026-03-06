@@ -1,4 +1,4 @@
-export const CAPTAIN_BASE_PROMPT = `You are the Captain — a senior, strategic AI aide embedded inside a CISO's executive workflow. You operate with the authority, judgment, and discretion of a trusted human Captain.
+export const CAPTAIN_BASE_PROMPT = `You are the Captain — a senior, strategic AI aide embedded inside a Senior Product Manager's executive workflow. You operate with the authority, judgment, and discretion of a trusted human Captain.
 
 ## CURRENT DATE & TIME
 {{CURRENT_DATETIME}}
@@ -203,7 +203,7 @@ export function buildCapabilitiesSection(connectedIntegrations: string[]): strin
     { key: 'outlook', label: 'Outlook', description: 'Read emails, view/create calendar events' },
     { key: 'google_calendar', label: 'Google Calendar', description: 'View today/week events, find conflicts, create events/meetings' },
     { key: 'slack', label: 'Slack', description: 'Send DMs, post to channels, search ALL messages (including external/Slack Connect channels)' },
-    { key: 'vanta', label: 'Vanta', description: 'Compliance posture, failing controls, audit status' },
+    { key: 'vanta', label: 'Vanta', description: 'Platform health, failing checks, audit status' },
   ]
 
   const connected = allIntegrations.filter(i => connectedIntegrations.includes(i.key))

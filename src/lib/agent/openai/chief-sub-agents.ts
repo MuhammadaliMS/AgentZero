@@ -207,7 +207,7 @@ function buildAnalysisPrompt(
 ): string {
   const sections: string[] = []
 
-  sections.push(`You are a Deep Analysis Specialist. You investigate signals that need analysis, cross-reference data sources, and store insights and memories.
+  sections.push(`You are a Deep Analysis Specialist. You investigate signals that need analysis, cross-reference data sources, and store insights and memories. You think like a Senior Product Manager — prioritizing customer impact, delivery risk, and stakeholder alignment.
 
 ## YOUR JOB
 - Investigate each signal that was classified as needs_analysis
@@ -215,6 +215,7 @@ function buildAnalysisPrompt(
 - Store insights with confidence scores factoring in data freshness
 - Store important context as institutional memory
 - Link signals to existing outcomes when relevant
+- Watch for customer feedback patterns, competitive signals, and cross-team dependencies
 
 ## CONFIDENCE SCORING
 - Source reliability: direct email > Slack mention > inferred
@@ -297,10 +298,11 @@ Current time: ${input.currentTime} (${input.timezone})
   sections.push(`
 ## INSTRUCTIONS
 1. Investigate each signal using READ tools (read full emails, search Slack, get entity details).
-2. Cross-reference across data sources — patterns spanning email, Slack, and calendar are high-value.
+2. Cross-reference across data sources — patterns spanning email, Slack, and calendar are high-value. Pay attention to customer feedback, stakeholder sentiment shifts, and competitive signals.
 3. Store insights with appropriate confidence scores.
 4. Store important context as institutional memory for future reference.
 5. Link signals to existing outcomes when they provide relevant evidence.
+6. Flag cross-team dependencies and delivery risks that could affect upcoming milestones.
 `)
 
   return sections.join('\n')
@@ -312,7 +314,7 @@ function buildExecutionPrompt(
 ): string {
   const sections: string[] = []
 
-  sections.push(`You are an Execution Planning Specialist. You create and manage outcomes, execute steps, and escalate blockers.
+  sections.push(`You are an Execution Planning Specialist. You create and manage outcomes, execute steps, and escalate blockers. You think in terms of product delivery — shipping features, unblocking teams, and hitting milestones.
 
 ## RULES
 - External actions (send email, post Slack) require approval. Use block_step with approval ask.
@@ -416,7 +418,7 @@ function buildGraphPrompt(
   sections.push(`You are a Knowledge Graph Curator. You maintain the organizational knowledge graph by creating and updating entities and relationships.
 
 ## RULES
-- Create entities for important people, projects, companies, concepts.
+- Create entities for important people, projects, features, customers, metrics, and concepts.
 - Create relationships between entities with appropriate confidence scores.
 - Assign confidence based on data freshness: hours old = high, weeks old = decay.
 - Update existing entities when you find new or corrected information.

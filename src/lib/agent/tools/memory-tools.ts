@@ -429,10 +429,10 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
 
   const queryEntityGraph = tool(
     'query_entity_graph',
-    'Traverse the knowledge graph from a named entity. Shows connected people, projects, controls, decisions, and their relationships. Use this to explore "everything connected to X".',
+    'Traverse the knowledge graph from a named entity. Shows connected people, projects, features, customers, decisions, and their relationships. Use this to explore "everything connected to X".',
     {
-      entity_name: z.string().describe('Name of the entity to start from (e.g., "Sarah Chen", "SOC2 Remediation")'),
-      entity_type: z.enum(['person', 'project', 'control', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process']).optional(),
+      entity_name: z.string().describe('Name of the entity to start from (e.g., "Sarah Chen", "Onboarding Flow")'),
+      entity_type: z.enum(['person', 'project', 'feature', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process', 'customer', 'metric']).optional(),
       max_hops: z.number().min(1).max(3).optional().default(2).describe('How many relationship hops to traverse (1-3)'),
       relationship_type: z.string().optional().describe('Filter to specific relationship type (e.g., "manages", "depends_on")'),
       active_only: z.boolean().optional().default(true).describe('Only include currently active relationships'),
@@ -527,7 +527,7 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
     'View the chronological history of an entity\'s relationship changes. Shows when relationships were created, modified, or ended. Use for "What changed?" or "When did we first learn about X?" queries.',
     {
       entity_name: z.string().describe('Name of the entity to get timeline for'),
-      entity_type: z.enum(['person', 'project', 'control', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process']).optional(),
+      entity_type: z.enum(['person', 'project', 'feature', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process', 'customer', 'metric']).optional(),
       since: z.string().optional().describe('Only show events after this ISO date (e.g., "2024-01-01")'),
       limit: z.number().optional().default(20),
     },
@@ -699,10 +699,10 @@ export function createMemoryTools(orgId: string, conversationId?: string | null)
 
   const listEntities = tool(
     'list_entities',
-    'List and search entities in the knowledge graph. Returns people, projects, controls, decisions, teams, tools, vendors, and other entities. Use to discover what the organization knows about.',
+    'List and search entities in the knowledge graph. Returns people, projects, features, customers, metrics, decisions, teams, tools, vendors, and other entities. Use to discover what the organization knows about.',
     {
       search: z.string().optional().describe('Optional search term to filter entities by name'),
-      entity_type: z.enum(['person', 'project', 'control', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process']).optional(),
+      entity_type: z.enum(['person', 'project', 'feature', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process', 'customer', 'metric']).optional(),
       limit: z.number().optional().default(20),
     },
     async (args) => {

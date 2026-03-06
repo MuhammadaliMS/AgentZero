@@ -11,7 +11,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: 'Zerowing - Captain',
-  description: 'AI-powered executive aide for CISOs',
+  description: 'AI-powered executive aide for Product Managers',
 }
 
 export default function RootLayout({

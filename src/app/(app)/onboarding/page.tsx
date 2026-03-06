@@ -62,11 +62,11 @@ export default function OnboardingPage() {
       })
     }
 
-    if (connectedKeys.includes('vanta') && !messages.some(m => m.content.includes('compliance posture'))) {
+    if (connectedKeys.includes('vanta') && !messages.some(m => m.content.includes('platform health'))) {
       newMessages.push({
         role: 'assistant',
         content:
-          "Vanta connected! I can now monitor your compliance posture. I'll track failing controls and alert you before audits.",
+          "Vanta connected! I can now monitor your platform health. I'll track failing checks and surface issues proactively.",
       })
     }
 

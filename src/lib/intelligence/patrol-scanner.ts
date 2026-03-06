@@ -257,7 +257,7 @@ async function scanStaleEntities(
     .from('entities')
     .select('id, name, entity_type, last_seen_at')
     .eq('org_id', orgId)
-    .in('entity_type', ['project', 'control'])
+    .in('entity_type', ['project', 'feature'])
     .lt('last_seen_at', fourteenDaysAgo)
 
   if (!staleEntities) return

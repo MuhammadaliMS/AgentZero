@@ -14,8 +14,9 @@ const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1'
 // ─── Types ───────────────────────────────────────────────────────────────
 
 export type EntityType =
-  | 'person' | 'project' | 'control' | 'decision' | 'team'
+  | 'person' | 'project' | 'feature' | 'decision' | 'team'
   | 'tool' | 'vendor' | 'framework' | 'document' | 'process'
+  | 'customer' | 'metric'
 
 export interface ExtractedEntity {
   name: string
@@ -40,22 +41,24 @@ export interface ExtractionResult {
 
 // ─── Extraction System Prompt ────────────────────────────────────────────
 
-const EXTRACTION_SYSTEM_PROMPT = `You are an entity and relationship extractor for a CISO's executive workflow system. Extract structured entities and relationships from the given text and any integration data.
+const EXTRACTION_SYSTEM_PROMPT = `You are an entity and relationship extractor for a Senior Product Manager's executive workflow system. Extract structured entities and relationships from the given text and any integration data.
 
 ## Entity Types
 - person: People mentioned (team members, stakeholders, vendors, email senders/recipients, meeting attendees)
-- project: Projects, initiatives, programs
-- control: Security/compliance controls (e.g., "access reviews", "MFA enforcement")
-- decision: Key decisions made or pending
+- project: Projects, initiatives, programs, epics
+- feature: Product features, user stories, capabilities (e.g., "dark mode", "SSO integration", "onboarding flow")
+- decision: Key product decisions made or pending
 - team: Teams or departments
 - tool: Software tools or platforms
 - vendor: Third-party vendors or service providers
-- framework: Compliance frameworks (SOC2, ISO 27001, NIST, etc.)
-- document: Documents, reports, policies
+- customer: Customers, user segments, accounts (e.g., "Enterprise tier", "Acme Corp")
+- metric: Product metrics, KPIs (e.g., "DAU", "NPS score", "conversion rate")
+- framework: Product frameworks or methodologies (e.g., "RICE scoring", "Jobs-to-be-Done")
+- document: Documents, PRDs, specs, reports
 - process: Business processes or workflows
 
 ## Relationship Types
-Use clear verb-based types: manages, owns, reports_to, depends_on, blocks, part_of, uses, decided, assigned_to, works_on, reviewed_by, audited_by, emailed, mentioned_in, attended, scheduled_with, requested, follows_up_on, organized, etc.
+Use clear verb-based types: manages, owns, reports_to, depends_on, blocks, part_of, uses, decided, assigned_to, works_on, reviewed_by, impacts, tracks, prioritized, shipped, requested_by, emailed, mentioned_in, attended, scheduled_with, requested, follows_up_on, organized, etc.
 
 ## Integration Data Patterns
 When the input includes "## Integration Data" sections, extract entities from them:
@@ -66,7 +69,7 @@ When the input includes "## Integration Data" sections, extract entities from th
 
 **Slack Messages**: Extract authors as persons, channel topics as projects, decisions made in threads, action items assigned. Relationships: "mentioned_in", "decided", "assigned_to"
 
-**Compliance Data**: Extract control names as controls, failing items with descriptions, framework names as frameworks. Relationships: "audited_by", "part_of", "violates"
+**Product/Platform Data**: Extract feature names as features, customer names as customers, metric names as metrics, failing monitors or quality issues with descriptions. Relationships: "impacts", "part_of", "requested_by"
 
 ## Rules
 - Use full canonical names (e.g., "Sarah Chen" not "Sarah" or "S. Chen")
@@ -76,7 +79,7 @@ When the input includes "## Integration Data" sections, extract entities from th
 - Confidence: 1.0 for explicit (email sender/recipient, calendar attendee), 0.7-0.9 for inferred
 - Keep descriptions concise (1 sentence max)
 - If the text has no extractable entities, return empty arrays
-- Prioritize actionable entities: people with responsibilities, projects with deadlines, controls with issues, decisions pending action
+- Prioritize actionable entities: people with responsibilities, projects with deadlines, features in development, customers with requests, metrics with changes, decisions pending action
 
 Respond with valid JSON matching this schema:
 {
@@ -140,7 +143,7 @@ export async function extractEntitiesAndRelationships(text: string): Promise<Ext
   }
 
   // Validate entity types
-  const validTypes = new Set(['person', 'project', 'control', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process'])
+  const validTypes = new Set(['person', 'project', 'feature', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process', 'customer', 'metric'])
   parsed.entities = (parsed.entities || []).filter(e => validTypes.has(e.type))
   parsed.relationships = parsed.relationships || []
 

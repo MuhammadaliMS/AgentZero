@@ -263,7 +263,7 @@ export default function SettingsPage() {
                   id="title"
                   value={profile.title}
                   onChange={(e) => setProfile((p) => ({ ...p, title: e.target.value }))}
-                  placeholder="e.g., CISO, VP Security"
+                  placeholder="e.g., Senior PM, VP Product"
                 />
               </div>
               <div className="space-y-2">

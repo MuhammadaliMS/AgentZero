@@ -122,22 +122,22 @@ Generate a comprehensive status report for the user's week.
 8. **Present**: Share the report content with the user
 `
 
-const RECIPE_COMPLIANCE_AUDIT = `# Recipe: Compliance Audit Review
+const RECIPE_COMPLIANCE_AUDIT = `# Recipe: Platform Health Review
 
-Perform a compliance health check and generate an audit readiness report.
+Perform a platform health check and generate a readiness report.
 
 ## Steps
 
-1. **Get compliance overview**: Call \`get_compliance_overview\` for the current posture
-2. **List failing controls**: Call \`list_failing_controls\` to identify gaps
-3. **Check audit status**: Call \`get_audit_status\` for upcoming audit timeline
-4. **Recall context**: Call \`recall_memory\` with query "compliance audit remediation" for historical context
-5. **Analyze & write**: Write a structured report to \`reports/compliance-audit.md\` with:
-   - **Compliance Posture Summary** (overall health score, framework status)
-   - **Critical Gaps** (failing controls ranked by severity)
-   - **Audit Timeline** (upcoming milestones, deadlines)
+1. **Get platform overview**: Call \`get_compliance_overview\` for the current posture
+2. **List failing checks**: Call \`list_failing_controls\` to identify gaps
+3. **Check status**: Call \`get_audit_status\` for upcoming timeline
+4. **Recall context**: Call \`recall_memory\` with query "platform health remediation" for historical context
+5. **Analyze & write**: Write a structured report to \`reports/platform-health.md\` with:
+   - **Platform Health Summary** (overall health score, framework status)
+   - **Critical Gaps** (failing checks ranked by severity)
+   - **Timeline** (upcoming milestones, deadlines)
    - **Remediation Priorities** (what to fix first, estimated effort)
-   - **Risk Narrative** (executive-friendly summary for board/leadership)
+   - **Risk Narrative** (executive-friendly summary for leadership)
 6. **Verify**: Re-read the report to confirm accuracy
 7. **Present**: Share findings with the user, leading with what needs immediate attention
 `

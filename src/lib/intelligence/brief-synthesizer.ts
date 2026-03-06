@@ -302,8 +302,8 @@ export function buildBriefPrompt(
 
   sections.push('')
 
-  // ── Program Status (Cole) ──────────────────────────────────────────────
-  sections.push('## Program Status')
+  // ── Delivery Status (Cole) ──────────────────────────────────────────────
+  sections.push('## Delivery Status')
   sections.push(
     `- Active commitments: ${views.cole.activeCount}`
   )
@@ -329,25 +329,25 @@ export function buildBriefPrompt(
     )
   }
 
-  // ── Compliance (Rhea) ─────────────────────────────────────────────────
-  sections.push('\n## Compliance & Controls')
+  // ── Technical Health (Rhea) ─────────────────────────────────────────────
+  sections.push('\n## Technical Health')
   if (views.rhea.hasVantaConnection) {
-    sections.push(`- Vanta connected: yes`)
-    sections.push(`- Failing controls: ${views.rhea.failingControlsCount}`)
+    sections.push(`- Platform monitoring: connected`)
+    sections.push(`- Failing checks: ${views.rhea.failingControlsCount}`)
     if (views.rhea.topFailingControls.length > 0) {
       for (const c of views.rhea.topFailingControls) {
         sections.push(`  - ${c.title} (${c.severity})`)
       }
     }
   } else {
-    sections.push('- Vanta: not connected')
+    sections.push('- Platform monitoring: not connected')
   }
   if (views.rhea.complianceFindings > 0) {
-    sections.push(`- Total compliance findings: ${views.rhea.complianceFindings}`)
+    sections.push(`- Open technical issues: ${views.rhea.complianceFindings}`)
   }
 
-  // ── Strategic Context (Eve) ───────────────────────────────────────────
-  sections.push('\n## Strategic Context')
+  // ── Stakeholder Pulse (Eve) ───────────────────────────────────────────
+  sections.push('\n## Stakeholder Pulse')
   if (views.eve.recentDecisions.length > 0) {
     sections.push('Recent decisions (last 7 days):')
     for (const d of views.eve.recentDecisions) {
@@ -363,9 +363,9 @@ export function buildBriefPrompt(
     )
   }
 
-  // ── Patrol Findings ───────────────────────────────────────────────────
-  sections.push('\n## Patrol Findings')
-  sections.push(`- Open findings: ${views.patrol.openFindingsCount}`)
+  // ── Quality Signals ───────────────────────────────────────────────────
+  sections.push('\n## Quality Signals')
+  sections.push(`- Open issues: ${views.patrol.openFindingsCount}`)
   sections.push(`- Critical: ${views.patrol.criticalFindings}`)
   sections.push(`- New since yesterday: ${views.patrol.newSinceYesterday}`)
 
@@ -431,8 +431,8 @@ export function buildBriefPrompt(
     sections.push(delta('Active commitments', yesterdayMetrics.commitments_active, current.commitments_active))
     sections.push(delta('At-risk', yesterdayMetrics.commitments_at_risk, current.commitments_at_risk))
     sections.push(delta('Pending actions', yesterdayMetrics.actions_pending, current.actions_pending))
-    sections.push(delta('Failing controls', yesterdayMetrics.controls_failing, current.controls_failing))
-    sections.push(delta('Critical findings', yesterdayMetrics.patrol_critical, current.patrol_critical))
+    sections.push(delta('Failing checks', yesterdayMetrics.controls_failing, current.controls_failing))
+    sections.push(delta('Critical issues', yesterdayMetrics.patrol_critical, current.patrol_critical))
   }
 
   // Instructions

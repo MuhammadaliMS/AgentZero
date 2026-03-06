@@ -1894,7 +1894,7 @@ export function createCaptainTools(params: CaptainToolParams) {
 
   const queryEntityGraph = tool({
     name: 'query_entity_graph',
-    description: 'Explore connections between people, projects, controls, and decisions in the knowledge graph.',
+    description: 'Explore connections between people, projects, features, customers, and decisions in the knowledge graph.',
     parameters: z.object({
       entity_name: z.string().describe('Name of the entity to explore'),
       depth: z.number().nullable().default(1),
@@ -1961,10 +1961,10 @@ export function createCaptainTools(params: CaptainToolParams) {
 
   const listEntities = tool({
     name: 'list_entities',
-    description: 'List and search entities in the knowledge graph. Returns people, projects, controls, decisions, teams, tools, vendors, and other entities. Use to discover what the organization knows about.',
+    description: 'List and search entities in the knowledge graph. Returns people, projects, features, customers, metrics, decisions, teams, tools, vendors, and other entities. Use to discover what the organization knows about.',
     parameters: z.object({
       search: z.string().nullable().default(null).describe('Optional search term to filter entities by name'),
-      entity_type: z.enum(['person', 'project', 'control', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process']).nullable().default(null).describe('Filter by entity type'),
+      entity_type: z.enum(['person', 'project', 'feature', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process', 'customer', 'metric']).nullable().default(null).describe('Filter by entity type'),
       limit: z.number().nullable().default(20),
     }),
     execute: async (args) => wrappedExecute('list_entities', args as Record<string, unknown>, params, async () => {

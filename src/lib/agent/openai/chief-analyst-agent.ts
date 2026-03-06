@@ -748,10 +748,10 @@ export function createChiefAnalystTools(orgId: string) {
 
   const createEntityTool = tool({
     name: 'create_entity',
-    description: 'Create a new entity in the knowledge graph or update an existing one. Entities represent people, projects, controls, decisions, teams, tools, vendors, frameworks, documents, or processes that are important to the organization. Provide a name, type, and optional description and attributes.',
+    description: 'Create a new entity in the knowledge graph or update an existing one. Entities represent people, projects, features, decisions, teams, tools, vendors, customers, metrics, frameworks, documents, or processes that are important to the organization. Provide a name, type, and optional description and attributes.',
     parameters: z.object({
       name: z.string().max(200),
-      entity_type: z.enum(['person', 'project', 'control', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process']),
+      entity_type: z.enum(['person', 'project', 'feature', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process', 'customer', 'metric']),
       description: z.string().max(2000).optional(),
       attributes: z.record(z.string().max(100), z.unknown()).optional(),
       rationale: z.string().max(1000),
@@ -912,7 +912,7 @@ function buildChiefAnalystPrompt(input: ChiefAnalystInput): string {
   // ~1,050 tokens of stable instructions that never change between invocations.
   sections.push(`You are the Chief Analyst. You run every hour to analyze organizational data and make decisions.
 
-You have access to ALL organizational data: emails, Slack, calendar, knowledge graph, outcomes, commitments, compliance status.
+You have access to ALL organizational data: emails, Slack, calendar, knowledge graph, outcomes, commitments, product health signals.
 
 ## TEMPORAL AWARENESS — CRITICAL
 Every piece of data includes timestamps (created_at, updated_at, last_seen_at).
@@ -935,13 +935,15 @@ Minimum confidence for creating an outcome: 0.6
 Minimum confidence for an insight to be actionable: 0.5
 
 ## YOUR JOB
+Think like a Senior Product Manager triaging their inbox. Your goal is to surface what matters most — launch risks, cross-team dependencies, delivery risks, stakeholder sentiment shifts, and customer signals.
+
 1. Read through ALL the gathered data below — pay attention to timestamps
 2. Identify what's important, urgent, or needs attention RIGHT NOW
-3. For active outcomes: Are they still on track? Do plans need updating?
-4. For new signals (emails, Slack, findings): Do they relate to existing work? Need new outcomes?
+3. For active outcomes: Are they still on track? Do plans need updating? Any delivery risks?
+4. For new signals (emails, Slack, findings): Do they relate to existing work? Customer feedback? Stakeholder requests? Need new outcomes?
 5. Update the knowledge graph: Create entities, relationships, insights for anything important. Assign confidence scores.
-6. Escalate blockers: If someone is blocked, send them a clear ask via escalate_blocker
-7. Correlate across signals: Find patterns, contradictions, opportunities
+6. Escalate blockers: If someone is blocked or a cross-team dependency is stalling, send a clear ask via escalate_blocker
+7. Correlate across signals: Find patterns, contradictions, opportunities — especially across customer feedback, delivery progress, and stakeholder communications
 8. Staleness check: If you see old insights/entities that are no longer relevant, note that
 
 ## RULES
@@ -991,15 +993,15 @@ ${input.previousCarryForward}
   // Worker views summary
   const wv = input.workerViews
   sections.push(`## ORGANIZATIONAL STATE
-### Program
+### Delivery
 - Active commitments: ${wv.cole.activeCount}, At risk: ${wv.cole.atRiskCount}, Overdue: ${wv.cole.overdueCount}
 - Pending actions: ${wv.cole.pendingActionsCount}${wv.cole.oldestActionDays ? ` (oldest: ${wv.cole.oldestActionDays}d)` : ''}
 
-### Compliance
-- Vanta: ${wv.rhea.hasVantaConnection ? 'connected' : 'not connected'}, Failing controls: ${wv.rhea.failingControlsCount}
+### Technical Health
+- Platform monitors: ${wv.rhea.hasVantaConnection ? 'connected' : 'not connected'}, Failing checks: ${wv.rhea.failingControlsCount}
 
-### Patrol
-- Open findings: ${wv.patrol.openFindingsCount}, Critical: ${wv.patrol.criticalFindings}, New since yesterday: ${wv.patrol.newSinceYesterday}
+### Quality Signals
+- Open issues: ${wv.patrol.openFindingsCount}, Critical: ${wv.patrol.criticalFindings}, New since yesterday: ${wv.patrol.newSinceYesterday}
 
 ### Outcomes
 - Total active: ${wv.outcomes.totalActive}
@@ -1057,7 +1059,7 @@ ${o.steps.map(s => `  - [${s.status}] Step ${s.stepOrder}: ${s.description}${s.o
 
   // Recent findings
   if (input.recentFindings.length > 0) {
-    sections.push('\n## OPEN FINDINGS')
+    sections.push('\n## OPEN ISSUES')
     for (const f of input.recentFindings) {
       sections.push(`- [${f.severity}] ${f.title}: ${f.description} (${f.type}, created: ${f.createdAt})`)
     }
@@ -1100,10 +1102,10 @@ ${o.steps.map(s => `  - [${s.status}] Step ${s.stepOrder}: ${s.description}${s.o
 1. Analyze ALL the data above. Use timestamps to judge relevance and freshness.
 2. Use READ tools to dig deeper into anything that needs investigation (read full emails, search Slack, get entity details).
 3. Make DECISIONS: create/update outcomes, replan, store insights, update the knowledge graph.
-4. For each active outcome, assess if steps need changes given new signals.
-5. Correlate across data sources — patterns spanning email, Slack, and calendar are high-value.
-6. Update the knowledge graph with entities, relationships, and insights you discover.
-7. Escalate blockers via escalate_blocker when someone needs to take action.
+4. For each active outcome, assess if steps need changes given new signals — watch for delivery risks, slipping timelines, and cross-team dependencies.
+5. Correlate across data sources — patterns spanning email, Slack, and calendar are high-value. Pay special attention to customer feedback, stakeholder sentiment shifts, and competitive signals.
+6. Update the knowledge graph with entities, relationships, and insights you discover. Track features, customers, and metrics alongside people and projects.
+7. Escalate blockers via escalate_blocker when someone needs to take action or a dependency is stalling.
 8. You have 50 turns — use them wisely. Think deeply before acting.
 `)
 

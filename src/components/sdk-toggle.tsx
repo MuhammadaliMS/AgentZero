@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Check } from 'lucide-react'
 
 type AgentSDK = 'claude' | 'openai'
 
@@ -144,9 +145,7 @@ export function SDKToggle({ variant = 'compact', onChange }: SDKToggleProps) {
         </div>
         {sdk === 'claude' && (
           <span className="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
+            <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />
           </span>
         )}
       </button>
@@ -168,9 +167,7 @@ export function SDKToggle({ variant = 'compact', onChange }: SDKToggleProps) {
         </div>
         {sdk === 'openai' && (
           <span className="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
+            <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />
           </span>
         )}
       </button>

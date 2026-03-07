@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Mail, Hash, Calendar, ShieldCheck, Plug, Loader2, Check } from 'lucide-react'
 import type { IntegrationPromptPart as IntegrationPromptPartType } from '@/types/chat'
 
 interface IntegrationPromptCardProps {
@@ -13,57 +14,19 @@ interface IntegrationPromptCardProps {
 // ─── Integration Icons ───────────────────────────────────────────────────
 
 function IntegrationIcon({ integrationKey, className }: { integrationKey: string; className?: string }) {
-  const cls = cn('shrink-0', className)
+  const cls = cn('shrink-0 h-5 w-5', className)
 
   switch (integrationKey) {
     case 'gmail':
-      return (
-        <svg className={cls} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="20" height="16" x="2" y="4" rx="2" />
-          <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-        </svg>
-      )
+      return <Mail className={cls} />
     case 'slack':
-      return (
-        <svg className={cls} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="3" height="8" x="13" y="2" rx="1.5" />
-          <path d="M19 8.5V10h1.5A1.5 1.5 0 1 0 19 8.5" />
-          <rect width="3" height="8" x="8" y="14" rx="1.5" />
-          <path d="M5 15.5V14H3.5A1.5 1.5 0 1 0 5 15.5" />
-          <rect width="8" height="3" x="14" y="13" rx="1.5" />
-          <path d="M15.5 19H14v1.5a1.5 1.5 0 1 0 1.5-1.5" />
-          <rect width="8" height="3" x="2" y="8" rx="1.5" />
-          <path d="M8.5 5H10V3.5A1.5 1.5 0 1 0 8.5 5" />
-        </svg>
-      )
+      return <Hash className={cls} />
     case 'google_calendar':
-      return (
-        <svg className={cls} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
-          <line x1="16" x2="16" y1="2" y2="6" />
-          <line x1="8" x2="8" y1="2" y2="6" />
-          <line x1="3" x2="21" y1="10" y2="10" />
-        </svg>
-      )
+      return <Calendar className={cls} />
     case 'vanta':
-      return (
-        <svg className={cls} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-          <path d="m9 12 2 2 4-4" />
-        </svg>
-      )
+      return <ShieldCheck className={cls} />
     default:
-      return (
-        <svg className={cls} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 2v6" />
-          <path d="M12 18v4" />
-          <circle cx="12" cy="12" r="4" />
-          <path d="M4.93 4.93l4.24 4.24" />
-          <path d="M14.83 14.83l4.24 4.24" />
-          <path d="M2 12h6" />
-          <path d="M18 12h4" />
-        </svg>
-      )
+      return <Plug className={cls} />
   }
 }
 
@@ -185,9 +148,7 @@ export function IntegrationPromptCard({ part, onConnect }: IntegrationPromptCard
             </h4>
             {isConnected && (
               <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                <svg className="mr-0.5 h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
+                <Check className="mr-0.5 h-3 w-3" />
                 Connected
               </span>
             )}
@@ -225,20 +186,12 @@ export function IntegrationPromptCard({ part, onConnect }: IntegrationPromptCard
           >
             {connecting ? (
               <span className="flex items-center gap-1.5">
-                <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 Connecting...
               </span>
             ) : (
               <span className="flex items-center gap-1.5">
-                {/* Plug icon */}
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2v6" />
-                  <path d="M12 18v4" />
-                  <circle cx="12" cy="12" r="4" />
-                </svg>
+                <Plug className="h-3.5 w-3.5" />
                 Connect {part.integrationName}
               </span>
             )}

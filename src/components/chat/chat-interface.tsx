@@ -10,6 +10,7 @@ import { TypingIndicator } from './typing-indicator'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { extractTextContent } from '@/types/chat'
+import { Sparkles, CalendarCheck, BarChart3, AlertTriangle, Presentation, ChevronDown, RotateCcw } from 'lucide-react'
 
 interface ChatInterfaceProps {
   conversationId?: string
@@ -122,32 +123,29 @@ export function ChatInterface({ conversationId, initialPrompt }: ChatInterfacePr
         <div className="mx-auto max-w-3xl px-4 pb-8">
           {/* Empty state */}
           {messages.length === 0 && !isStreaming && (
-            <div className="flex flex-col items-center justify-center py-20 text-center">
-              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                  <path d="M2 17l10 5 10-5" />
-                  <path d="M2 12l10 5 10-5" />
-                </svg>
+            <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
+              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-brand text-white shadow-glow animate-float">
+                <Sparkles className="h-8 w-8" />
               </div>
-              <h2 className="text-xl font-semibold">Captain</h2>
-              <p className="mt-2 max-w-md text-sm text-muted-foreground">
+              <h2 className="text-2xl font-bold tracking-tight">Captain</h2>
+              <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
                 Your strategic AI aide. Ask about your deliverables, platform health,
                 pending commitments, or anything else on your plate.
               </p>
-              <div className="mt-6 flex flex-wrap justify-center gap-2">
+              <div className="mt-8 grid grid-cols-2 gap-3 max-w-md w-full">
                 {[
-                  "What's on my plate today?",
-                  'Show my delivery status',
-                  'Any commitments at risk?',
-                  'Prep me for my next meeting',
-                ].map((label) => (
+                  { label: "What's on my plate today?", icon: CalendarCheck },
+                  { label: 'Show my delivery status', icon: BarChart3 },
+                  { label: 'Any commitments at risk?', icon: AlertTriangle },
+                  { label: 'Prep me for my next meeting', icon: Presentation },
+                ].map(({ label, icon: Icon }) => (
                   <button
                     key={label}
                     onClick={() => sendMessage(label)}
-                    className="rounded-full border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    className="group flex items-center gap-2.5 rounded-xl border bg-card px-3.5 py-3 text-left text-sm text-muted-foreground shadow-sm transition-all hover:shadow-md hover:border-primary/20 hover:text-foreground"
                   >
-                    {label}
+                    <Icon className="h-4 w-4 shrink-0 text-primary/60 group-hover:text-primary transition-colors" />
+                    <span className="leading-snug">{label}</span>
                   </button>
                 ))}
               </div>
@@ -198,10 +196,7 @@ export function ChatInterface({ conversationId, initialPrompt }: ChatInterfacePr
                   }}
                   className="mt-2 inline-flex items-center gap-1 text-xs underline underline-offset-2 hover:no-underline"
                 >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="1 4 1 10 7 10" />
-                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                  </svg>
+                  <RotateCcw className="h-2.5 w-2.5" />
                   Try again
                 </button>
               )}
@@ -219,11 +214,9 @@ export function ChatInterface({ conversationId, initialPrompt }: ChatInterfacePr
           variant="outline"
           size="sm"
           onClick={scrollToBottom}
-          className="rounded-full shadow-md gap-1 h-8 text-xs"
+          className="rounded-full shadow-md gap-1.5 h-8 text-xs border-primary/20 hover:border-primary/40"
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
+          <ChevronDown className="h-3 w-3" />
           Scroll to bottom
         </Button>
       </div>

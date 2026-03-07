@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { CheckCircle, ChevronDown, RefreshCw, X, TestTubeDiagonal } from 'lucide-react'
 import type { IntegrationWithStatus } from '@/types/integrations'
 import { ApiKeyForm } from '@/components/onboarding/api-key-form'
 import { toast } from 'sonner'
@@ -172,7 +173,7 @@ export function IntegrationCard({
   return (
     <>
       <Card
-        className={`transition-all ${
+        className={`shadow-sm hover:shadow-md transition-shadow ${
           integration.connected
             ? integration.health_status === 'error'
               ? 'border-red-500/30 bg-red-50/30 dark:bg-red-950/5'
@@ -218,24 +219,16 @@ export function IntegrationCard({
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" size="sm" className="gap-1">
                       <span className="hidden sm:inline">Manage</span>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
+                      <ChevronDown className="h-3.5 w-3.5" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-48">
                     <DropdownMenuItem onClick={handleTestConnection} disabled={testing}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-2">
-                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                        <polyline points="22 4 12 14.01 9 11.01" />
-                      </svg>
+                      <TestTubeDiagonal className="mr-2 h-3.5 w-3.5" />
                       {testing ? 'Testing...' : 'Test Connection'}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={handleReconnect}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-2">
-                        <polyline points="23 4 23 10 17 10" />
-                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                      </svg>
+                      <RefreshCw className="mr-2 h-3.5 w-3.5" />
                       Reconnect
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
@@ -243,9 +236,7 @@ export function IntegrationCard({
                       onClick={() => setShowDisconnectDialog(true)}
                       className="text-destructive focus:text-destructive"
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-2">
-                        <path d="M18 6L6 18M6 6l12 12" />
-                      </svg>
+                      <X className="mr-2 h-3.5 w-3.5" />
                       Disconnect
                     </DropdownMenuItem>
                   </DropdownMenuContent>

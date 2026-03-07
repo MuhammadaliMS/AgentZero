@@ -6,6 +6,7 @@ import { ActionCard } from './action-card'
 import { CommitmentCard } from './commitment-card'
 import { BriefCard } from './brief-card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { CheckCircle } from 'lucide-react'
 import type { Database } from '@/types/database'
 
 type Action = Database['public']['Tables']['actions']['Row']
@@ -144,11 +145,8 @@ export function DailyView() {
         data.atRiskCommitments.length === 0 &&
         !data.latestBrief && (
           <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-900">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-green-600 dark:text-green-400">
-                <path d="M9 12l2 2 4-4" />
-                <circle cx="12" cy="12" r="10" />
-              </svg>
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-900 shadow-sm">
+              <CheckCircle className="h-8 w-8 text-green-600 dark:text-green-400" />
             </div>
             <h3 className="text-lg font-semibold">All clear</h3>
             <p className="mt-1 text-sm text-muted-foreground">

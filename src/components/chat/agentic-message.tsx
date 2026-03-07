@@ -10,6 +10,7 @@ import type {
   ToolResultPart,
 } from '@/types/chat'
 import { extractTextContent } from '@/types/chat'
+import { Bot, Check, Copy } from 'lucide-react'
 
 // Part components
 import { TextPartBlock } from './parts/text-part'
@@ -139,10 +140,10 @@ export function AgenticMessage({
   const hasError = !!message.metadata?.error
 
   return (
-    <div className="group flex gap-3 py-3">
+    <div className="group flex gap-3 py-3 animate-fade-in">
       {/* Avatar */}
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-semibold">
-        A
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-brand text-white shadow-sm">
+        <Bot className="h-4 w-4" />
       </div>
 
       {/* Content */}
@@ -187,14 +188,9 @@ export function AgenticMessage({
                     className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   >
                     {copied ? (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-500">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
+                      <Check className="h-3 w-3 text-green-500" />
                     ) : (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                      </svg>
+                      <Copy className="h-3 w-3" />
                     )}
                   </button>
                 </TooltipTrigger>

@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { AgenticMessage } from '@/types/chat'
 import { extractTextContent } from '@/types/chat'
+import { Check, Copy, RotateCcw, User } from 'lucide-react'
 
 interface MessageBubbleProps {
   message: AgenticMessage
@@ -58,9 +59,9 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
   }).format(message.createdAt)
 
   return (
-    <div className={cn('group flex gap-3 py-3 justify-end')}>
+    <div className={cn('group flex gap-3 py-3 justify-end animate-slide-up')}>
       <div className="flex flex-col gap-1 max-w-[80%]">
-        <div className="rounded-2xl px-4 py-3 bg-primary text-primary-foreground">
+        <div className="rounded-2xl px-4 py-3 bg-primary text-primary-foreground shadow-sm">
           <p className="whitespace-pre-wrap text-sm">{textContent}</p>
         </div>
 
@@ -83,14 +84,9 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
                     className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   >
                     {copied ? (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-500">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
+                      <Check className="h-3 w-3 text-green-500" />
                     ) : (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                      </svg>
+                      <Copy className="h-3 w-3" />
                     )}
                   </button>
                 </TooltipTrigger>
@@ -110,10 +106,7 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
                     onClick={() => onRetry(textContent)}
                     className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="1 4 1 10 7 10" />
-                      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                    </svg>
+                    <RotateCcw className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
@@ -126,8 +119,8 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
       </div>
 
       {/* User avatar */}
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground text-sm font-semibold">
-        U
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-brand-light text-primary">
+        <User className="h-4 w-4" />
       </div>
     </div>
   )

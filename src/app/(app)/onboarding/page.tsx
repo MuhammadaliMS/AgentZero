@@ -8,6 +8,7 @@ import { useIntegrations } from '@/hooks/use-integrations'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Zap, Plug } from 'lucide-react'
 
 interface OnboardingMessage {
   role: 'assistant'
@@ -133,18 +134,23 @@ export default function OnboardingPage() {
     <div className="flex h-full">
       {/* Left: Chat messages */}
       <div className="flex flex-1 flex-col border-r">
-        <div className="border-b p-4">
-          <h2 className="text-lg font-semibold">Captain</h2>
-          <p className="text-sm text-muted-foreground">Setting up your workspace</p>
+        <div className="border-b p-4 flex items-center gap-3">
+          <div className="bg-gradient-brand flex h-9 w-9 items-center justify-center rounded-lg">
+            <Zap className="h-5 w-5 text-white" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold">Captain</h2>
+            <p className="text-sm text-muted-foreground">Setting up your workspace</p>
+          </div>
         </div>
         <ScrollArea className="flex-1 p-4">
           <div className="space-y-4 max-w-2xl">
             {messages.map((message, i) => (
-              <Card key={i} className="bg-muted/50">
+              <Card key={i} className="bg-muted/50 shadow-md border-0">
                 <CardContent className="p-4">
                   <div className="flex gap-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">
-                      CS
+                    <div className="bg-gradient-brand flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white">
+                      <Zap className="h-4 w-4" />
                     </div>
                     <div className="text-sm leading-relaxed whitespace-pre-wrap">
                       {message.content.split('**').map((part, j) =>
@@ -173,11 +179,16 @@ export default function OnboardingPage() {
 
       {/* Right: Integration grid */}
       <div className="w-[420px] shrink-0">
-        <div className="border-b p-4">
-          <h2 className="text-lg font-semibold">Connect Your Tools</h2>
-          <p className="text-sm text-muted-foreground">
-            {connectedKeys.length} of {integrations.length} connected
-          </p>
+        <div className="border-b p-4 flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+            <Plug className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold">Connect Your Tools</h2>
+            <p className="text-sm text-muted-foreground">
+              {connectedKeys.length} of {integrations.length} connected
+            </p>
+          </div>
         </div>
         <ScrollArea className="h-[calc(100vh-8rem)]">
           <div className="p-4">

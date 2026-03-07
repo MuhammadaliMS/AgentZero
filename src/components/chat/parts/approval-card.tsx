@@ -5,6 +5,18 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import {
+  ShieldCheck,
+  ShieldX,
+  Check,
+  X,
+  AlertTriangle,
+  Mail,
+  MessageSquare,
+  Calendar,
+  Clock,
+  Loader2,
+} from 'lucide-react'
 import type { ApprovalRequestPart as ApprovalRequestPartType } from '@/types/chat'
 
 interface ApprovalCardProps {
@@ -15,12 +27,12 @@ interface ApprovalCardProps {
 // ─── Card Configuration ──────────────────────────────────────────────────
 
 type AccentColor = 'purple' | 'blue' | 'green' | 'amber'
-type CardIcon = 'slack' | 'email' | 'calendar' | 'default'
+type CardIconType = 'slack' | 'email' | 'calendar' | 'default'
 
 interface CardConfig {
   accent: AccentColor
   approveLabel: string
-  icon: CardIcon
+  icon: CardIconType
 }
 
 const TOOL_CARD_CONFIG: Record<string, CardConfig> = {
@@ -49,46 +61,17 @@ const PENDING_ACCENT = {
 
 // ─── Tool-Specific Icons ─────────────────────────────────────────────────
 
-function CardIcon({ icon, className }: { icon: CardIcon; className?: string }) {
+function CardIconComponent({ icon, className }: { icon: CardIconType; className?: string }) {
   const cls = cn('shrink-0', className)
   switch (icon) {
     case 'slack':
-      return (
-        <svg className={cls} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="3" height="8" x="13" y="2" rx="1.5" />
-          <path d="M19 8.5V10h1.5A1.5 1.5 0 1 0 19 8.5" />
-          <rect width="3" height="8" x="8" y="14" rx="1.5" />
-          <path d="M5 15.5V14H3.5A1.5 1.5 0 1 0 5 15.5" />
-          <rect width="8" height="3" x="14" y="13" rx="1.5" />
-          <path d="M15.5 19H14v1.5a1.5 1.5 0 1 0 1.5-1.5" />
-          <rect width="8" height="3" x="2" y="8" rx="1.5" />
-          <path d="M8.5 5H10V3.5A1.5 1.5 0 1 0 8.5 5" />
-        </svg>
-      )
+      return <MessageSquare className={cn(cls, 'h-[18px] w-[18px]')} />
     case 'email':
-      return (
-        <svg className={cls} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="20" height="16" x="2" y="4" rx="2" />
-          <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-        </svg>
-      )
+      return <Mail className={cn(cls, 'h-[18px] w-[18px]')} />
     case 'calendar':
-      return (
-        <svg className={cls} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
-          <line x1="16" x2="16" y1="2" y2="6" />
-          <line x1="8" x2="8" y1="2" y2="6" />
-          <line x1="3" x2="21" y1="10" y2="10" />
-        </svg>
-      )
+      return <Calendar className={cn(cls, 'h-[18px] w-[18px]')} />
     default:
-      return (
-        <svg className={cls} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-          <path d="M12 8v4" />
-          <path d="M12 16h.01" />
-        </svg>
-      )
+      return <AlertTriangle className={cn(cls, 'h-[18px] w-[18px]')} />
   }
 }
 
@@ -97,27 +80,11 @@ function CardIcon({ icon, className }: { icon: CardIcon; className?: string }) {
 function StatusIcon({ status }: { status: ApprovalRequestPartType['status'] }) {
   switch (status) {
     case 'approved':
-      return (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-          <path d="m9 12 2 2 4-4" />
-        </svg>
-      )
+      return <ShieldCheck className="h-[18px] w-[18px]" />
     case 'rejected':
-      return (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-          <line x1="15" x2="9" y1="9" y2="15" />
-          <line x1="9" x2="15" y1="9" y2="15" />
-        </svg>
-      )
+      return <ShieldX className="h-[18px] w-[18px]" />
     case 'expired':
-      return (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <polyline points="12 6 12 12 16 14" />
-        </svg>
-      )
+      return <Clock className="h-[18px] w-[18px]" />
     default:
       return null
   }
@@ -285,17 +252,6 @@ function ToolPreview({ toolName, toolInput, description }: {
   return null
 }
 
-// ─── Spinner ─────────────────────────────────────────────────────────────
-
-function Spinner() {
-  return (
-    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  )
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
 function truncateStr(str: string, maxLen: number): string {
@@ -327,7 +283,7 @@ export function ApprovalCard({ part, onApproval }: ApprovalCardProps) {
   return (
     <div
       className={cn(
-        'my-2 rounded-xl border-2 p-4 transition-colors',
+        'my-2 shadow-md rounded-xl border-2 p-4 transition-colors',
         isPending && `${accentStyles.border} ${accentStyles.bg}`,
         isApproved && 'border-emerald-500/30 bg-emerald-500/5',
         isRejected && 'border-destructive/30 bg-destructive/5',
@@ -346,7 +302,7 @@ export function ApprovalCard({ part, onApproval }: ApprovalCardProps) {
             isExpired && 'bg-muted text-muted-foreground'
           )}
         >
-          {isPending && <CardIcon icon={config.icon} />}
+          {isPending && <CardIconComponent icon={config.icon} />}
           {!isPending && <StatusIcon status={part.status} />}
         </div>
 
@@ -357,17 +313,20 @@ export function ApprovalCard({ part, onApproval }: ApprovalCardProps) {
               {part.title}
             </h4>
             {isApproved && (
-              <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                <Check className="h-2.5 w-2.5" />
                 Sent
               </span>
             )}
             {isRejected && (
-              <span className="inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
+              <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
+                <X className="h-2.5 w-2.5" />
                 Cancelled
               </span>
             )}
             {isExpired && (
-              <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                <Clock className="h-2.5 w-2.5" />
                 Expired
               </span>
             )}
@@ -389,16 +348,16 @@ export function ApprovalCard({ part, onApproval }: ApprovalCardProps) {
             size="sm"
             onClick={() => handleDecision('approve')}
             disabled={submitting !== null}
-            className={cn('h-8 text-white', accentStyles.button)}
+            className="h-8 bg-gradient-brand text-white hover:opacity-90"
           >
             {submitting === 'approve' ? (
               <span className="flex items-center gap-1.5">
-                <Spinner />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 {config.approveLabel}...
               </span>
             ) : (
               <span className="flex items-center gap-1.5">
-                <CardIcon icon={config.icon} className="!w-3.5 !h-3.5" />
+                <CardIconComponent icon={config.icon} className="!w-3.5 !h-3.5" />
                 {config.approveLabel}
               </span>
             )}
@@ -413,11 +372,14 @@ export function ApprovalCard({ part, onApproval }: ApprovalCardProps) {
           >
             {submitting === 'reject' ? (
               <span className="flex items-center gap-1.5">
-                <Spinner />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 Cancel
               </span>
             ) : (
-              'Cancel'
+              <span className="flex items-center gap-1.5">
+                <X className="h-3.5 w-3.5" />
+                Cancel
+              </span>
             )}
           </Button>
         </div>

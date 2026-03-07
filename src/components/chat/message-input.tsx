@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { SDKToggle } from '@/components/sdk-toggle'
+import { Send, Square } from 'lucide-react'
 
 interface MessageInputProps {
   onSend: (message: string) => void
@@ -58,7 +59,7 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
   }
 
   return (
-    <div className="shrink-0 border-t bg-background px-4 pb-4 pt-3 shadow-[0_-1px_3px_0_rgb(0_0_0/0.05)]">
+    <div className="shrink-0 border-t glass px-4 pb-4 pt-3">
       <div className="mx-auto max-w-3xl">
         <div className="flex items-end gap-2">
           <div className="relative flex-1">
@@ -68,7 +69,7 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               placeholder={placeholder || 'Message your Captain...'}
-              className="min-h-[44px] max-h-[200px] resize-none pr-10 rounded-xl bg-muted/40"
+              className="min-h-[44px] max-h-[200px] resize-none pr-10 rounded-xl bg-muted/30 shadow-sm focus:shadow-md transition-shadow"
               rows={1}
               disabled={isStreaming}
             />
@@ -77,10 +78,8 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="outline" size="icon" onClick={onStop} className="shrink-0 h-10 w-10">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                      <rect x="3" y="3" width="10" height="10" rx="1" />
-                    </svg>
+                  <Button variant="outline" size="icon" onClick={onStop} className="shrink-0 h-10 w-10 rounded-xl">
+                    <Square className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="top">
@@ -96,12 +95,9 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
                     size="icon"
                     onClick={handleSend}
                     disabled={!input.trim()}
-                    className="shrink-0 h-10 w-10"
+                    className="shrink-0 h-10 w-10 rounded-xl bg-gradient-brand hover:opacity-90 transition-all hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="22" y1="2" x2="11" y2="13" />
-                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                    </svg>
+                    <Send className="h-4 w-4 text-white" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="top">

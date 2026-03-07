@@ -235,7 +235,7 @@ export default function SettingsPage() {
 
       <div className="space-y-8">
         {/* ── Profile ── */}
-        <Card>
+        <Card className="shadow-sm">
           <CardHeader>
             <CardTitle className="text-lg">Profile</CardTitle>
             <CardDescription>Your personal information and role</CardDescription>
@@ -286,7 +286,7 @@ export default function SettingsPage() {
         </Card>
 
         {/* ── Communication Preferences ── */}
-        <Card>
+        <Card className="shadow-sm">
           <CardHeader>
             <CardTitle className="text-lg">Communication Preferences</CardTitle>
             <CardDescription>How your Captain communicates with you</CardDescription>
@@ -352,7 +352,7 @@ export default function SettingsPage() {
         </Card>
 
         {/* ── Agent Preferences ── */}
-        <Card>
+        <Card className="shadow-sm">
           <CardHeader>
             <CardTitle className="text-lg">Agent Preferences</CardTitle>
             <CardDescription>Configure your Captain&apos;s behavior</CardDescription>
@@ -454,7 +454,7 @@ export default function SettingsPage() {
         <Separator />
 
         {/* ── Organization ── */}
-        <Card>
+        <Card className="shadow-sm">
           <CardHeader>
             <CardTitle className="text-lg">Organization</CardTitle>
             <CardDescription>Manage your organization settings</CardDescription>
@@ -489,7 +489,7 @@ export default function SettingsPage() {
         </Card>
 
         {/* ── Connected Integrations Quick View ── */}
-        <Card>
+        <Card className="shadow-sm">
           <CardHeader>
             <CardTitle className="text-lg">Connected Integrations</CardTitle>
             <CardDescription>Quick overview of your connected tools</CardDescription>
@@ -502,7 +502,7 @@ export default function SettingsPage() {
         <Separator />
 
         {/* ── Danger Zone ── */}
-        <Card className="border-destructive/50">
+        <Card className="border-destructive/50 shadow-sm">
           <CardHeader>
             <CardTitle className="text-lg text-destructive">Danger Zone</CardTitle>
             <CardDescription>Irreversible actions that affect your account</CardDescription>

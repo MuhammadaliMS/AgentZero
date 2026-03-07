@@ -72,14 +72,16 @@ When the input includes "## Integration Data" sections, extract entities from th
 **Product/Platform Data**: Extract feature names as features, customer names as customers, metric names as metrics, failing monitors or quality issues with descriptions. Relationships: "impacts", "part_of", "requested_by"
 
 ## Rules
-- Use full canonical names (e.g., "Sarah Chen" not "Sarah" or "S. Chen")
+- **CRITICAL: Use full canonical names.** Always use the most complete name available: "Sarah Chen" not "Sarah" or "S. Chen", "KeyValue Systems" not "KeyValue", "Muhammadali Bayramov" not "Muhammadali"
+- **CRITICAL: One entity type per entity.** Do not extract the same real-world entity under multiple types. A company like "Axari" should be ONE entity (pick the most relevant type — usually "vendor" or "project"), not separate "vendor", "tool", and "team" entries
 - For email addresses, extract the person name AND store the email in attributes: {"email": "sarah@example.com"}
-- Only extract entities that are clearly identifiable — skip vague references
+- Only extract entities that are clearly identifiable — skip vague references like "the team" or "the project"
 - Relationships must reference entities by their exact name from the entities list
 - Confidence: 1.0 for explicit (email sender/recipient, calendar attendee), 0.7-0.9 for inferred
 - Keep descriptions concise (1 sentence max)
 - If the text has no extractable entities, return empty arrays
 - Prioritize actionable entities: people with responsibilities, projects with deadlines, features in development, customers with requests, metrics with changes, decisions pending action
+- Every entity MUST have at least one relationship. Do not extract standalone entities with no connections
 
 Respond with valid JSON matching this schema:
 {

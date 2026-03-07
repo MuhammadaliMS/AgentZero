@@ -233,9 +233,19 @@ export function normalizeCanonical(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, ' ')
 }
 
+/** Minimum canonical name length for fuzzy (substring) matching. */
+const FUZZY_MIN_LENGTH = 4
+
 /**
  * Upsert entities into the entities table.
  * Returns a map of canonical_name → entity UUID.
+ *
+ * Dedup strategy (in order):
+ *   1. Exact match on (org_id, canonical_name, entity_type) — fast path.
+ *   2. Fuzzy match: if canonical_name is ≥ 4 chars, check for substring
+ *      containment (both directions) against existing entities of the
+ *      same type. This catches "Komal" ↔ "Komal Shah" variants.
+ *   3. If no match found, insert a new entity.
  */
 export async function upsertEntities(
   supabase: ReturnType<typeof createAdminClient>,
@@ -247,53 +257,118 @@ export async function upsertEntities(
   for (const entity of entities) {
     const canonical = normalizeCanonical(entity.name)
 
-    // Check if entity already exists
-    const { data: existing } = await supabase
+    // ── 1. Exact match (fast path) ──────────────────────────────────
+    const { data: exactMatch } = await supabase
       .from('entities')
-      .select('id, mention_count')
+      .select('id, mention_count, canonical_name')
       .eq('org_id', orgId)
       .eq('canonical_name', canonical)
       .eq('entity_type', entity.type)
       .single()
 
-    if (existing) {
-      // Update existing: bump mention count, update last_seen
+    if (exactMatch) {
+      await bumpEntity(supabase, exactMatch.id, exactMatch.mention_count, entity)
+      entityIdMap.set(canonical, exactMatch.id)
+      continue
+    }
+
+    // ── 2. Fuzzy match — substring containment (same type) ──────────
+    // Only attempt for names with enough characters to avoid false positives.
+    let fuzzyMatch: { id: string; mention_count: number; canonical_name: string } | null = null
+
+    if (canonical.length >= FUZZY_MIN_LENGTH) {
+      // Check if any existing entity's canonical name contains the new name,
+      // OR if the new name contains an existing entity's canonical name.
+      // We use ilike for case-insensitive substring matching.
+      const { data: candidates } = await supabase
+        .from('entities')
+        .select('id, mention_count, canonical_name')
+        .eq('org_id', orgId)
+        .eq('entity_type', entity.type)
+        .or(`canonical_name.ilike.%${canonical}%,canonical_name.ilike.${canonical.split(' ')[0]}%`)
+        .order('mention_count', { ascending: false })
+        .limit(5)
+
+      if (candidates && candidates.length > 0) {
+        // Score candidates: prefer exact substring containment both ways
+        fuzzyMatch = candidates.find(c => {
+          const existing = c.canonical_name
+          return existing.includes(canonical) || canonical.includes(existing)
+        }) ?? null
+      }
+    }
+
+    if (fuzzyMatch) {
+      // Merge into existing entity. If the new name is longer (more specific),
+      // update the canonical name and display name to keep the fuller version.
+      const shouldUpdateName = canonical.length > fuzzyMatch.canonical_name.length
+
       await supabase
         .from('entities')
         .update({
-          mention_count: existing.mention_count + 1,
+          mention_count: fuzzyMatch.mention_count + 1,
           last_seen_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-          // Update description if new one is longer/better
           ...(entity.description ? { description: entity.description } : {}),
-          // Merge attributes
           ...(entity.attributes ? { attributes: entity.attributes as Json } : {}),
+          // Upgrade to the more specific name if available
+          ...(shouldUpdateName
+            ? { name: entity.name, canonical_name: canonical }
+            : {}),
         })
-        .eq('id', existing.id)
+        .eq('id', fuzzyMatch.id)
 
-      entityIdMap.set(canonical, existing.id)
-    } else {
-      // Insert new entity
-      const { data: newEntity } = await supabase
-        .from('entities')
-        .insert({
-          org_id: orgId,
-          entity_type: entity.type,
-          name: entity.name,
-          canonical_name: canonical,
-          description: entity.description ?? null,
-          attributes: (entity.attributes ?? {}) as Json,
-        })
-        .select('id')
-        .single()
+      // Map both the current canonical AND the original match's canonical to the same ID
+      entityIdMap.set(canonical, fuzzyMatch.id)
+      entityIdMap.set(fuzzyMatch.canonical_name, fuzzyMatch.id)
 
-      if (newEntity) {
-        entityIdMap.set(canonical, newEntity.id)
-      }
+      console.log(
+        `[Extraction] Fuzzy matched "${canonical}" → existing "${fuzzyMatch.canonical_name}" (id=${fuzzyMatch.id.slice(0, 8)})`
+      )
+      continue
+    }
+
+    // ── 3. No match — insert new entity ─────────────────────────────
+    const { data: newEntity } = await supabase
+      .from('entities')
+      .insert({
+        org_id: orgId,
+        entity_type: entity.type,
+        name: entity.name,
+        canonical_name: canonical,
+        description: entity.description ?? null,
+        attributes: (entity.attributes ?? {}) as Json,
+      })
+      .select('id')
+      .single()
+
+    if (newEntity) {
+      entityIdMap.set(canonical, newEntity.id)
     }
   }
 
   return entityIdMap
+}
+
+/**
+ * Bump an existing entity's mention count and merge new data into it.
+ */
+async function bumpEntity(
+  supabase: ReturnType<typeof createAdminClient>,
+  entityId: string,
+  currentMentionCount: number,
+  entity: ExtractedEntity
+): Promise<void> {
+  await supabase
+    .from('entities')
+    .update({
+      mention_count: currentMentionCount + 1,
+      last_seen_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      ...(entity.description ? { description: entity.description } : {}),
+      ...(entity.attributes ? { attributes: entity.attributes as Json } : {}),
+    })
+    .eq('id', entityId)
 }
 
 // ─── Relationship Upsert ────────────────────────────────────────────────

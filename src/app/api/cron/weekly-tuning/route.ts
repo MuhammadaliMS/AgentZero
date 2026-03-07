@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { runWeeklyTuning } from '@/lib/intelligence/learning-loop'
 import { recordWeeklyMeasurement, evaluateRolloutAdvancement } from '@/lib/agent/runtime/rollout-manager'
 import { runMemoryCurator } from '@/lib/graph/strategic-memory'
+import { runCompression } from '@/lib/graph/compression-engine'
+import { runEntityDedup } from '@/lib/graph/entity-dedup'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -59,6 +61,12 @@ export async function GET(request: Request) {
       // 4. Run memory curator
       const curation = await runMemoryCurator(org.id)
 
+      // 5. Run entity dedup + hygiene (fuzzy merge, cross-type merge, orphan cleanup)
+      const dedup = await runEntityDedup(org.id)
+
+      // 6. Run relationship compression (orphaned since ghost-agent.ts deprecation)
+      const compression = await runCompression(org.id)
+
       results.push({
         orgId: org.id,
         status: 'ok',
@@ -68,6 +76,15 @@ export async function GET(request: Request) {
           measurement: measurement ? 'recorded' : 'skipped',
           rolloutAdvancement: advancement.reason,
           curation,
+          dedup: {
+            crossTypeMerges: dedup.crossTypeMerges,
+            fuzzyMerges: dedup.fuzzyMerges,
+            orphansArchived: dedup.orphansArchived,
+          },
+          compression: {
+            patternsCreated: compression.patternsCreated,
+            relationshipsArchived: compression.relationshipsArchived,
+          },
         },
       })
     } catch (err) {

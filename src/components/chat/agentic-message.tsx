@@ -142,7 +142,7 @@ export function AgenticMessage({
   return (
     <div className="group flex gap-3 py-3 animate-fade-in">
       {/* Avatar */}
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-brand text-white shadow-sm">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
         <Bot className="h-4 w-4" />
       </div>
 

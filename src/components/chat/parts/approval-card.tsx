@@ -348,7 +348,7 @@ export function ApprovalCard({ part, onApproval }: ApprovalCardProps) {
             size="sm"
             onClick={() => handleDecision('approve')}
             disabled={submitting !== null}
-            className="h-8 bg-gradient-brand text-white hover:opacity-90"
+            className="h-8 bg-primary text-primary-foreground hover:bg-primary/90"
           >
             {submitting === 'approve' ? (
               <span className="flex items-center gap-1.5">

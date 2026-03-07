@@ -124,7 +124,7 @@ export function ChatInterface({ conversationId, initialPrompt }: ChatInterfacePr
           {/* Empty state */}
           {messages.length === 0 && !isStreaming && (
             <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
-              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-brand text-white shadow-glow animate-float">
+              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg animate-float">
                 <Sparkles className="h-8 w-8" />
               </div>
               <h2 className="text-2xl font-bold tracking-tight">Captain</h2>

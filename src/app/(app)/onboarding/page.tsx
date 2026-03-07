@@ -135,7 +135,7 @@ export default function OnboardingPage() {
       {/* Left: Chat messages */}
       <div className="flex flex-1 flex-col border-r">
         <div className="border-b p-4 flex items-center gap-3">
-          <div className="bg-gradient-brand flex h-9 w-9 items-center justify-center rounded-lg">
+          <div className="bg-primary flex h-9 w-9 items-center justify-center rounded-lg">
             <Zap className="h-5 w-5 text-white" />
           </div>
           <div>
@@ -149,7 +149,7 @@ export default function OnboardingPage() {
               <Card key={i} className="bg-muted/50 shadow-md border-0">
                 <CardContent className="p-4">
                   <div className="flex gap-3">
-                    <div className="bg-gradient-brand flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white">
+                    <div className="bg-primary flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white">
                       <Zap className="h-4 w-4" />
                     </div>
                     <div className="text-sm leading-relaxed whitespace-pre-wrap">

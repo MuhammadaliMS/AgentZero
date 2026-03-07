@@ -95,7 +95,7 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
                     size="icon"
                     onClick={handleSend}
                     disabled={!input.trim()}
-                    className="shrink-0 h-10 w-10 rounded-xl bg-gradient-brand hover:opacity-90 transition-all hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
+                    className="shrink-0 h-10 w-10 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-all hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
                   >
                     <Send className="h-4 w-4 text-white" />
                   </Button>

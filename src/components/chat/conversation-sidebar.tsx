@@ -24,7 +24,33 @@ import {
 } from '@/components/ui/dialog'
 import { formatRelativeDate } from '@/lib/utils/format'
 import { cn } from '@/lib/utils'
-import { Plus, Search, X, MessageSquare, MoreVertical, Pencil, Trash2 } from 'lucide-react'
+import {
+  Plus,
+  Search,
+  X,
+  MessageSquare,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  CalendarCheck,
+  BarChart3,
+  Mail,
+  ShieldCheck,
+  Presentation,
+  MessagesSquare,
+} from 'lucide-react'
+
+/** Pick a contextual icon based on conversation title keywords */
+function getConversationIcon(title: string) {
+  const t = title.toLowerCase()
+  if (t.includes('meeting') || t.includes('prep')) return Presentation
+  if (t.includes('delivery') || t.includes('status')) return BarChart3
+  if (t.includes('email') || t.includes('mail')) return Mail
+  if (t.includes('compliance') || t.includes('security') || t.includes('risk')) return ShieldCheck
+  if (t.includes('calendar') || t.includes('schedule') || t.includes('plate')) return CalendarCheck
+  if (t.includes('slack') || t.includes('message')) return MessagesSquare
+  return MessageSquare
+}
 
 export function ConversationSidebar() {
   const {
@@ -82,7 +108,6 @@ export function ConversationSidebar() {
   async function handleConfirmDelete() {
     if (deletingId) {
       await deleteConversation(deletingId)
-      // If we were viewing this conversation, redirect to /chat
       if (pathname === `/chat/${deletingId}`) {
         router.push('/chat')
       }
@@ -99,27 +124,32 @@ export function ConversationSidebar() {
   const totalCount = groupedConversations.reduce((acc, g) => acc + g.conversations.length, 0)
 
   return (
-    <div className="hidden md:flex h-full w-64 flex-col border-r bg-muted/30">
+    <div className="hidden md:flex h-full w-72 flex-col border-r bg-muted/20">
       {/* Header */}
-      <div className="flex h-12 items-center justify-between border-b px-3">
-        <span className="text-sm font-medium">Conversations</span>
-        <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2.5 text-xs hover:border-primary/30" asChild>
+      <div className="flex h-13 items-center justify-between border-b px-4">
+        <span className="text-sm font-semibold tracking-tight">Conversations</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+          asChild
+        >
           <Link href="/chat">
-            <Plus className="h-3 w-3" />
+            <Plus className="h-3.5 w-3.5" />
             New
           </Link>
         </Button>
       </div>
 
       {/* Search */}
-      <div className="px-2 py-2">
+      <div className="px-3 py-2">
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search conversations..."
-            className="h-8 pl-8 text-xs bg-background"
+            className="h-8 pl-8 text-xs bg-background/60 border-transparent focus:border-border"
           />
           {searchQuery && (
             <button
@@ -136,33 +166,39 @@ export function ConversationSidebar() {
       <ScrollArea className="flex-1">
         <div className="px-2 pb-2">
           {loading && (
-            <div className="space-y-2 p-2">
+            <div className="space-y-1 px-1 pt-1">
               {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="h-12 animate-pulse rounded-md bg-muted" />
+                <div key={i} className="flex items-center gap-2.5 rounded-lg px-2 py-2.5">
+                  <div className="h-8 w-8 shrink-0 animate-pulse rounded-lg bg-muted" />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="h-3.5 w-3/4 animate-pulse rounded bg-muted" />
+                    <div className="h-2.5 w-1/3 animate-pulse rounded bg-muted" />
+                  </div>
+                </div>
               ))}
             </div>
           )}
 
           {!loading && totalCount === 0 && !searchQuery && (
-            <div className="px-3 py-8 text-center">
-              <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-gradient-brand-light">
-                <MessageSquare className="h-4.5 w-4.5 text-primary" />
+            <div className="px-3 py-10 text-center">
+              <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+                <MessageSquare className="h-5 w-5 text-primary" />
               </div>
-              <p className="text-xs text-muted-foreground">No conversations yet.</p>
+              <p className="text-sm font-medium text-foreground/80">No conversations yet</p>
               <p className="mt-1 text-xs text-muted-foreground">Start a new one to get going.</p>
             </div>
           )}
 
           {!loading && totalCount === 0 && searchQuery && (
-            <div className="px-3 py-8 text-center">
+            <div className="px-3 py-10 text-center">
               <p className="text-xs text-muted-foreground">No matches for &quot;{searchQuery}&quot;</p>
             </div>
           )}
 
           {groupedConversations.map((group) => (
-            <div key={group.label} className="mb-2">
-              <div className="sticky top-0 bg-muted/30 px-3 py-1.5">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <div key={group.label} className="mb-1">
+              <div className="sticky top-0 z-10 bg-muted/20 backdrop-blur-sm px-3 py-2">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
                   {group.label}
                 </span>
               </div>
@@ -171,6 +207,7 @@ export function ConversationSidebar() {
                   const isActive = pathname === `/chat/${conv.id}`
                   const title = conv.title || 'New conversation'
                   const date = conv.updated_at || conv.created_at
+                  const Icon = getConversationIcon(title)
 
                   // If renaming this conversation, show input
                   if (renamingId === conv.id) {
@@ -192,18 +229,37 @@ export function ConversationSidebar() {
                     <div
                       key={conv.id}
                       className={cn(
-                        'group relative flex items-center rounded-lg transition-all hover:bg-muted',
-                        isActive && 'bg-accent border-l-2 border-primary shadow-sm'
+                        'group relative flex items-center gap-2.5 rounded-lg px-2 py-2 transition-all',
+                        isActive
+                          ? 'bg-accent shadow-sm'
+                          : 'hover:bg-accent/50'
                       )}
                     >
+                      {/* Icon */}
+                      <div
+                        className={cn(
+                          'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors',
+                          isActive
+                            ? 'bg-primary/15 text-primary'
+                            : 'bg-muted/80 text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary/70'
+                        )}
+                      >
+                        <Icon className="h-4 w-4" />
+                      </div>
+
                       <Link
                         href={`/chat/${conv.id}`}
-                        className="flex flex-1 flex-col min-w-0 px-3 py-2"
+                        className="flex flex-1 flex-col min-w-0 gap-0.5"
                       >
-                        <span className="truncate text-sm font-medium text-foreground/90">
+                        <span
+                          className={cn(
+                            'truncate text-[13px] leading-tight',
+                            isActive ? 'font-semibold text-foreground' : 'font-medium text-foreground/80'
+                          )}
+                        >
                           {title}
                         </span>
-                        <span className="text-[10px] text-muted-foreground">
+                        <span className="text-[11px] text-muted-foreground/70">
                           {formatRelativeDate(date)}
                         </span>
                       </Link>
@@ -213,11 +269,11 @@ export function ConversationSidebar() {
                         <DropdownMenuTrigger asChild>
                           <button
                             className={cn(
-                              'absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity hover:bg-muted-foreground/10 group-hover:opacity-100',
-                              isActive && 'opacity-100'
+                              'flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-0 transition-all hover:bg-muted-foreground/10 group-hover:opacity-100',
+                              isActive && 'opacity-60'
                             )}
                           >
-                            <MoreVertical className="h-3 w-3 text-muted-foreground" />
+                            <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-40">

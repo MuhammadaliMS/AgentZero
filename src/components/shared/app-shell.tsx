@@ -85,8 +85,8 @@ export function AppShell({
             <SheetContent side="left" className="w-64 p-0">
               <div className="flex h-14 items-center border-b px-4">
                 <div className="flex items-center gap-2">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-brand shadow-sm">
-                    <Zap className="h-3.5 w-3.5 text-white" />
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary shadow-sm">
+                    <Zap className="h-3.5 w-3.5 text-primary-foreground" />
                   </div>
                   <span className="text-lg font-semibold tracking-tight">Zerowing</span>
                 </div>
@@ -140,8 +140,8 @@ export function AppShell({
 
           {/* Logo */}
           <Link href="/chat" className="flex items-center gap-2 group">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-brand shadow-sm group-hover:shadow-glow-sm transition-shadow">
-              <Zap className="h-3.5 w-3.5 text-white" />
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary shadow-sm transition-shadow">
+              <Zap className="h-3.5 w-3.5 text-primary-foreground" />
             </div>
             <span className="hidden text-lg font-semibold tracking-tight sm:inline">Zerowing</span>
           </Link>

@@ -32,11 +32,11 @@ export async function POST(request: NextRequest) {
 
   const promptMap = {
     morning:
-      'Generate my morning brief. Include: today\'s calendar events, urgent emails, at-risk commitments, pending actions needing my approval, and any compliance alerts. Be concise and prioritize by urgency.',
+      'Generate my morning brief. Include: today\'s calendar events, urgent emails, at-risk commitments, pending actions needing my approval, and any platform health alerts. Be concise and prioritize by urgency.',
     eod:
       'Generate my end-of-day wrap. Summarize: what was accomplished today, any items carrying forward, pending actions still open, and a brief preview of tomorrow.',
     weekly:
-      'Generate my weekly summary. Cover: key accomplishments this week, commitments completed vs at-risk, compliance posture changes, and priorities for next week.',
+      'Generate my weekly summary. Cover: key accomplishments this week, commitments completed vs at-risk, delivery health changes, and priorities for next week.',
   }
 
   try {

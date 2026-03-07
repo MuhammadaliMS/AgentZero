@@ -132,13 +132,13 @@ export function ChatInterface({ conversationId, initialPrompt }: ChatInterfacePr
               </div>
               <h2 className="text-xl font-semibold">Captain</h2>
               <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                Your strategic AI aide. Ask about your schedule, compliance posture,
+                Your strategic AI aide. Ask about your deliverables, platform health,
                 pending commitments, or anything else on your plate.
               </p>
               <div className="mt-6 flex flex-wrap justify-center gap-2">
                 {[
                   "What's on my plate today?",
-                  'Show my compliance posture',
+                  'Show my delivery status',
                   'Any commitments at risk?',
                   'Prep me for my next meeting',
                 ].map((label) => (

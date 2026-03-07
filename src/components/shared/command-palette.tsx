@@ -145,16 +145,16 @@ export function CommandPalette() {
       action: () => askAgent("What's on my plate today? Give me a morning brief."),
     },
     {
-      id: 'compliance',
-      label: 'Show my compliance posture',
+      id: 'delivery',
+      label: 'Show my delivery status',
       group: 'Quick Actions',
-      keywords: ['vanta', 'soc2', 'controls', 'audit', 'security'],
+      keywords: ['delivery', 'features', 'roadmap', 'health', 'status'],
       icon: (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
         </svg>
       ),
-      action: () => askAgent('Show my compliance posture. What controls need attention?'),
+      action: () => askAgent('Show my delivery status. What needs attention?'),
     },
     {
       id: 'commitments',

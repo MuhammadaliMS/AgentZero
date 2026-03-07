@@ -17,7 +17,7 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Separator } from '@/components/ui/separator'
 import { CommandPalette } from '@/components/shared/command-palette'
 import type { Database } from '@/types/database'
-import { MessageSquare, LayoutGrid, Layers, Settings, Search, LogOut, Menu, Zap } from 'lucide-react'
+import { MessageSquare, LayoutGrid, Layers, Video, Settings, Search, LogOut, Menu, Zap } from 'lucide-react'
 
 type Profile = Database['public']['Tables']['profiles']['Row']
 
@@ -36,6 +36,11 @@ const navItems = [
     href: '/integrations',
     label: 'Integrations',
     icon: Layers,
+  },
+  {
+    href: '/meetings',
+    label: 'Meetings',
+    icon: Video,
   },
 ]
 

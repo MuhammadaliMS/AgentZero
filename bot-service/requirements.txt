@@ -1,0 +1,10 @@
+# Meeting Bot - Transcription Dependencies
+
+# HTTP client for Groq API + Supabase REST + webhook calls
+httpx>=0.27,<1.0
+
+# Local whisper fallback (CPU-optimized, int8 quantization)
+faster-whisper>=1.1,<2.0
+
+# NumPy (required by audio processing libs)
+numpy>=1.26,<3.0

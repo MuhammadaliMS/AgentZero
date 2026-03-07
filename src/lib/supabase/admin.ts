@@ -17,3 +17,13 @@ export function createAdminClient() {
     }
   )
 }
+
+/**
+ * Untyped admin client for tables not yet in the auto-generated Database type
+ * (e.g., meeting_* tables from migration 022).
+ * Remove this once you run `supabase gen types` to regenerate database.ts.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createUntypedAdminClient(): any {
+  return createAdminClient()
+}

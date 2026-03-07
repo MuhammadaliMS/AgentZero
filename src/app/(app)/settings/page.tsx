@@ -21,6 +21,7 @@ import {
 import { toast } from 'sonner'
 import { SDKToggle } from '@/components/sdk-toggle'
 import type { Database } from '@/types/database'
+import type { JoinMode, TranscriptionEngine } from '@/types/meetings'
 
 type Profile = Database['public']['Tables']['profiles']['Row']
 type Organization = Database['public']['Tables']['organizations']['Row']
@@ -109,6 +110,19 @@ export default function SettingsPage() {
   const [showThinking, setShowThinking] = useState(true)
   const [weeklyBriefDay, setWeeklyBriefDay] = useState('monday')
 
+  // Meeting bot config state
+  const [botEnabled, setBotEnabled] = useState(false)
+  const [joinMode, setJoinMode] = useState<JoinMode>('all')
+  const [minAttendees, setMinAttendees] = useState(2)
+  const [recordLabel, setRecordLabel] = useState('[record]')
+  const [transcriptionEngine, setTranscriptionEngine] = useState<TranscriptionEngine>('groq_whisper')
+  const [autoSummarize, setAutoSummarize] = useState(true)
+  const [notifySlack, setNotifySlack] = useState(true)
+  const [notifyEmail, setNotifyEmail] = useState(false)
+  const [blocklistPatterns, setBlocklistPatterns] = useState('')
+  const [savingBot, setSavingBot] = useState(false)
+  const [botConfigLoaded, setBotConfigLoaded] = useState(false)
+
   const loadData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
@@ -152,6 +166,26 @@ export default function SettingsPage() {
           settings: (o.settings || {}) as Record<string, unknown>,
         })
       }
+
+      // Load meeting bot config (table not in generated types yet — cast to any)
+      const { data: botConfig } = await (supabase as any)
+        .from('meeting_bot_config')
+        .select('*')
+        .eq('org_id', p.org_id)
+        .single()
+
+      if (botConfig) {
+        setBotEnabled(botConfig.enabled ?? false)
+        setJoinMode((botConfig.join_mode as JoinMode) || 'all')
+        setMinAttendees(botConfig.min_attendees ?? 2)
+        setRecordLabel(botConfig.record_label || '[record]')
+        setTranscriptionEngine((botConfig.transcription_engine as TranscriptionEngine) || 'groq_whisper')
+        setAutoSummarize(botConfig.auto_summarize ?? true)
+        setNotifySlack(botConfig.notify_via_slack ?? true)
+        setNotifyEmail(botConfig.notify_via_email ?? false)
+        setBlocklistPatterns((botConfig.blocklist_patterns || []).join('\n'))
+      }
+      setBotConfigLoaded(true)
     }
   }, [supabase])
 
@@ -215,6 +249,41 @@ export default function SettingsPage() {
       console.error(err)
     } finally {
       setSavingOrg(false)
+    }
+  }
+
+  const handleSaveBotConfig = async () => {
+    setSavingBot(true)
+    try {
+      if (!orgId) return
+
+      const patterns = blocklistPatterns
+        .split('\n')
+        .map((p) => p.trim())
+        .filter(Boolean)
+
+      const { error } = await (supabase as any)
+        .from('meeting_bot_config')
+        .upsert({
+          org_id: orgId,
+          enabled: botEnabled,
+          join_mode: joinMode,
+          min_attendees: minAttendees,
+          record_label: recordLabel,
+          transcription_engine: transcriptionEngine,
+          auto_summarize: autoSummarize,
+          notify_via_slack: notifySlack,
+          notify_via_email: notifyEmail,
+          blocklist_patterns: patterns,
+        }, { onConflict: 'org_id' })
+
+      if (error) throw error
+      toast.success('Meeting bot settings saved')
+    } catch (err) {
+      toast.error('Failed to save meeting bot settings')
+      console.error(err)
+    } finally {
+      setSavingBot(false)
     }
   }
 
@@ -498,6 +567,237 @@ export default function SettingsPage() {
             <ConnectedIntegrationsSummary />
           </CardContent>
         </Card>
+
+        {/* ── Meeting Bot ── */}
+        {botConfigLoaded && (
+          <Card className="shadow-sm">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg">Meeting Bot</CardTitle>
+                  <CardDescription>Configure automatic meeting recording and transcription</CardDescription>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={botEnabled}
+                  onClick={() => setBotEnabled(!botEnabled)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
+                    botEnabled ? 'bg-primary' : 'bg-muted'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                      botEnabled ? 'translate-x-4' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+            </CardHeader>
+            {botEnabled && (
+              <CardContent className="space-y-6">
+                {/* Join Mode */}
+                <div className="space-y-3">
+                  <Label>Join Mode</Label>
+                  <div className="grid gap-2">
+                    {[
+                      { value: 'all' as const, label: 'All Meetings', description: 'Automatically join all calendar meetings with a video link' },
+                      { value: 'min_attendees' as const, label: 'Minimum Attendees', description: 'Only join meetings with enough participants' },
+                      { value: 'labeled' as const, label: 'Labeled Only', description: 'Only join meetings whose title includes a label' },
+                      { value: 'manual' as const, label: 'Manual', description: 'Never auto-join — you trigger recording manually' },
+                    ].map((mode) => (
+                      <button
+                        key={mode.value}
+                        type="button"
+                        onClick={() => setJoinMode(mode.value)}
+                        className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
+                          joinMode === mode.value
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-foreground/20'
+                        }`}
+                      >
+                        <div
+                          className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 ${
+                            joinMode === mode.value
+                              ? 'border-primary bg-primary'
+                              : 'border-muted-foreground/30'
+                          }`}
+                        >
+                          {joinMode === mode.value && (
+                            <div className="flex h-full items-center justify-center">
+                              <div className="h-1.5 w-1.5 rounded-full bg-primary-foreground" />
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium">{mode.label}</p>
+                          <p className="text-xs text-muted-foreground">{mode.description}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Conditional fields */}
+                {joinMode === 'min_attendees' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="min-attendees">Minimum Attendees</Label>
+                    <Input
+                      id="min-attendees"
+                      type="number"
+                      min={2}
+                      max={50}
+                      value={minAttendees}
+                      onChange={(e) => setMinAttendees(parseInt(e.target.value) || 2)}
+                      className="max-w-[120px]"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Bot only joins meetings with at least this many attendees
+                    </p>
+                  </div>
+                )}
+
+                {joinMode === 'labeled' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="record-label">Record Label</Label>
+                    <Input
+                      id="record-label"
+                      value={recordLabel}
+                      onChange={(e) => setRecordLabel(e.target.value)}
+                      placeholder="[record]"
+                      className="max-w-xs"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Add this text to a meeting title to trigger recording
+                    </p>
+                  </div>
+                )}
+
+                <Separator />
+
+                {/* Transcription Engine */}
+                <div className="space-y-2">
+                  <Label htmlFor="transcription-engine">Transcription Engine</Label>
+                  <select
+                    id="transcription-engine"
+                    value={transcriptionEngine}
+                    onChange={(e) => setTranscriptionEngine(e.target.value as TranscriptionEngine)}
+                    className="flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <option value="groq_whisper">Groq Whisper (Free, 240 hrs/mo)</option>
+                    <option value="deepgram">Deepgram</option>
+                    <option value="whisperx">WhisperX (Local, CPU)</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    Audio-to-text engine. Groq Whisper is free and recommended.
+                  </p>
+                </div>
+
+                <Separator />
+
+                {/* Auto-summarize toggle */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Auto-Summarize</p>
+                    <p className="text-xs text-muted-foreground">
+                      Automatically generate AI summaries, action items, and decisions after transcription
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoSummarize}
+                    onClick={() => setAutoSummarize(!autoSummarize)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
+                      autoSummarize ? 'bg-primary' : 'bg-muted'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                        autoSummarize ? 'translate-x-4' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <Separator />
+
+                {/* Notifications */}
+                <div className="space-y-3">
+                  <Label>Post-Meeting Notifications</Label>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm">Slack Notification</p>
+                        <p className="text-xs text-muted-foreground">Send meeting summary to your Slack DM</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={notifySlack}
+                        onClick={() => setNotifySlack(!notifySlack)}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
+                          notifySlack ? 'bg-primary' : 'bg-muted'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                            notifySlack ? 'translate-x-4' : 'translate-x-0.5'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm">Email Notification</p>
+                        <p className="text-xs text-muted-foreground">Send meeting summary via email</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={notifyEmail}
+                        onClick={() => setNotifyEmail(!notifyEmail)}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
+                          notifyEmail ? 'bg-primary' : 'bg-muted'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform ${
+                            notifyEmail ? 'translate-x-4' : 'translate-x-0.5'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <Separator />
+
+                {/* Blocklist */}
+                <div className="space-y-2">
+                  <Label htmlFor="blocklist">Blocklist Patterns</Label>
+                  <textarea
+                    id="blocklist"
+                    value={blocklistPatterns}
+                    onChange={(e) => setBlocklistPatterns(e.target.value)}
+                    rows={3}
+                    placeholder={"1:1 with*\nStandup\nAll Hands"}
+                    className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    One pattern per line. Meetings matching these patterns will be skipped. Use * as wildcard.
+                  </p>
+                </div>
+
+                <div className="flex justify-end">
+                  <Button onClick={handleSaveBotConfig} disabled={savingBot}>
+                    {savingBot ? 'Saving...' : 'Save Bot Settings'}
+                  </Button>
+                </div>
+              </CardContent>
+            )}
+          </Card>
+        )}
 
         <Separator />
 

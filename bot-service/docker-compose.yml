@@ -1,0 +1,35 @@
+# ─── Zerowing Meeting Bot ─────────────────────────────────────────────────
+# Works on Oracle Cloud Free Tier (ARM64) and any x86 VPS
+#
+# Deploy: docker compose up -d
+# Logs:   docker compose logs -f bot
+# Stop:   docker compose down
+
+services:
+  bot:
+    build: .
+    container_name: zerowing-meeting-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - RECORDING_DIR=/tmp/recordings
+      - TRANSCRIBE_SCRIPT=./scripts/transcribe.py
+    volumes:
+      # Persist recordings temporarily (cleaned up after transcription)
+      - recordings:/tmp/recordings
+    # Shared memory for Chromium
+    shm_size: '2gb'
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: '2'
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  recordings:
+    driver: local

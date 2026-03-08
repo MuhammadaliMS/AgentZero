@@ -48,7 +48,7 @@ interface ProcessingResult {
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
 const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1'
-const DEFAULT_SUMMARIZATION_MODEL = process.env.MEETING_SUMMARY_MODEL || 'anthropic/claude-haiku-4-5-20251001'
+const DEFAULT_SUMMARIZATION_MODEL = process.env.MEETING_SUMMARY_MODEL || 'anthropic/claude-haiku-4.5'
 const MAX_RETRIES = 3
 
 // ─── System Prompt ───────────────────────────────────────────────────────
@@ -493,7 +493,7 @@ function findTimestampForQuote(
 function estimateCost(model: string, promptTokens: number, completionTokens: number): number {
   // Rough pricing per million tokens via OpenRouter
   const pricing: Record<string, { input: number; output: number }> = {
-    'anthropic/claude-haiku-4-5-20251001': { input: 0.80, output: 4.00 },
+    'anthropic/claude-haiku-4.5': { input: 0.80, output: 4.00 },
     'anthropic/claude-sonnet-4-20250514': { input: 3.00, output: 15.00 },
     'minimax/minimax-m2.5': { input: 0.50, output: 1.50 },
     'x-ai/grok-4.1-fast': { input: 0.30, output: 0.50 },

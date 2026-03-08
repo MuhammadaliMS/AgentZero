@@ -144,10 +144,10 @@ export class MeetingBot {
         return { status: 'no_audio', error: 'Recording file not created' }
       }
 
-      // Check if recording is too short (likely empty meeting or instant end detection)
-      if (durationSeconds < 10) {
-        console.warn(`[bot/${this.meetingId.slice(0, 8)}] Recording too short (${durationSeconds}s) — likely an empty or already-ended meeting`)
-        return { status: 'no_audio', error: `Recording too short: ${durationSeconds}s` }
+      // Check if recording is too short (likely empty meeting, not admitted, or instant end)
+      if (durationSeconds < 30) {
+        console.warn(`[bot/${this.meetingId.slice(0, 8)}] Recording too short (${durationSeconds}s) — likely never admitted or meeting ended immediately`)
+        return { status: 'no_audio', error: `Recording too short: ${durationSeconds}s — bot may not have been admitted to the meeting` }
       }
 
       const speakers = [...this.participants]
@@ -750,10 +750,24 @@ export class MeetingBot {
           }
 
           if (status === 'unknown' && waited >= 10_000) {
-            // After 10s with no "waiting" text, assume we joined directly (no admission needed)
-            admitted = true
-            console.log(`[bot/${this.meetingId.slice(0, 8)}] Appears to have joined directly (no admission gate detected)`)
-            break
+            // After 10s with no "waiting" text, check for actual in-call indicators
+            // Don't just assume — verify we're actually in the meeting
+            const inCall = await this.page.evaluate(() => {
+              // Look for definitive in-call UI elements
+              const endCall = document.querySelector('[aria-label*="Leave call" i], [aria-label*="End call" i], [data-tooltip*="Leave call" i]')
+              const participant = document.querySelector('[data-participant-id]')
+              const meetingToolbar = document.querySelector('[aria-label*="meeting" i][role="toolbar"], [jsname="A5il2e"]')
+              return !!(endCall || participant || meetingToolbar)
+            })
+            if (inCall) {
+              admitted = true
+              console.log(`[bot/${this.meetingId.slice(0, 8)}] Appears to have joined directly (no admission gate detected)`)
+              break
+            }
+            // Not in call yet — keep waiting (might be a slow join or host hasn't started)
+            if (waited % 15_000 < admissionPoll) {
+              console.log(`[bot/${this.meetingId.slice(0, 8)}] Not yet in meeting — no waiting text but no in-call UI either (${waited / 1000}s)`)
+            }
           }
 
           if (waited % 15_000 < admissionPoll) {

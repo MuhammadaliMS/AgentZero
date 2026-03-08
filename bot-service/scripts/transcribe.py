@@ -58,7 +58,12 @@ def preprocess_audio(input_path: str, output_dir: str, for_groq: bool = False) -
         output_path = os.path.join(output_dir, "audio.wav")
         cmd = ["ffmpeg", "-i", input_path, "-ar", "16000", "-ac", "1", "-y", output_path]
 
-    subprocess.run(cmd, capture_output=True, check=True)
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        print(f"  ERROR: ffmpeg failed (exit code {result.returncode})")
+        print(f"  ffmpeg stderr: {stderr[-500:]}")  # Last 500 chars of stderr
+        raise RuntimeError(f"ffmpeg preprocessing failed: {stderr[-200:]}")
     size_mb = os.path.getsize(output_path) / (1024 * 1024)
     print(f"  Preprocessed: {size_mb:.1f} MB")
     return output_path

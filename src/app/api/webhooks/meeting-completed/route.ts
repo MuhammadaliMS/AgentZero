@@ -3,6 +3,7 @@ import { waitUntil } from '@vercel/functions'
 import { timingSafeEqual } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { processMeeting } from '@/lib/intelligence/meeting-processor'
+import { sendMeetingNotification } from '@/lib/intelligence/meeting-notification'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -104,11 +105,19 @@ export async function POST(request: NextRequest) {
 
       // Run summarization in background (don't block webhook response)
       waitUntil(
-        processMeeting(body.meeting_id).then(result => {
+        processMeeting(body.meeting_id).then(async (result) => {
           console.log(
             `[webhook/meeting-completed] Summarization ${result.status} for ${body.meeting_id}: ` +
             `${result.actionItemsCount} actions, ${result.decisionsCount} decisions (${result.durationMs}ms)`
           )
+          // Send Slack notification after successful summarization
+          if (result.status === 'completed') {
+            try {
+              await sendMeetingNotification(body.meeting_id)
+            } catch (notifErr) {
+              console.error(`[webhook/meeting-completed] Notification failed for ${body.meeting_id}:`, notifErr)
+            }
+          }
         }).catch(err => {
           console.error(`[webhook/meeting-completed] Summarization failed for ${body.meeting_id}:`, err)
         })

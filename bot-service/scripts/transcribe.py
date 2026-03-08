@@ -114,10 +114,35 @@ def transcribe_groq(audio_path: str, language: str = "en") -> dict:
     response.raise_for_status()
     data = response.json()
 
-    words = [{"word": w["word"], "start": w["start"], "end": w["end"]} for w in data.get("words", [])]
-    segments = [{"text": s["text"].strip(), "start": s["start"], "end": s["end"]} for s in data.get("segments", [])]
+    if not isinstance(data, dict):
+        print(f"  Warning: Groq returned unexpected response type: {type(data)}")
+        return {"words": [], "segments": [], "text": ""}
 
-    return {"words": words, "segments": segments, "text": data.get("text", "")}
+    # Robustly parse words — skip any with missing keys
+    # Use `or []` because Groq can return "words": null (not just missing key)
+    words = []
+    for w in (data.get("words") or []):
+        try:
+            if isinstance(w, dict) and "word" in w:
+                words.append({"word": w["word"], "start": w.get("start", 0), "end": w.get("end", 0)})
+        except (KeyError, TypeError):
+            continue
+
+    # Robustly parse segments — skip any with missing keys
+    segments = []
+    for s in (data.get("segments") or []):
+        try:
+            if isinstance(s, dict) and "text" in s:
+                text = s["text"].strip() if isinstance(s["text"], str) else str(s.get("text", ""))
+                segments.append({"text": text, "start": s.get("start", 0), "end": s.get("end", 0)})
+        except (KeyError, TypeError, AttributeError):
+            continue
+
+    text = data.get("text", "") or ""
+    if not text and not segments and not words:
+        print("  Warning: Groq returned empty transcript (likely silent audio)")
+
+    return {"words": words, "segments": segments, "text": text}
 
 
 def transcribe_groq_chunked(chunks: list[str], language: str = "en") -> dict:
@@ -439,6 +464,19 @@ def run_pipeline(
         word_count = len(transcript.get("words", []))
         seg_count = len(transcript.get("segments", []))
         print(f"  Done: {word_count} words, {seg_count} segments ({time.time() - step_start:.1f}s)\n")
+
+        # Handle empty transcript (silent audio / no speech detected)
+        if seg_count == 0 and word_count == 0:
+            text = transcript.get("text", "").strip()
+            if not text:
+                print("  ⚠ No speech detected in recording — uploading empty transcript")
+                # Upload empty transcript to Supabase so meeting isn't stuck
+                upload_to_supabase(meeting_id, [], full_text="(No speech detected in recording)")
+                return
+            else:
+                # Text was returned but no segments — create a single segment
+                transcript["segments"] = [{"text": text, "start": 0, "end": 0}]
+                seg_count = 1
 
         # Step 3: Assign speakers
         print("[3/4] Assigning speakers...")

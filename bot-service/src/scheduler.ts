@@ -125,7 +125,7 @@ export class MeetingScheduler {
           // Update status + notify webhook
           await this.supabase
             .from('meetings')
-            .update({ status: 'recording' })
+            .update({ status: 'transcribing' })
             .eq('id', meeting.id)
 
           // Notify webhook that recording is complete
@@ -224,12 +224,27 @@ export class MeetingScheduler {
       process.stderr.write(`[transcribe/${meetingId.slice(0, 8)}] ${data}`)
     })
 
-    proc.on('close', (code) => {
+    proc.on('close', async (code) => {
       if (code === 0) {
         console.log(`[scheduler] Transcription completed for ${meetingId}`)
-        // The transcription script itself calls the webhook with transcription_complete
+        // Update meeting status to completed
+        await this.supabase
+          .from('meetings')
+          .update({
+            status: 'completed',
+            actual_end: new Date().toISOString(),
+          })
+          .eq('id', meetingId)
       } else {
         console.error(`[scheduler] Transcription failed with code ${code} for ${meetingId}`)
+        await this.supabase
+          .from('meetings')
+          .update({
+            status: 'failed',
+            actual_end: new Date().toISOString(),
+            skip_reason: `Transcription process exited with code ${code}`,
+          })
+          .eq('id', meetingId)
         this.notifyWebhook(meetingId, 'bot_error', {
           error_message: `Transcription process exited with code ${code}`,
         })

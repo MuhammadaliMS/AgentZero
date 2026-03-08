@@ -20,6 +20,10 @@ export const config = {
   // Transcription
   transcriptionEngine: process.env.TRANSCRIPTION_ENGINE || 'groq',
 
+  // Google Account (for authenticated meeting joins)
+  googleAccountUser: process.env.GOOGLE_ACCOUNT_USER || '',
+  googleAccountPassword: process.env.GOOGLE_ACCOUNT_PASSWORD || '',
+
   // Paths
   recordingDir: process.env.RECORDING_DIR || '/tmp/recordings',
   transcribeScript: process.env.TRANSCRIBE_SCRIPT || './scripts/transcribe.py',
@@ -41,4 +45,5 @@ export function validateConfig(): void {
   console.log(`  Join before: ${config.joinBeforeMinutes} min`)
   console.log(`  Max concurrent: ${config.maxConcurrentBots}`)
   console.log(`  Transcription: ${config.transcriptionEngine}`)
+  console.log(`  Google account: ${config.googleAccountUser ? config.googleAccountUser : '(not set — joining as guest)'}`)
 }

@@ -16,11 +16,16 @@
  *   9. Transcription runs separately via transcribe.py (Groq Whisper + speaker timeline)
  */
 
-import puppeteer, { type Browser, type Page } from 'puppeteer'
+import puppeteer from 'puppeteer-extra'
+import StealthPlugin from 'puppeteer-extra-plugin-stealth'
+import { type Browser, type Page } from 'puppeteer'
 import { spawn, type ChildProcess } from 'child_process'
 import { mkdirSync, existsSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { config } from './config.js'
+
+// Enable stealth mode to bypass Google's bot detection
+puppeteer.use(StealthPlugin())
 
 interface BotResult {
   status: 'recorded' | 'failed' | 'no_audio'
@@ -65,6 +70,10 @@ export class MeetingBot {
   private speakerTimeline: SpeakerEvent[] = []
   private currentSpeaker: string = ''
   private participants: Set<string> = new Set()
+
+  // Alone-in-meeting detection
+  private aloneStartTime: number = 0
+  private wasEverNotAlone: boolean = false
 
   // Bonus caption scraping
   private captionSegments: CaptionSegment[] = []
@@ -118,6 +127,12 @@ export class MeetingBot {
         return { status: 'no_audio', error: 'Recording file not created' }
       }
 
+      // Check if recording is too short (likely empty meeting or instant end detection)
+      if (durationSeconds < 10) {
+        console.warn(`[bot/${this.meetingId.slice(0, 8)}] Recording too short (${durationSeconds}s) — likely an empty or already-ended meeting`)
+        return { status: 'no_audio', error: `Recording too short: ${durationSeconds}s` }
+      }
+
       const speakers = [...this.participants]
       console.log(`[bot/${this.meetingId.slice(0, 8)}] Done: ${durationSeconds}s, ${this.speakerTimeline.length} speaker events, ${speakers.length} participants: ${speakers.join(', ')}`)
 
@@ -146,18 +161,30 @@ export class MeetingBot {
   // ─── Browser Launch ──────────────────────────────────────────────────
 
   private async launchBrowser(): Promise<void> {
+    // Use a persistent Chrome profile so Google login session survives across bot runs.
+    // This eliminates the CAPTCHA/verification challenges that happen with fresh browsers.
+    const chromeProfileDir = join(config.recordingDir, 'chrome_profile')
+    mkdirSync(chromeProfileDir, { recursive: true })
+
     this.browser = await puppeteer.launch({
-      headless: true,
+      headless: false,  // Use Xvfb virtual display — looks like real browser to Google
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      userDataDir: chromeProfileDir,  // Persist cookies, localStorage, session data
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
+        // Auto-grant media permissions (no popup) but use REAL PulseAudio devices
+        // NOT --use-fake-device-for-media-stream (that exposes "Fake Default Audio Input" to Google)
         '--use-fake-ui-for-media-stream',
-        '--use-fake-device-for-media-stream',
         '--autoplay-policy=no-user-gesture-required',
         '--enable-features=PulseAudioLoopbackForScreenCapture',
         '--window-size=1280,720',
+        '--disable-blink-features=AutomationControlled',
+        // Additional anti-detection flags
+        '--disable-features=TranslateUI',
+        '--lang=en-US',
       ],
       env: {
         ...process.env,
@@ -166,11 +193,279 @@ export class MeetingBot {
       },
     })
 
-    this.page = await this.browser.newPage()
+    // Use the default page created with the browser (avoids extra blank tabs)
+    const pages = await this.browser.pages()
+    this.page = pages[0] || await this.browser.newPage()
     await this.page.setViewport({ width: 1280, height: 720 })
 
+    // User agent MUST match the actual Chrome version in the Docker image
+    // Mismatched versions are a strong bot detection signal
+    await this.page.setUserAgent(
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
+    )
+
+    // Hide navigator.webdriver (Puppeteer sets this to true, which Google detects)
+    await this.page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
+      // Also hide automation-related properties
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],  // Non-empty plugins array
+      })
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en'],
+      })
+      // Spoof chrome.runtime to look like a real Chrome
+      ;(window as any).chrome = { runtime: {}, loadTimes: () => ({}), csi: () => ({}) }
+    })
+
     const context = this.browser.defaultBrowserContext()
-    await context.overridePermissions(this.meetingUrl, ['microphone'])
+    await context.overridePermissions('https://meet.google.com', ['microphone', 'camera', 'notifications'])
+  }
+
+  // ─── Google Account Sign-In ─────────────────────────────────────────
+
+  /**
+   * Check if a Meet page indicates we're NOT signed into Google.
+   * Call this AFTER navigating to the Meet URL.
+   */
+  private async isMeetPageGuest(): Promise<boolean> {
+    if (!this.page) return true
+    try {
+      const pageContent = await this.page.evaluate(() => document.body.innerText.substring(0, 1500).toLowerCase())
+      // Guest indicators: "What's your name?" input prompt, or "Sign in" link visible
+      const isGuest = pageContent.includes("what's your name") ||
+          pageContent.includes('what\u2019s your name') ||
+          (pageContent.includes('sign in') && pageContent.includes('ask to join'))
+      return isGuest
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Check if we have an existing Google session in the persistent Chrome profile.
+   * Returns true if authenticated, false if not.
+   * Does NOT attempt fresh sign-in (that triggers CAPTCHA).
+   */
+  private async signInToGoogle(): Promise<boolean> {
+    if (!this.page) return false
+
+    try {
+      await this.page.goto('https://accounts.google.com/', { waitUntil: 'networkidle2', timeout: 15000 })
+      const url = this.page.url()
+
+      const isSignInPage = url.includes('accounts.google.com/signin') ||
+          url.includes('accounts.google.com/ServiceLogin') ||
+          url.includes('accounts.google.com/v3/signin') ||
+          url.includes('accounts.google.com/AccountChooser')
+
+      if (!isSignInPage) {
+        const pageContent = await this.page.evaluate(() => document.body.innerText.substring(0, 2000).toLowerCase())
+        const email = config.googleAccountUser.toLowerCase()
+        if (pageContent.includes(email)) {
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] ✓ Google session active (verified ${email})`)
+          return true
+        }
+      }
+
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] No active Google session — will join as guest`)
+      return false
+    } catch (err) {
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Session check failed: ${(err as Error).message}`)
+      return false
+    }
+  }
+
+  private async performFreshGoogleSignIn(): Promise<boolean> {
+    if (!this.page) return false
+
+    const email = config.googleAccountUser
+    const password = config.googleAccountPassword
+
+    if (!email || !password) {
+      console.warn(`[bot/${this.meetingId.slice(0, 8)}] No Google credentials configured — joining as guest`)
+      return true // Continue without auth
+    }
+
+    try {
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Signing into Google as ${email}...`)
+
+      // Navigate to Google sign-in
+      await this.page.goto('https://accounts.google.com/signin/v2/identifier?flowName=GlifWebSignIn&flowEntry=ServiceLogin', {
+        waitUntil: 'networkidle2',
+        timeout: 30000,
+      })
+      await this.sleep(2000)
+
+      // Debug: log page state
+      const signInUrl = this.page.url()
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Sign-in page URL: ${signInUrl}`)
+
+      // ── Enter email ────────────────────────────────────────────────
+      const emailInput = await this.page.waitForSelector('input[type="email"]', { timeout: 10000 })
+      if (!emailInput) throw new Error('Email input not found on sign-in page')
+
+      await emailInput.click()
+      await this.sleep(300)
+      await emailInput.type(email, { delay: 50 })
+      await this.sleep(500)
+
+      // Click "Next" button
+      const emailNext = await this.page.$('#identifierNext')
+      if (emailNext) {
+        await emailNext.click()
+      } else {
+        // Fallback: find button with "Next" text
+        await this.page.evaluate(() => {
+          const buttons = document.querySelectorAll('button, [role="button"]')
+          for (const btn of buttons) {
+            const text = btn.textContent?.trim().toLowerCase() || ''
+            if (text === 'next' || text === 'suivant' || text === 'weiter') {
+              (btn as HTMLElement).click()
+              return
+            }
+          }
+        })
+      }
+
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Email entered, waiting for password field...`)
+      await this.sleep(3000)
+
+      // ── Enter password ─────────────────────────────────────────────
+      // Wait for the password input to become visible (Google transitions between pages)
+      let passwordInput = null
+      for (let i = 0; i < 10; i++) {
+        passwordInput = await this.page.$('input[type="password"]:not([aria-hidden="true"])')
+        if (passwordInput) {
+          // Check if it's actually visible
+          const isVisible = await passwordInput.evaluate((el: Element) => {
+            const style = window.getComputedStyle(el)
+            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'
+          })
+          if (isVisible) break
+          passwordInput = null
+        }
+        await this.sleep(1000)
+      }
+
+      if (!passwordInput) {
+        // Debug: check what's on the page
+        const pageText = await this.page.evaluate(() => document.body.innerText.substring(0, 500))
+        console.error(`[bot/${this.meetingId.slice(0, 8)}] Password input not found. Page text: ${pageText.replace(/\n/g, ' | ').substring(0, 300)}`)
+
+        // Take debug screenshot
+        const screenshotPath = join(config.recordingDir, `${this.meetingId}_auth_debug.png`)
+        await this.page.screenshot({ path: screenshotPath, fullPage: true })
+        console.error(`[bot/${this.meetingId.slice(0, 8)}] Auth debug screenshot: ${screenshotPath}`)
+        throw new Error('Password input not found after entering email')
+      }
+
+      await passwordInput.click()
+      await this.sleep(300)
+      await passwordInput.type(password, { delay: 50 })
+      await this.sleep(500)
+
+      // Click "Next" button for password
+      const passNext = await this.page.$('#passwordNext')
+      if (passNext) {
+        await passNext.click()
+      } else {
+        await this.page.evaluate(() => {
+          const buttons = document.querySelectorAll('button, [role="button"]')
+          for (const btn of buttons) {
+            const text = btn.textContent?.trim().toLowerCase() || ''
+            if (text === 'next' || text === 'suivant' || text === 'weiter') {
+              (btn as HTMLElement).click()
+              return
+            }
+          }
+        })
+      }
+
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Password entered, waiting for sign-in to complete...`)
+      await this.sleep(5000)
+
+      // ── Handle post-login screens ──────────────────────────────────
+      // Google may show: "Verify it's you", recovery phone, "I agree" TOS, etc.
+      const currentUrl = this.page.url()
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Post-login URL: ${currentUrl}`)
+
+      // Handle "I agree" / Terms of Service
+      try {
+        const agreeBtn = await this.page.evaluate(() => {
+          const buttons = document.querySelectorAll('button, [role="button"]')
+          for (const btn of buttons) {
+            const text = btn.textContent?.trim().toLowerCase() || ''
+            if (text === 'i agree' || text === 'agree' || text === 'accept') {
+              (btn as HTMLElement).click()
+              return true
+            }
+          }
+          return false
+        })
+        if (agreeBtn) {
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Accepted Google TOS`)
+          await this.sleep(3000)
+        }
+      } catch { /* no TOS screen */ }
+
+      // Handle "Not now" for recovery options, 2FA prompts, etc.
+      try {
+        for (let i = 0; i < 3; i++) {
+          const dismissed = await this.page.evaluate(() => {
+            const links = document.querySelectorAll('button, a, [role="button"], [role="link"]')
+            for (const el of links) {
+              const text = el.textContent?.trim().toLowerCase() || ''
+              if (text === 'not now' || text === 'skip' || text === 'no thanks' ||
+                  text === 'remind me later' || text === 'done' || text === 'confirm') {
+                (el as HTMLElement).click()
+                return text
+              }
+            }
+            return null
+          })
+          if (dismissed) {
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Dismissed post-login prompt: "${dismissed}"`)
+            await this.sleep(2000)
+          } else {
+            break
+          }
+        }
+      } catch { /* no prompts */ }
+
+      // ── Verify sign-in succeeded ───────────────────────────────────
+      const finalUrl = this.page.url()
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Final URL after sign-in: ${finalUrl}`)
+
+      // Check for challenge/verification pages (2FA, CAPTCHA, etc.)
+      if (finalUrl.includes('challenge') || finalUrl.includes('signin/rejected') ||
+          finalUrl.includes('deniedsigninrejected')) {
+        const pageText = await this.page.evaluate(() => document.body.innerText.substring(0, 500))
+        console.error(`[bot/${this.meetingId.slice(0, 8)}] Google is requesting verification: ${pageText.replace(/\n/g, ' | ').substring(0, 300)}`)
+
+        const screenshotPath = join(config.recordingDir, `${this.meetingId}_auth_challenge.png`)
+        await this.page.screenshot({ path: screenshotPath, fullPage: true })
+        console.error(`[bot/${this.meetingId.slice(0, 8)}] Challenge screenshot: ${screenshotPath}`)
+        return false
+      }
+
+      // ── Verify sign-in completed ──────────────────────────────────
+      // With userDataDir, Chrome automatically persists the session — no manual cookie saving needed
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] ✓ Google sign-in successful! Session persisted in Chrome profile`)
+
+      return true
+    } catch (err) {
+      console.error(`[bot/${this.meetingId.slice(0, 8)}] Google sign-in failed:`, (err as Error).message)
+
+      // Take debug screenshot
+      try {
+        const screenshotPath = join(config.recordingDir, `${this.meetingId}_auth_debug.png`)
+        await this.page.screenshot({ path: screenshotPath, fullPage: true })
+        console.error(`[bot/${this.meetingId.slice(0, 8)}] Auth debug screenshot: ${screenshotPath}`)
+      } catch { /* screenshot failed */ }
+
+      return false
+    }
   }
 
   // ─── Join Meeting ────────────────────────────────────────────────────
@@ -192,63 +487,207 @@ export class MeetingBot {
     if (!this.page) return false
 
     try {
+      // ── Step 0: Check if we have an existing Google session ────────────
+      // Strategy: Only USE an existing session. Never attempt fresh sign-in
+      // (fresh sign-in triggers CAPTCHA). Join as guest if no session exists.
+      if (config.googleAccountUser && config.googleAccountPassword) {
+        const signedIn = await this.signInToGoogle()
+        if (signedIn) {
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] ✓ Using authenticated Google session`)
+        } else {
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] No active session — joining as guest (avoids CAPTCHA)`)
+        }
+      }
+
+      // Navigate to the Meet URL
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Navigating to: ${this.meetingUrl}`)
       await this.page.goto(this.meetingUrl, { waitUntil: 'networkidle2', timeout: 30000 })
       await this.sleep(3000)
 
-      // Turn off camera
-      try {
-        const cam = await this.page.$('[data-is-muted][aria-label*="camera" i]')
-          || await this.page.$('[aria-label*="Turn off camera" i]')
-          || await this.page.$('[data-tooltip*="camera" i]')
-        if (cam) await cam.click()
-      } catch { /* already off */ }
-      await this.sleep(1000)
+      // Debug: log current URL and page title
+      const currentUrl = this.page.url()
+      const pageTitle = await this.page.title()
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Page loaded — URL: ${currentUrl}, Title: ${pageTitle}`)
 
-      // Turn off mic
+      // ── Step 1: Handle cookie consent / privacy dialogs ─────────────────
       try {
-        const mic = await this.page.$('[data-is-muted][aria-label*="microphone" i]')
-          || await this.page.$('[aria-label*="Turn off microphone" i]')
-          || await this.page.$('[data-tooltip*="microphone" i]')
-        if (mic) await mic.click()
-      } catch { /* already off */ }
-      await this.sleep(1000)
+        for (const sel of [
+          'button[aria-label*="Accept all" i]',
+          'button[aria-label*="Reject all" i]',
+          '[aria-label*="Reject all" i]',
+          'button[id*="accept"]',
+          'form[action*="consent"] button',
+        ]) {
+          const consentBtn = await this.page.$(sel)
+          if (consentBtn) {
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Dismissing consent dialog: ${sel}`)
+            await consentBtn.click()
+            await this.sleep(2000)
+            break
+          }
+        }
+        for (const btn of await this.page.$$('button')) {
+          const text = await btn.evaluate((el: Element) => el.textContent?.trim().toLowerCase() || '')
+          if (text === 'accept all' || text === 'reject all' || text === 'i agree' ||
+              text === 'continue' || text === 'accept & continue') {
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Dismissing consent: "${text}"`)
+            await btn.click()
+            await this.sleep(2000)
+            break
+          }
+        }
+      } catch { /* no consent dialogs */ }
 
-      // Dismiss dialogs
+      await this.sleep(2000)
+
+      // Debug: log what we see on the page
+      const pageText = await this.page.evaluate(() => document.body.innerText.substring(0, 800))
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Page text: ${pageText.replace(/\n/g, ' | ').substring(0, 500)}`)
+
+      // ── Step 2: Handle "Do you want people to see and hear you?" screen ──
+      // Google Meet shows this for unauthenticated users BEFORE the pre-join lobby
+      try {
+        // Option A: Click "Continue without microphone and camera"
+        const continueWithoutLink = await this.page.evaluate(() => {
+          const links = document.querySelectorAll('a, button, [role="link"], [role="button"]')
+          for (const el of links) {
+            const text = el.textContent?.trim().toLowerCase() || ''
+            if (text.includes('continue without microphone') || text.includes('without microphone and camera')) {
+              (el as HTMLElement).click()
+              return true
+            }
+          }
+          return false
+        })
+
+        if (continueWithoutLink) {
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Clicked "Continue without microphone and camera"`)
+          await this.sleep(3000)
+        } else {
+          // Option B: Click "Use microphone and camera" button
+          const useMicBtn = await this.page.evaluate(() => {
+            const btns = document.querySelectorAll('button, [role="button"]')
+            for (const btn of btns) {
+              const text = btn.textContent?.trim().toLowerCase() || ''
+              if (text.includes('use microphone and camera')) {
+                (btn as HTMLElement).click()
+                return true
+              }
+            }
+            return false
+          })
+          if (useMicBtn) {
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Clicked "Use microphone and camera"`)
+            await this.sleep(3000)
+          }
+        }
+      } catch { /* not on this screen */ }
+
+      // ── Step 3: Dismiss "Got it" / info popups ─────────────────────────
       try {
         for (const btn of await this.page.$$('button')) {
           const text = await btn.evaluate((el: Element) => el.textContent?.trim().toLowerCase())
-          if (text === 'got it' || text === 'dismiss') {
+          if (text === 'got it' || text === 'dismiss' || text === 'close' || text === 'ok') {
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Dismissed: "${text}"`)
             await btn.click()
             await this.sleep(500)
           }
         }
       } catch { /* no dialogs */ }
 
-      // Enter name if prompted
+      // Debug: log page state after pre-screens
+      const pageText2 = await this.page.evaluate(() => document.body.innerText.substring(0, 500))
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] After pre-screens: ${pageText2.replace(/\n/g, ' | ').substring(0, 400)}`)
+
+      // ── Step 4: Turn off camera + mic if on the pre-join lobby ──────────
+      try {
+        const cam = await this.page.$('[data-is-muted][aria-label*="camera" i]')
+          || await this.page.$('[aria-label*="Turn off camera" i]')
+          || await this.page.$('[data-tooltip*="camera" i]')
+        if (cam) {
+          await cam.click()
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Camera toggled off`)
+        }
+      } catch { /* already off */ }
+      await this.sleep(500)
+
+      try {
+        const mic = await this.page.$('[data-is-muted][aria-label*="microphone" i]')
+          || await this.page.$('[aria-label*="Turn off microphone" i]')
+          || await this.page.$('[data-tooltip*="microphone" i]')
+        if (mic) {
+          await mic.click()
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Microphone toggled off`)
+        }
+      } catch { /* already off */ }
+      await this.sleep(500)
+
+      // ── Step 5: Enter name if prompted ─────────────────────────────────
       try {
         const nameInput = await this.page.$('input[aria-label*="name" i]')
           || await this.page.$('input[placeholder*="name" i]')
+          || await this.page.$('input[aria-label*="Your name" i]')
+          || await this.page.$('input[type="text"]')
         if (nameInput) {
           await nameInput.click({ clickCount: 3 })
-          await nameInput.type('Captain (Meeting Bot)')
+          await nameInput.type('Zerowing (Meeting Bot)')
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Entered bot name`)
           await this.sleep(500)
         }
       } catch { /* no name prompt */ }
 
-      // Click join button
+      // Click join button — try multiple strategies
       let joined = false
-      for (const sel of ['button[data-idom-class*="join"]', '[aria-label*="Join now" i]', '[aria-label*="Ask to join" i]']) {
+
+      // Strategy 1: Direct selectors
+      const joinSelectors = [
+        'button[data-idom-class*="join"]',
+        '[aria-label*="Join now" i]',
+        '[aria-label*="Ask to join" i]',
+        '[aria-label*="Join meeting" i]',
+        'button[jsname="Qx7uuf"]',  // Known Google Meet join button jsname
+      ]
+      for (const sel of joinSelectors) {
         try {
           const btn = await this.page.$(sel)
-          if (btn) { await btn.click(); joined = true; break }
+          if (btn) {
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Found join button via selector: ${sel}`)
+            await btn.click()
+            joined = true
+            break
+          }
         } catch { /* try next */ }
       }
 
+      // Strategy 2: Text-based search on buttons and spans
       if (!joined) {
+        const joinTexts = ['join now', 'ask to join', 'join meeting', 'join']
         for (const btn of await this.page.$$('button, [role="button"]')) {
           const text = await btn.evaluate((el: Element) => el.textContent?.trim().toLowerCase() || '')
-          if (text.includes('join now') || text.includes('ask to join') || text === 'join') {
-            await btn.click()
+          for (const target of joinTexts) {
+            if (text === target || text.includes(target)) {
+              console.log(`[bot/${this.meetingId.slice(0, 8)}] Found join button via text: "${text}"`)
+              await btn.click()
+              joined = true
+              break
+            }
+          }
+          if (joined) break
+        }
+      }
+
+      // Strategy 3: Look for spans inside buttons containing join text
+      if (!joined) {
+        const spans = await this.page.$$('button span, [role="button"] span')
+        for (const span of spans) {
+          const text = await span.evaluate((el: Element) => el.textContent?.trim().toLowerCase() || '')
+          if (text === 'join now' || text === 'ask to join' || text === 'join') {
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Found join button via span text: "${text}"`)
+            // Click the parent button, not the span
+            await span.evaluate((el: Element) => {
+              const button = el.closest('button') || el.closest('[role="button"]')
+              if (button) (button as HTMLElement).click()
+            })
             joined = true
             break
           }
@@ -256,6 +695,24 @@ export class MeetingBot {
       }
 
       if (!joined) {
+        // Debug: take a screenshot and dump button info
+        try {
+          const screenshotPath = join(config.recordingDir, `${this.meetingId}_debug.png`)
+          await this.page.screenshot({ path: screenshotPath, fullPage: true })
+          console.error(`[bot/${this.meetingId.slice(0, 8)}] Debug screenshot saved: ${screenshotPath}`)
+
+          const allButtons = await this.page.evaluate(() => {
+            const btns = document.querySelectorAll('button, [role="button"]')
+            return Array.from(btns).map(b => ({
+              text: b.textContent?.trim().substring(0, 80),
+              ariaLabel: b.getAttribute('aria-label'),
+              id: b.id,
+              className: b.className?.toString().substring(0, 60),
+            }))
+          })
+          console.error(`[bot/${this.meetingId.slice(0, 8)}] All buttons on page:`, JSON.stringify(allButtons, null, 2))
+        } catch { /* debug failed */ }
+
         console.error(`[bot/${this.meetingId.slice(0, 8)}] Could not find join button`)
         return false
       }
@@ -473,7 +930,7 @@ export class MeetingBot {
         ? await this.detectGoogleMeetSpeaker()
         : await this.detectZoomSpeaker()
 
-      if (speaker && speaker !== 'Captain (Meeting Bot)') {
+      if (speaker && speaker !== 'Zerowing' && speaker !== 'Zerowing (Meeting Bot)') {
         this.participants.add(speaker)
 
         if (speaker !== this.currentSpeaker) {
@@ -705,15 +1162,79 @@ export class MeetingBot {
   private async isMeetingEnded(): Promise<boolean> {
     if (!this.page) return true
     try {
-      const pageContent = await this.page.evaluate(() => document.body.innerText)
-      const endPhrases = [
-        'you left the meeting', "you've left the meeting", 'the meeting has ended',
-        'the call has ended', 'return to home screen', 'removed from the meeting', 'meeting ended',
-      ]
-      const lower = pageContent.toLowerCase()
-      for (const phrase of endPhrases) {
-        if (lower.includes(phrase)) return true
+      const result = await this.page.evaluate(() => {
+        const bodyText = document.body.innerText.toLowerCase()
+
+        // Check for explicit end-of-meeting text
+        const endPhrases = [
+          'you left the meeting', "you've left the meeting", 'the meeting has ended',
+          'the call has ended', 'return to home screen', 'removed from the meeting', 'meeting ended',
+        ]
+        for (const phrase of endPhrases) {
+          if (bodyText.includes(phrase)) return { ended: true, reason: phrase }
+        }
+
+        // Check participant count — Google Meet shows participant count in various ways
+        // Method 1: Check the people panel button which shows a badge count
+        const participantBadge = document.querySelector('[data-participant-count]')
+        if (participantBadge) {
+          const count = parseInt(participantBadge.getAttribute('data-participant-count') || '0', 10)
+          return { ended: false, participantCount: count }
+        }
+
+        // Method 2: Look for "You're the only one here" text
+        if (bodyText.includes("you're the only one here") || bodyText.includes('no one else is here')) {
+          return { ended: false, participantCount: 1, alone: true }
+        }
+
+        // Method 3: Check the participant list count from the people button aria-label
+        // Google Meet's people button often has aria-label like "1 participant" or "Show everyone (1)"
+        const peopleBtn = document.querySelector('[aria-label*="participant" i]')
+          || document.querySelector('[aria-label*="people" i]')
+          || document.querySelector('[data-tooltip*="participant" i]')
+        if (peopleBtn) {
+          const label = peopleBtn.getAttribute('aria-label') || peopleBtn.getAttribute('data-tooltip') || ''
+          const match = label.match(/(\d+)/)
+          if (match) {
+            return { ended: false, participantCount: parseInt(match[1], 10) }
+          }
+        }
+
+        // Method 4: Count visible participant tiles (each has a data-participant-id)
+        const tiles = document.querySelectorAll('[data-participant-id]')
+        if (tiles.length > 0) {
+          return { ended: false, participantCount: tiles.length }
+        }
+
+        return { ended: false, participantCount: -1 } // Unknown
+      })
+
+      if (result.ended) {
+        console.log(`[bot/${this.meetingId.slice(0, 8)}] Meeting end detected: "${result.reason}"`)
+        return true
       }
+
+      // Alone-in-meeting detection: if we're the only participant for 60+ seconds, leave
+      const ALONE_TIMEOUT_MS = 60_000 // 60 seconds alone → leave
+      const isAlone = result.participantCount === 1 || (result as any).alone === true
+
+      if (isAlone && this.wasEverNotAlone) {
+        if (this.aloneStartTime === 0) {
+          this.aloneStartTime = Date.now()
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Bot is alone in meeting — starting ${ALONE_TIMEOUT_MS / 1000}s countdown`)
+        } else if (Date.now() - this.aloneStartTime >= ALONE_TIMEOUT_MS) {
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Bot has been alone for ${ALONE_TIMEOUT_MS / 1000}s — all participants left, ending recording`)
+          return true
+        }
+      } else if (!isAlone && (result.participantCount ?? 0) > 1) {
+        // Others are present
+        if (!this.wasEverNotAlone) {
+          this.wasEverNotAlone = true
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Detected ${result.participantCount} participants in meeting`)
+        }
+        this.aloneStartTime = 0 // Reset alone timer
+      }
+
       if (this.page.isClosed()) return true
       return false
     } catch {

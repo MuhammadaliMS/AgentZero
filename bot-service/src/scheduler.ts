@@ -102,8 +102,10 @@ export class MeetingScheduler {
   }
 
   private async spawnBot(meeting: ScheduledMeeting): Promise<void> {
-    // Mark meeting as joining
-    await this.supabase
+    // Atomically claim this meeting — only update if still 'scheduled'
+    // This prevents double-joins if two poll cycles overlap or a failed meeting
+    // was somehow not properly marked.
+    const { data: claimed, error: claimErr } = await this.supabase
       .from('meetings')
       .update({
         status: 'joining',
@@ -111,6 +113,14 @@ export class MeetingScheduler {
         bot_session_id: `bot-${process.pid}-${Date.now()}`,
       })
       .eq('id', meeting.id)
+      .eq('status', 'scheduled')
+      .select('id')
+      .single()
+
+    if (claimErr || !claimed) {
+      console.warn(`[scheduler] Meeting ${meeting.id.slice(0, 8)} already claimed or no longer scheduled — skipping`)
+      return
+    }
 
     const bot = new MeetingBot(meeting.id, meeting.meeting_url, meeting.platform, meeting.title)
 

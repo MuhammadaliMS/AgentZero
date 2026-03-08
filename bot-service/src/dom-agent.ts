@@ -205,12 +205,12 @@ function createDomTools(page: Page) {
     name: 'get_dom_snapshot',
     description: 'Get a cleaned DOM snapshot of the page. Returns compact HTML with data-*, aria-*, computed styles on participant tiles. Use this to understand the overall page structure. Optionally specify a root CSS selector to focus on a subtree, and max depth (default 5).',
     parameters: z.object({
-      root_selector: z.string().optional().describe('CSS selector for root element (default: document.body)'),
-      max_depth: z.number().optional().default(5).describe('Max DOM traversal depth (default: 5)'),
+      root_selector: z.string().optional().nullable().describe('CSS selector for root element (default: document.body)'),
+      max_depth: z.number().optional().nullable().default(5).describe('Max DOM traversal depth (default: 5)'),
     }),
     execute: async (args) => {
       try {
-        const html = await getCleanDomSnapshot(page, args.root_selector || undefined, args.max_depth)
+        const html = await getCleanDomSnapshot(page, args.root_selector || undefined, args.max_depth ?? 5)
         if (!html) return 'DOM snapshot is empty — page may not be fully loaded.'
         return html.slice(0, 15000) // Cap at 15KB to stay within context
       } catch (e) {
@@ -258,7 +258,7 @@ function createDomTools(page: Page) {
     description: 'Test a CSS selector against the live DOM. Returns match count, and for each matched element: tag name, text content, visibility, and key attributes (id, class, aria-label, data-self-name, data-participant-id, data-is-speaking, data-sender-name, role, jsname, data-tooltip). ALWAYS use this to verify selectors before submitting them.',
     parameters: z.object({
       selector: z.string().describe('CSS selector to test'),
-      max_results: z.number().optional().default(5).describe('Max elements to return details for (default: 5)'),
+      max_results: z.number().optional().nullable().default(5).describe('Max elements to return details for (default: 5)'),
     }),
     execute: async (args) => {
       try {
@@ -289,7 +289,7 @@ function createDomTools(page: Page) {
           } catch (e) {
             return { error: (e as Error).message }
           }
-        }, args.selector, args.max_results)
+        }, args.selector, args.max_results ?? 5)
         return JSON.stringify(result, null, 2)
       } catch (e) {
         return `Error testing selector: ${(e as Error).message.slice(0, 200)}`
@@ -302,7 +302,7 @@ function createDomTools(page: Page) {
     description: 'Get computed CSS styles for elements matching a selector. Returns border, outline, background color, and class list for each element. Critical for speaker detection — the active speaker typically has a different border/outline color. Compare styles between tiles to find the speaking indicator.',
     parameters: z.object({
       selector: z.string().describe('CSS selector to match elements'),
-      max_results: z.number().optional().default(5).describe('Max elements to return (default: 5)'),
+      max_results: z.number().optional().nullable().default(5).describe('Max elements to return (default: 5)'),
     }),
     execute: async (args) => {
       try {
@@ -331,7 +331,7 @@ function createDomTools(page: Page) {
           } catch (e) {
             return { error: (e as Error).message }
           }
-        }, args.selector, args.max_results)
+        }, args.selector, args.max_results ?? 5)
         return JSON.stringify(result, null, 2)
       } catch (e) {
         return `Error getting styles: ${(e as Error).message.slice(0, 200)}`

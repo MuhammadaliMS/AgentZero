@@ -1522,16 +1522,26 @@ export class MeetingBot {
         return true
       }
 
-      // Alone-in-meeting detection: if we're the only participant for 60+ seconds, leave
-      const ALONE_TIMEOUT_MS = 60_000 // 60 seconds alone → leave
+      // Alone-in-meeting detection
+      const ALONE_TIMEOUT_MS = 60_000        // 60s alone after others were seen → leave
+      const ALONE_SINCE_JOIN_MS = 180_000    // 3min alone since join (nobody ever seen) → leave
       const isAlone = result.participantCount === 1 || (result as any).alone === true
 
-      if (isAlone && this.wasEverNotAlone) {
+      if (isAlone) {
         if (this.aloneStartTime === 0) {
           this.aloneStartTime = Date.now()
-          console.log(`[bot/${this.meetingId.slice(0, 8)}] Bot is alone in meeting — starting ${ALONE_TIMEOUT_MS / 1000}s countdown`)
-        } else if (Date.now() - this.aloneStartTime >= ALONE_TIMEOUT_MS) {
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Bot is alone in meeting — starting countdown`)
+        }
+
+        const aloneFor = Date.now() - this.aloneStartTime
+
+        if (this.wasEverNotAlone && aloneFor >= ALONE_TIMEOUT_MS) {
+          // Everyone left after meeting started
           console.log(`[bot/${this.meetingId.slice(0, 8)}] Bot has been alone for ${ALONE_TIMEOUT_MS / 1000}s — all participants left, ending recording`)
+          return true
+        } else if (!this.wasEverNotAlone && aloneFor >= ALONE_SINCE_JOIN_MS) {
+          // Nobody ever joined — meeting is over or empty
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Bot has been alone for ${ALONE_SINCE_JOIN_MS / 1000}s since join — no participants ever detected, leaving meeting`)
           return true
         }
       } else if (!isAlone && (result.participantCount ?? 0) > 1) {

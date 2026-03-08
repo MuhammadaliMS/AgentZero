@@ -873,21 +873,31 @@ You MUST produce structured output matching the PatrolFindings schema.
   return sections.join('\n')
 }
 
-// ─── OpenRouter Provider ─────────────────────────────────────────────────────
-// Use the existing OPENROUTER_API_KEY to route to any model (Grok, GPT, etc.)
-// Falls back to OPENAI_API_KEY + direct OpenAI if OpenRouter isn't configured.
+// ─── NVIDIA NIM / OpenRouter Provider ────────────────────────────────────────
+// Priority: NVIDIA NIM → OpenRouter → direct OpenAI.
 
 function getPatrolProvider(): OpenAIProvider {
+  // Priority 1: NVIDIA NIM
+  const nvidiaKey = process.env.NVIDIA_API_KEY
+  if (nvidiaKey) {
+    return new OpenAIProvider({
+      apiKey: nvidiaKey,
+      baseURL: 'https://integrate.api.nvidia.com/v1',
+      useResponses: false,
+    })
+  }
+
+  // Priority 2: OpenRouter
   const openRouterKey = process.env.OPENROUTER_API_KEY
   if (openRouterKey) {
     return new OpenAIProvider({
       apiKey: openRouterKey,
       baseURL: 'https://openrouter.ai/api/v1',
-      useResponses: false, // OpenRouter only supports chat completions
+      useResponses: false,
     })
   }
 
-  // Fallback to direct OpenAI
+  // Priority 3: Direct OpenAI
   const openaiKey = process.env.OPENAI_API_KEY
   if (openaiKey) {
     return new OpenAIProvider({
@@ -896,11 +906,11 @@ function getPatrolProvider(): OpenAIProvider {
     })
   }
 
-  throw new Error('Neither OPENROUTER_API_KEY nor OPENAI_API_KEY is configured')
+  throw new Error('Patrol requires NVIDIA_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.')
 }
 
-// Default model: Grok 4.1 fast via OpenRouter (matches existing extractor model)
-const DEFAULT_PATROL_MODEL = 'x-ai/grok-4.1-fast'
+// Default model: Qwen 3.5 via NVIDIA NIM
+const DEFAULT_PATROL_MODEL = 'qwen/qwen3.5-397b-a17b'
 
 // ─── Agent Factory + Runner ──────────────────────────────────────────────────
 

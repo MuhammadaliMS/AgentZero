@@ -1112,9 +1112,20 @@ ${o.steps.map(s => `  - [${s.status}] Step ${s.stepOrder}: ${s.description}${s.o
   return sections.join('\n')
 }
 
-// ─── OpenRouter Provider ─────────────────────────────────────────────────
+// ─── NVIDIA NIM / OpenRouter Provider ────────────────────────────────────
 
 export function getChiefAnalystProvider(): OpenAIProvider {
+  // Priority 1: NVIDIA NIM
+  const nvidiaKey = process.env.NVIDIA_API_KEY
+  if (nvidiaKey) {
+    return new OpenAIProvider({
+      apiKey: nvidiaKey,
+      baseURL: 'https://integrate.api.nvidia.com/v1',
+      useResponses: false,
+    })
+  }
+
+  // Priority 2: OpenRouter
   const openRouterKey = process.env.OPENROUTER_API_KEY
   if (openRouterKey) {
     return new OpenAIProvider({
@@ -1130,10 +1141,10 @@ export function getChiefAnalystProvider(): OpenAIProvider {
       useResponses: false,
     })
   }
-  throw new Error('Neither OPENROUTER_API_KEY nor OPENAI_API_KEY is configured')
+  throw new Error('Chief Analyst requires NVIDIA_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.')
 }
 
-const DEFAULT_CHIEF_ANALYST_MODEL = 'minimax/minimax-m2.5'
+const DEFAULT_CHIEF_ANALYST_MODEL = 'qwen/qwen3.5-397b-a17b'
 
 // ─── Runner ──────────────────────────────────────────────────────────────
 

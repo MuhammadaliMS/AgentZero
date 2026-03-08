@@ -25,8 +25,16 @@ export const config = {
   googleAccountPassword: process.env.GOOGLE_ACCOUNT_PASSWORD || '',
 
   // DOM Agent (LLM-powered DOM understanding)
+  // Priority: NVIDIA NIM → OpenRouter
+  nvidiaApiKey: process.env.NVIDIA_API_KEY || '',
   openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
-  domAgentModel: process.env.DOM_AGENT_MODEL || 'minimax/minimax-m2.5',
+  domAgentApiKey: process.env.NVIDIA_API_KEY || process.env.OPENROUTER_API_KEY || '',
+  domAgentBaseUrl: process.env.NVIDIA_API_KEY
+    ? 'https://integrate.api.nvidia.com/v1'
+    : 'https://openrouter.ai/api/v1',
+  domAgentModel: process.env.DOM_AGENT_MODEL || (process.env.NVIDIA_API_KEY
+    ? 'qwen/qwen3.5-397b-a17b'
+    : 'minimax/minimax-m2.5'),
   domAgentEnabled: process.env.DOM_AGENT_ENABLED !== 'false', // enabled by default
 
   // Paths
@@ -51,5 +59,6 @@ export function validateConfig(): void {
   console.log(`  Max concurrent: ${config.maxConcurrentBots}`)
   console.log(`  Transcription: ${config.transcriptionEngine}`)
   console.log(`  Google account: ${config.googleAccountUser ? config.googleAccountUser : '(not set — joining as guest)'}`)
-  console.log(`  DOM Agent: ${config.domAgentEnabled && config.openrouterApiKey ? `enabled (${config.domAgentModel})` : 'disabled'}`)
+  const domProvider = config.nvidiaApiKey ? 'nvidia' : config.openrouterApiKey ? 'openrouter' : 'none'
+  console.log(`  DOM Agent: ${config.domAgentEnabled && config.domAgentApiKey ? `enabled (${config.domAgentModel} via ${domProvider})` : 'disabled'}`)
 }

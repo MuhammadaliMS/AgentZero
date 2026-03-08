@@ -1,7 +1,7 @@
 /**
  * DomAgent — Agentic DOM Understanding via OpenAI Agents SDK
  *
- * Uses minimax/minimax-m2.5 via OpenRouter with an agentic tool-calling loop.
+ * Uses qwen/qwen3.5-397b-a17b via NVIDIA NIM with an agentic tool-calling loop.
  * The agent gets READ tools to inspect the live Puppeteer page (DOM snapshots,
  * test selectors, check styles, evaluate JS) and DECISION tools to submit
  * verified results. It iterates, self-corrects, and verifies before committing.
@@ -36,7 +36,7 @@ export interface SpeakerPatterns {
 export interface DomAgentConfig {
   apiKey: string
   model: string
-  /** Base URL for OpenRouter (default: https://openrouter.ai/api/v1) */
+  /** Base URL for NVIDIA NIM (default: https://integrate.api.nvidia.com/v1) */
   baseUrl?: string
 }
 
@@ -168,14 +168,14 @@ async function getInteractiveSnapshot(page: Page): Promise<string> {
 }
 
 /* ------------------------------------------------------------------ */
-/*  OpenRouter Provider Factory                                        */
+/*  NVIDIA NIM / OpenRouter Provider Factory                           */
 /* ------------------------------------------------------------------ */
 
 function getDomAgentProvider(config: DomAgentConfig): OpenAIProvider {
   return new OpenAIProvider({
     apiKey: config.apiKey,
-    baseURL: config.baseUrl || 'https://openrouter.ai/api/v1',
-    useResponses: false, // OpenRouter uses chat completions, not responses API
+    baseURL: config.baseUrl || 'https://integrate.api.nvidia.com/v1',
+    useResponses: false, // NIM + OpenRouter use chat completions, not responses API
   })
 }
 

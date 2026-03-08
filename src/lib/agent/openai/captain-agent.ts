@@ -28,23 +28,35 @@ import { trackUtilityEventBatch, bumpEntityAccess } from '@/lib/graph/utility-tr
 
 // ─── Model Configuration ─────────────────────────────────────────────────────
 // Uses OPENAI_CAPTAIN_MODEL env var, or falls back to a sensible default.
-// Routed via OpenRouter (OPENROUTER_API_KEY) or direct OpenAI (OPENAI_API_KEY).
+// Priority: NVIDIA NIM → OpenRouter → direct OpenAI.
 
-const DEFAULT_CAPTAIN_MODEL = 'minimax/minimax-m2.5'
+const DEFAULT_CAPTAIN_MODEL = 'qwen/qwen3.5-397b-a17b'
 export const CAPTAIN_MODEL = process.env.OPENAI_CAPTAIN_MODEL || DEFAULT_CAPTAIN_MODEL
 
-// ─── OpenRouter / OpenAI Provider ────────────────────────────────────────────
+// ─── NVIDIA NIM / OpenRouter / OpenAI Provider ──────────────────────────────
 
 export function getCaptainProvider(): OpenAIProvider {
+  // Priority 1: NVIDIA NIM
+  const nvidiaKey = process.env.NVIDIA_API_KEY
+  if (nvidiaKey) {
+    return new OpenAIProvider({
+      apiKey: nvidiaKey,
+      baseURL: 'https://integrate.api.nvidia.com/v1',
+      useResponses: false,
+    })
+  }
+
+  // Priority 2: OpenRouter
   const openRouterKey = process.env.OPENROUTER_API_KEY
   if (openRouterKey) {
     return new OpenAIProvider({
       apiKey: openRouterKey,
       baseURL: 'https://openrouter.ai/api/v1',
-      useResponses: false, // OpenRouter only supports chat completions
+      useResponses: false,
     })
   }
 
+  // Priority 3: Direct OpenAI
   const openaiKey = process.env.OPENAI_API_KEY
   if (openaiKey) {
     return new OpenAIProvider({
@@ -54,7 +66,7 @@ export function getCaptainProvider(): OpenAIProvider {
   }
 
   throw new Error(
-    'OpenAI Captain requires OPENROUTER_API_KEY or OPENAI_API_KEY to be configured.'
+    'Captain requires NVIDIA_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.'
   )
 }
 
@@ -213,7 +225,7 @@ export async function* runOpenAICaptain(
   })
 
   try {
-    console.log(`[runOpenAICaptain] Starting for org=${orgId} model=${CAPTAIN_MODEL} provider=${process.env.OPENROUTER_API_KEY ? 'openrouter' : 'openai'}`)
+    console.log(`[runOpenAICaptain] Starting for org=${orgId} model=${CAPTAIN_MODEL} provider=${process.env.NVIDIA_API_KEY ? 'nvidia' : process.env.OPENROUTER_API_KEY ? 'openrouter' : 'openai'}`)
 
     // Build context: loads profile, connected integrations, dynamic system prompt
     const context = await buildAgentContext(orgId, userId)

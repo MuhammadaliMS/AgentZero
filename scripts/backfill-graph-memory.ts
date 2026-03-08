@@ -24,10 +24,22 @@ import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
+
+// Chat completions: NVIDIA NIM (primary) → OpenRouter (fallback)
+const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || ''
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
+const LLM_API_KEY = NVIDIA_API_KEY || OPENROUTER_API_KEY
+const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
+  ? 'https://integrate.api.nvidia.com/v1'
+  : 'https://openrouter.ai/api/v1')
+const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || (NVIDIA_API_KEY
+  ? 'qwen/qwen3.5-397b-a17b'
+  : 'x-ai/grok-4.1-fast')
+
+// Embeddings: OpenRouter (1536-dim for DB compat)
+const EMBEDDING_API_KEY = process.env.EMBEDDING_API_KEY || OPENROUTER_API_KEY
+const EMBEDDING_BASE_URL = process.env.EMBEDDING_BASE_URL || 'https://openrouter.ai/api/v1'
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small'
-const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || 'x-ai/grok-4.1-fast'
-const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1'
 
 const BATCH_SIZE = 20
 const RATE_LIMIT_DELAY_MS = 500 // Delay between batches to avoid rate limits
@@ -37,8 +49,8 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
   process.exit(1)
 }
 
-if (!OPENROUTER_API_KEY) {
-  console.error('Missing OPENROUTER_API_KEY')
+if (!LLM_API_KEY) {
+  console.error('Missing NVIDIA_API_KEY or OPENROUTER_API_KEY')
   process.exit(1)
 }
 
@@ -47,11 +59,11 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 // ─── OpenRouter Helpers ─────────────────────────────────────────────────
 
 async function generateEmbedding(text: string): Promise<number[] | null> {
-  const response = await fetch(`${LLM_BASE_URL}/embeddings`, {
+  const response = await fetch(`${EMBEDDING_BASE_URL}/embeddings`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${EMBEDDING_API_KEY}`,
       'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
       'X-Title': 'Captain Backfill',
     },
@@ -78,7 +90,7 @@ async function extractEntities(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${LLM_API_KEY}`,
       'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
       'X-Title': 'Captain Backfill',
     },

@@ -109,11 +109,12 @@ export class MeetingBot {
         return { status: 'failed', error: 'Could not join meeting' }
       }
 
-      // Initialize DOM Agent if OpenRouter API key is configured
-      if (config.domAgentEnabled && config.openrouterApiKey && this.page) {
+      // Initialize DOM Agent if LLM API key is configured (NVIDIA NIM → OpenRouter fallback)
+      if (config.domAgentEnabled && config.domAgentApiKey && this.page) {
         this.domAgent = new DomAgent(this.page, {
-          apiKey: config.openrouterApiKey,
+          apiKey: config.domAgentApiKey,
           model: config.domAgentModel,
+          baseUrl: config.domAgentBaseUrl,
         })
         console.log(`[bot/${this.meetingId.slice(0, 8)}] DOM Agent initialized (${config.domAgentModel})`)
       }

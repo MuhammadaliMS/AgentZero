@@ -1,15 +1,27 @@
-// ─── LLM Client (OpenRouter) ────────────────────────────────────────────────
-// Direct fetch() calls to OpenRouter (OpenAI-compatible) for entity extraction
-// and embeddings. No npm dependency — just HTTP. Used by the background
-// extraction pipeline and memory tools.
+// ─── LLM Client (NVIDIA NIM / OpenRouter) ───────────────────────────────────
+// Direct fetch() calls for entity extraction and embeddings.
+// No npm dependency — just HTTP. Used by the background extraction pipeline
+// and memory tools.
 //
-// OpenRouter routes requests to 100+ LLMs — change EXTRACTOR_MODEL to use
-// any supported model (e.g., google/gemini-flash-1.5, meta-llama/llama-3-8b).
+// Chat completions: NVIDIA NIM (primary) → OpenRouter (fallback) → OpenAI (fallback)
+// Embeddings: OpenRouter (primary, 1536-dim for DB compat) → OpenAI (fallback)
 
+const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || ''
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
-const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || 'minimax/minimax-m2.5'
+
+// Chat completions config (extraction)
+const LLM_API_KEY = NVIDIA_API_KEY || OPENROUTER_API_KEY
+const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
+  ? 'https://integrate.api.nvidia.com/v1'
+  : 'https://openrouter.ai/api/v1')
+const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || (NVIDIA_API_KEY
+  ? 'qwen/qwen3.5-397b-a17b'
+  : 'minimax/minimax-m2.5')
+
+// Embeddings config (separate — DB requires 1536-dim vectors, NVIDIA only does 1024)
+const EMBEDDING_API_KEY = process.env.EMBEDDING_API_KEY || OPENROUTER_API_KEY
+const EMBEDDING_BASE_URL = process.env.EMBEDDING_BASE_URL || 'https://openrouter.ai/api/v1'
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small'
-const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1'
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -96,7 +108,7 @@ Respond with valid JSON matching this schema:
  * Returns structured data suitable for graph insertion.
  */
 export async function extractEntitiesAndRelationships(text: string): Promise<ExtractionResult> {
-  if (!OPENROUTER_API_KEY) {
+  if (!LLM_API_KEY) {
     return { entities: [], relationships: [] }
   }
 
@@ -109,7 +121,7 @@ export async function extractEntitiesAndRelationships(text: string): Promise<Ext
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Authorization': `Bearer ${LLM_API_KEY}`,
       'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
       'X-Title': 'Captain Knowledge Graph',
     },
@@ -157,18 +169,19 @@ export async function extractEntitiesAndRelationships(text: string): Promise<Ext
 }
 
 /**
- * Generate a vector embedding for text using OpenRouter embeddings API.
+ * Generate a vector embedding for text.
+ * Uses OpenRouter for embeddings (1536-dim, matching DB vector columns).
  * Returns a 1536-dim float array.
  */
 export async function generateEmbedding(text: string): Promise<number[] | null> {
-  if (!OPENROUTER_API_KEY) return null
+  if (!EMBEDDING_API_KEY) return null
   if (!text || text.trim().length < 3) return null
 
-  const response = await fetch(`${LLM_BASE_URL}/embeddings`, {
+  const response = await fetch(`${EMBEDDING_BASE_URL}/embeddings`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Authorization': `Bearer ${EMBEDDING_API_KEY}`,
       'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
       'X-Title': 'Captain Knowledge Graph',
     },
@@ -189,8 +202,8 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
 }
 
 /**
- * Check if the LLM API key is configured (OpenRouter).
+ * Check if the LLM API key is configured (NVIDIA NIM or OpenRouter).
  */
 export function isOpenAIConfigured(): boolean {
-  return !!OPENROUTER_API_KEY
+  return !!(NVIDIA_API_KEY || OPENROUTER_API_KEY)
 }

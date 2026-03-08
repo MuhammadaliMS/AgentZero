@@ -46,9 +46,15 @@ interface ProcessingResult {
 
 // ─── Config ──────────────────────────────────────────────────────────────
 
+const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || ''
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
-const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1'
-const DEFAULT_SUMMARIZATION_MODEL = process.env.MEETING_SUMMARY_MODEL || 'anthropic/claude-haiku-4.5'
+const LLM_API_KEY = NVIDIA_API_KEY || OPENROUTER_API_KEY
+const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
+  ? 'https://integrate.api.nvidia.com/v1'
+  : 'https://openrouter.ai/api/v1')
+const DEFAULT_SUMMARIZATION_MODEL = process.env.MEETING_SUMMARY_MODEL || (NVIDIA_API_KEY
+  ? 'qwen/qwen3.5-397b-a17b'
+  : 'anthropic/claude-haiku-4.5')
 const MAX_RETRIES = 3
 
 // ─── System Prompt ───────────────────────────────────────────────────────
@@ -361,15 +367,15 @@ interface LLMResult {
 }
 
 async function callSummarizationLLM(model: string, userPrompt: string): Promise<LLMResult> {
-  if (!OPENROUTER_API_KEY) {
-    throw new Error('OPENROUTER_API_KEY not configured')
+  if (!LLM_API_KEY) {
+    throw new Error('NVIDIA_API_KEY or OPENROUTER_API_KEY not configured')
   }
 
   const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Authorization': `Bearer ${LLM_API_KEY}`,
       'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
       'X-Title': 'Captain Meeting Summarizer',
     },

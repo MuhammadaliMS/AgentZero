@@ -2,12 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
@@ -20,6 +19,10 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import { SDKToggle } from '@/components/sdk-toggle'
+import {
+  Settings, User, Bell, Bot, Building2, Plug, Video,
+  AlertTriangle, LogOut, ChevronRight, ExternalLink,
+} from 'lucide-react'
 import type { Database } from '@/types/database'
 import type { JoinMode, TranscriptionEngine } from '@/types/meetings'
 
@@ -60,21 +63,9 @@ const TIMEZONES = [
 ]
 
 const COMMUNICATION_STYLES = [
-  {
-    value: 'executive',
-    label: 'Executive',
-    description: 'Concise, high-level summaries with key metrics and decisions',
-  },
-  {
-    value: 'detailed',
-    label: 'Detailed',
-    description: 'Comprehensive analysis with context, data, and recommendations',
-  },
-  {
-    value: 'casual',
-    label: 'Casual',
-    description: 'Conversational tone with clear, approachable language',
-  },
+  { value: 'executive', label: 'Executive', description: 'Concise, high-level summaries with key metrics and decisions' },
+  { value: 'detailed', label: 'Detailed', description: 'Comprehensive analysis with context, data, and recommendations' },
+  { value: 'casual', label: 'Casual', description: 'Conversational tone with clear, approachable language' },
 ]
 
 const NOTIFICATION_CHANNELS = [
@@ -83,24 +74,125 @@ const NOTIFICATION_CHANNELS = [
   { value: 'both', label: 'Both', description: 'Receive via Slack and email' },
 ]
 
+/* ─── Reusable section wrapper ─────────────────────────────────────── */
+
+function Section({
+  icon: Icon,
+  title,
+  description,
+  children,
+  trailing,
+  className = '',
+}: {
+  icon: React.ElementType
+  title: string
+  description: string
+  children: React.ReactNode
+  trailing?: React.ReactNode
+  className?: string
+}) {
+  return (
+    <section className={`rounded-xl border border-border/50 bg-card ${className}`}>
+      <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-border/40">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+            <Icon className="h-4 w-4 text-primary" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold">{title}</h2>
+            <p className="text-xs text-muted-foreground truncate">{description}</p>
+          </div>
+        </div>
+        {trailing}
+      </div>
+      <div className="px-5 py-5">
+        {children}
+      </div>
+    </section>
+  )
+}
+
+/* ─── Toggle switch ─────────────────────────────────────────────────── */
+
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2
+        ${checked ? 'bg-primary' : 'bg-muted'}`}
+    >
+      <span
+        className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform duration-200 ${
+          checked ? 'translate-x-4' : 'translate-x-0.5'
+        }`}
+      />
+    </button>
+  )
+}
+
+/* ─── Radio option ──────────────────────────────────────────────────── */
+
+function RadioOption({
+  selected,
+  onClick,
+  label,
+  description,
+}: {
+  selected: boolean
+  onClick: () => void
+  label: string
+  description: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-start gap-3 rounded-lg border p-3 text-left cursor-pointer transition-all duration-200
+        ${selected
+          ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/20'
+          : 'border-border/50 hover:border-border hover:bg-muted/30'
+        }`}
+    >
+      <div
+        className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 transition-colors duration-200 ${
+          selected ? 'border-primary bg-primary' : 'border-muted-foreground/30'
+        }`}
+      >
+        {selected && (
+          <div className="flex h-full items-center justify-center">
+            <div className="h-1.5 w-1.5 rounded-full bg-primary-foreground" />
+          </div>
+        )}
+      </div>
+      <div>
+        <p className="text-sm font-medium">{label}</p>
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+    </button>
+  )
+}
+
+/* ─── Divider ───────────────────────────────────────────────────────── */
+
+function Divider() {
+  return <div className="border-t border-border/40" />
+}
+
+/* ─── Page ──────────────────────────────────────────────────────────── */
+
 export default function SettingsPage() {
   const router = useRouter()
   const supabase = createClient()
 
   const [profile, setProfile] = useState<ProfileData>({
-    full_name: '',
-    email: '',
-    title: '',
-    timezone: 'America/New_York',
-    communication_style: 'executive',
-    notification_channel: 'slack',
-    settings: {},
+    full_name: '', email: '', title: '', timezone: 'America/New_York',
+    communication_style: 'executive', notification_channel: 'slack', settings: {},
   })
-  const [org, setOrg] = useState<OrgData>({
-    name: '',
-    domain: '',
-    settings: {},
-  })
+  const [org, setOrg] = useState<OrgData>({ name: '', domain: '', settings: {} })
   const [orgId, setOrgId] = useState<string>('')
   const [savingProfile, setSavingProfile] = useState(false)
   const [savingOrg, setSavingOrg] = useState(false)
@@ -127,23 +219,15 @@ export default function SettingsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const { data: profileData } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
+    const { data: profileData } = await supabase.from('profiles').select('*').eq('id', user.id).single()
 
     if (profileData) {
       const p = profileData as Profile
       const settings = (p.settings || {}) as Record<string, unknown>
       setProfile({
-        full_name: p.full_name || '',
-        email: p.email || '',
-        title: p.title || '',
-        timezone: p.timezone || 'America/New_York',
-        communication_style: p.communication_style || 'executive',
-        notification_channel: p.notification_channel || 'slack',
-        settings,
+        full_name: p.full_name || '', email: p.email || '', title: p.title || '',
+        timezone: p.timezone || 'America/New_York', communication_style: p.communication_style || 'executive',
+        notification_channel: p.notification_channel || 'slack', settings,
       })
       setBriefTime((settings.morning_brief_time as string) || '07:00')
       setEodTime((settings.eod_wrap_time as string) || '17:00')
@@ -151,29 +235,13 @@ export default function SettingsPage() {
       setWeeklyBriefDay((settings.weekly_brief_day as string) || 'monday')
       setOrgId(p.org_id)
 
-      // Load org data
-      const { data: orgData } = await supabase
-        .from('organizations')
-        .select('*')
-        .eq('id', p.org_id)
-        .single()
-
+      const { data: orgData } = await supabase.from('organizations').select('*').eq('id', p.org_id).single()
       if (orgData) {
         const o = orgData as Organization
-        setOrg({
-          name: o.name || '',
-          domain: o.domain || '',
-          settings: (o.settings || {}) as Record<string, unknown>,
-        })
+        setOrg({ name: o.name || '', domain: o.domain || '', settings: (o.settings || {}) as Record<string, unknown> })
       }
 
-      // Load meeting bot config (table not in generated types yet — cast to any)
-      const { data: botConfig } = await (supabase as any)
-        .from('meeting_bot_config')
-        .select('*')
-        .eq('org_id', p.org_id)
-        .single()
-
+      const { data: botConfig } = await (supabase as any).from('meeting_bot_config').select('*').eq('org_id', p.org_id).single()
       if (botConfig) {
         setBotEnabled(botConfig.enabled ?? false)
         setJoinMode((botConfig.join_mode as JoinMode) || 'all')
@@ -189,9 +257,7 @@ export default function SettingsPage() {
     }
   }, [supabase])
 
-  useEffect(() => {
-    loadData()
-  }, [loadData])
+  useEffect(() => { loadData() }, [loadData])
 
   const handleSaveProfile = async () => {
     setSavingProfile(true)
@@ -201,23 +267,15 @@ export default function SettingsPage() {
 
       const updatedSettings = {
         ...profile.settings,
-        morning_brief_time: briefTime,
-        eod_wrap_time: eodTime,
-        show_thinking: showThinking,
-        weekly_brief_day: weeklyBriefDay,
+        morning_brief_time: briefTime, eod_wrap_time: eodTime,
+        show_thinking: showThinking, weekly_brief_day: weeklyBriefDay,
       }
 
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          full_name: profile.full_name,
-          title: profile.title,
-          timezone: profile.timezone,
-          communication_style: profile.communication_style,
-          notification_channel: profile.notification_channel,
-          settings: updatedSettings,
-        })
-        .eq('id', user.id)
+      const { error } = await supabase.from('profiles').update({
+        full_name: profile.full_name, title: profile.title, timezone: profile.timezone,
+        communication_style: profile.communication_style, notification_channel: profile.notification_channel,
+        settings: updatedSettings,
+      }).eq('id', user.id)
 
       if (error) throw error
       toast.success('Profile settings saved')
@@ -233,15 +291,9 @@ export default function SettingsPage() {
     setSavingOrg(true)
     try {
       if (!orgId) return
-
-      const { error } = await supabase
-        .from('organizations')
-        .update({
-          name: org.name,
-          domain: org.domain || null,
-        })
-        .eq('id', orgId)
-
+      const { error } = await supabase.from('organizations').update({
+        name: org.name, domain: org.domain || null,
+      }).eq('id', orgId)
       if (error) throw error
       toast.success('Organization settings saved')
     } catch (err) {
@@ -256,27 +308,14 @@ export default function SettingsPage() {
     setSavingBot(true)
     try {
       if (!orgId) return
-
-      const patterns = blocklistPatterns
-        .split('\n')
-        .map((p) => p.trim())
-        .filter(Boolean)
-
-      const { error } = await (supabase as any)
-        .from('meeting_bot_config')
-        .upsert({
-          org_id: orgId,
-          enabled: botEnabled,
-          join_mode: joinMode,
-          min_attendees: minAttendees,
-          record_label: recordLabel,
-          transcription_engine: transcriptionEngine,
-          auto_summarize: autoSummarize,
-          notify_via_slack: notifySlack,
-          notify_via_email: notifyEmail,
-          blocklist_patterns: patterns,
-        }, { onConflict: 'org_id' })
-
+      const patterns = blocklistPatterns.split('\n').map((p) => p.trim()).filter(Boolean)
+      const { error } = await (supabase as any).from('meeting_bot_config').upsert({
+        org_id: orgId, enabled: botEnabled, join_mode: joinMode,
+        min_attendees: minAttendees, record_label: recordLabel,
+        transcription_engine: transcriptionEngine, auto_summarize: autoSummarize,
+        notify_via_slack: notifySlack, notify_via_email: notifyEmail,
+        blocklist_patterns: patterns,
+      }, { onConflict: 'org_id' })
       if (error) throw error
       toast.success('Meeting bot settings saved')
     } catch (err) {
@@ -294,22 +333,26 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground">
-          Manage your profile, preferences, and organization settings.
-        </p>
-      </div>
+    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-8 sm:py-10">
+      {/* ── Header ── */}
+      <header className="mb-8 sm:mb-10">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">
+            <Settings className="h-5 w-5 text-primary" />
+          </span>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+            <p className="text-[13px] text-muted-foreground leading-none mt-0.5">
+              Manage your profile, preferences &amp; organization
+            </p>
+          </div>
+        </div>
+      </header>
 
-      <div className="space-y-8">
+      <div className="space-y-6">
         {/* ── Profile ── */}
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-lg">Profile</CardTitle>
-            <CardDescription>Your personal information and role</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <Section icon={User} title="Profile" description="Your personal information and role">
+          <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="name">Full Name</Label>
@@ -322,7 +365,7 @@ export default function SettingsPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
-                <Input id="email" value={profile.email} disabled className="bg-muted" />
+                <Input id="email" value={profile.email} disabled className="bg-muted/50" />
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -341,116 +384,79 @@ export default function SettingsPage() {
                   id="timezone"
                   value={profile.timezone}
                   onChange={(e) => setProfile((p) => ({ ...p, timezone: e.target.value }))}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors
+                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 cursor-pointer"
                 >
                   {TIMEZONES.map((tz) => (
-                    <option key={tz.value} value={tz.value}>
-                      {tz.label}
-                    </option>
+                    <option key={tz.value} value={tz.value}>{tz.label}</option>
                   ))}
                 </select>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </Section>
 
         {/* ── Communication Preferences ── */}
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-lg">Communication Preferences</CardTitle>
-            <CardDescription>How your Captain communicates with you</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
+        <Section icon={Bell} title="Communication Preferences" description="How your Captain communicates with you">
+          <div className="space-y-6">
             <div className="space-y-3">
               <Label>Communication Style</Label>
               <div className="grid gap-2">
                 {COMMUNICATION_STYLES.map((style) => (
-                  <button
+                  <RadioOption
                     key={style.value}
-                    type="button"
+                    selected={profile.communication_style === style.value}
                     onClick={() => setProfile((p) => ({ ...p, communication_style: style.value }))}
-                    className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
-                      profile.communication_style === style.value
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:border-foreground/20'
-                    }`}
-                  >
-                    <div
-                      className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 ${
-                        profile.communication_style === style.value
-                          ? 'border-primary bg-primary'
-                          : 'border-muted-foreground/30'
-                      }`}
-                    >
-                      {profile.communication_style === style.value && (
-                        <div className="flex h-full items-center justify-center">
-                          <div className="h-1.5 w-1.5 rounded-full bg-primary-foreground" />
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium">{style.label}</p>
-                      <p className="text-xs text-muted-foreground">{style.description}</p>
-                    </div>
-                  </button>
+                    label={style.label}
+                    description={style.description}
+                  />
                 ))}
               </div>
             </div>
 
-            <Separator />
+            <Divider />
 
             <div className="space-y-3">
               <Label>Notification Channel</Label>
-              <div className="flex flex-wrap gap-2">
+              <nav className="flex gap-0.5 rounded-lg bg-muted/50 p-0.5 w-fit" role="tablist">
                 {NOTIFICATION_CHANNELS.map((channel) => (
-                  <Button
+                  <button
                     key={channel.value}
-                    variant={profile.notification_channel === channel.value ? 'default' : 'outline'}
-                    size="sm"
+                    role="tab"
+                    aria-selected={profile.notification_channel === channel.value}
                     onClick={() => setProfile((p) => ({ ...p, notification_channel: channel.value }))}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium cursor-pointer transition-all duration-200
+                      ${profile.notification_channel === channel.value
+                        ? 'bg-card text-foreground shadow-sm ring-1 ring-border/60'
+                        : 'text-muted-foreground hover:text-foreground'
+                      }`}
                   >
                     {channel.label}
-                  </Button>
+                  </button>
                 ))}
-              </div>
+              </nav>
               <p className="text-xs text-muted-foreground">
                 {NOTIFICATION_CHANNELS.find((c) => c.value === profile.notification_channel)?.description}
               </p>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </Section>
 
         {/* ── Agent Preferences ── */}
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-lg">Agent Preferences</CardTitle>
-            <CardDescription>Configure your Captain&apos;s behavior</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
+        <Section icon={Bot} title="Agent Preferences" description="Configure your Captain's behavior">
+          <div className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="morning-brief">Morning Brief Time</Label>
-                <Input
-                  id="morning-brief"
-                  type="time"
-                  value={briefTime}
-                  onChange={(e) => setBriefTime(e.target.value)}
-                />
+                <Input id="morning-brief" type="time" value={briefTime} onChange={(e) => setBriefTime(e.target.value)} />
                 <p className="text-xs text-muted-foreground">
                   Daily brief delivered to your {profile.notification_channel === 'both' ? 'Slack & email' : profile.notification_channel}
                 </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="eod-wrap">EOD Wrap Time</Label>
-                <Input
-                  id="eod-wrap"
-                  type="time"
-                  value={eodTime}
-                  onChange={(e) => setEodTime(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  End-of-day summary with action items
-                </p>
+                <Input id="eod-wrap" type="time" value={eodTime} onChange={(e) => setEodTime(e.target.value)} />
+                <p className="text-xs text-muted-foreground">End-of-day summary with action items</p>
               </div>
             </div>
 
@@ -460,7 +466,8 @@ export default function SettingsPage() {
                 id="weekly-brief-day"
                 value={weeklyBriefDay}
                 onChange={(e) => setWeeklyBriefDay(e.target.value)}
-                className="flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors
+                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 cursor-pointer"
               >
                 <option value="monday">Monday</option>
                 <option value="tuesday">Tuesday</option>
@@ -469,38 +476,20 @@ export default function SettingsPage() {
                 <option value="friday">Friday</option>
                 <option value="sunday">Sunday</option>
               </select>
-              <p className="text-xs text-muted-foreground">
-                Weekly strategic summary with commitment tracking
-              </p>
+              <p className="text-xs text-muted-foreground">Weekly strategic summary with commitment tracking</p>
             </div>
 
-            <Separator />
+            <Divider />
 
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium">Show Agent Thinking</p>
-                <p className="text-xs text-muted-foreground">
-                  Display reasoning steps and tool usage in the chat
-                </p>
+                <p className="text-xs text-muted-foreground">Display reasoning steps and tool usage in the chat</p>
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={showThinking}
-                onClick={() => setShowThinking(!showThinking)}
-                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
-                  showThinking ? 'bg-primary' : 'bg-muted'
-                }`}
-              >
-                <span
-                  className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform ${
-                    showThinking ? 'translate-x-4' : 'translate-x-0.5'
-                  }`}
-                />
-              </button>
+              <Toggle checked={showThinking} onChange={setShowThinking} />
             </div>
 
-            <Separator />
+            <Divider />
 
             <div className="space-y-3">
               <div>
@@ -511,24 +500,18 @@ export default function SettingsPage() {
               </div>
               <SDKToggle variant="full" />
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </Section>
 
         <div className="flex justify-end">
-          <Button onClick={handleSaveProfile} disabled={savingProfile}>
+          <Button onClick={handleSaveProfile} disabled={savingProfile} className="cursor-pointer">
             {savingProfile ? 'Saving...' : 'Save Profile & Preferences'}
           </Button>
         </div>
 
-        <Separator />
-
         {/* ── Organization ── */}
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-lg">Organization</CardTitle>
-            <CardDescription>Manage your organization settings</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <Section icon={Building2} title="Organization" description="Manage your organization settings">
+          <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="org-name">Organization Name</Label>
@@ -550,90 +533,45 @@ export default function SettingsPage() {
               </div>
             </div>
             <div className="flex justify-end">
-              <Button onClick={handleSaveOrg} disabled={savingOrg} variant="outline">
+              <Button onClick={handleSaveOrg} disabled={savingOrg} variant="outline" className="cursor-pointer">
                 {savingOrg ? 'Saving...' : 'Save Organization'}
               </Button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </Section>
 
-        {/* ── Connected Integrations Quick View ── */}
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-lg">Connected Integrations</CardTitle>
-            <CardDescription>Quick overview of your connected tools</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ConnectedIntegrationsSummary />
-          </CardContent>
-        </Card>
+        {/* ── Connected Integrations ── */}
+        <Section icon={Plug} title="Connected Integrations" description="Quick overview of your connected tools">
+          <ConnectedIntegrationsSummary />
+        </Section>
 
         {/* ── Meeting Bot ── */}
         {botConfigLoaded && (
-          <Card className="shadow-sm">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-lg">Meeting Bot</CardTitle>
-                  <CardDescription>Configure automatic meeting recording and transcription</CardDescription>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={botEnabled}
-                  onClick={() => setBotEnabled(!botEnabled)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
-                    botEnabled ? 'bg-primary' : 'bg-muted'
-                  }`}
-                >
-                  <span
-                    className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform ${
-                      botEnabled ? 'translate-x-4' : 'translate-x-0.5'
-                    }`}
-                  />
-                </button>
-              </div>
-            </CardHeader>
-            {botEnabled && (
-              <CardContent className="space-y-6">
+          <Section
+            icon={Video}
+            title="Meeting Bot"
+            description="Automatic meeting recording & transcription"
+            trailing={<Toggle checked={botEnabled} onChange={setBotEnabled} />}
+          >
+            {botEnabled ? (
+              <div className="space-y-6">
                 {/* Join Mode */}
                 <div className="space-y-3">
                   <Label>Join Mode</Label>
                   <div className="grid gap-2">
-                    {[
+                    {([
                       { value: 'all' as const, label: 'All Meetings', description: 'Automatically join all calendar meetings with a video link' },
                       { value: 'min_attendees' as const, label: 'Minimum Attendees', description: 'Only join meetings with enough participants' },
                       { value: 'labeled' as const, label: 'Labeled Only', description: 'Only join meetings whose title includes a label' },
                       { value: 'manual' as const, label: 'Manual', description: 'Never auto-join — you trigger recording manually' },
-                    ].map((mode) => (
-                      <button
+                    ]).map((mode) => (
+                      <RadioOption
                         key={mode.value}
-                        type="button"
+                        selected={joinMode === mode.value}
                         onClick={() => setJoinMode(mode.value)}
-                        className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
-                          joinMode === mode.value
-                            ? 'border-primary bg-primary/5'
-                            : 'border-border hover:border-foreground/20'
-                        }`}
-                      >
-                        <div
-                          className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 ${
-                            joinMode === mode.value
-                              ? 'border-primary bg-primary'
-                              : 'border-muted-foreground/30'
-                          }`}
-                        >
-                          {joinMode === mode.value && (
-                            <div className="flex h-full items-center justify-center">
-                              <div className="h-1.5 w-1.5 rounded-full bg-primary-foreground" />
-                            </div>
-                          )}
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium">{mode.label}</p>
-                          <p className="text-xs text-muted-foreground">{mode.description}</p>
-                        </div>
-                      </button>
+                        label={mode.label}
+                        description={mode.description}
+                      />
                     ))}
                   </div>
                 </div>
@@ -651,9 +589,7 @@ export default function SettingsPage() {
                       onChange={(e) => setMinAttendees(parseInt(e.target.value) || 2)}
                       className="max-w-[120px]"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Bot only joins meetings with at least this many attendees
-                    </p>
+                    <p className="text-xs text-muted-foreground">Bot only joins meetings with at least this many attendees</p>
                   </div>
                 )}
 
@@ -667,13 +603,11 @@ export default function SettingsPage() {
                       placeholder="[record]"
                       className="max-w-xs"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Add this text to a meeting title to trigger recording
-                    </p>
+                    <p className="text-xs text-muted-foreground">Add this text to a meeting title to trigger recording</p>
                   </div>
                 )}
 
-                <Separator />
+                <Divider />
 
                 {/* Transcription Engine */}
                 <div className="space-y-2">
@@ -682,96 +616,51 @@ export default function SettingsPage() {
                     id="transcription-engine"
                     value={transcriptionEngine}
                     onChange={(e) => setTranscriptionEngine(e.target.value as TranscriptionEngine)}
-                    className="flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    className="flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors
+                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 cursor-pointer"
                   >
                     <option value="groq_whisper">Groq Whisper (Free, 240 hrs/mo)</option>
                     <option value="deepgram">Deepgram</option>
                     <option value="whisperx">WhisperX (Local, CPU)</option>
                   </select>
-                  <p className="text-xs text-muted-foreground">
-                    Audio-to-text engine. Groq Whisper is free and recommended.
-                  </p>
+                  <p className="text-xs text-muted-foreground">Audio-to-text engine. Groq Whisper is free and recommended.</p>
                 </div>
 
-                <Separator />
+                <Divider />
 
-                {/* Auto-summarize toggle */}
+                {/* Auto-summarize */}
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium">Auto-Summarize</p>
-                    <p className="text-xs text-muted-foreground">
-                      Automatically generate AI summaries, action items, and decisions after transcription
-                    </p>
+                    <p className="text-xs text-muted-foreground">Generate AI summaries, action items &amp; decisions after transcription</p>
                   </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={autoSummarize}
-                    onClick={() => setAutoSummarize(!autoSummarize)}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
-                      autoSummarize ? 'bg-primary' : 'bg-muted'
-                    }`}
-                  >
-                    <span
-                      className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform ${
-                        autoSummarize ? 'translate-x-4' : 'translate-x-0.5'
-                      }`}
-                    />
-                  </button>
+                  <Toggle checked={autoSummarize} onChange={setAutoSummarize} />
                 </div>
 
-                <Separator />
+                <Divider />
 
                 {/* Notifications */}
                 <div className="space-y-3">
                   <Label>Post-Meeting Notifications</Label>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm">Slack Notification</p>
                         <p className="text-xs text-muted-foreground">Send meeting summary to your Slack DM</p>
                       </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={notifySlack}
-                        onClick={() => setNotifySlack(!notifySlack)}
-                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
-                          notifySlack ? 'bg-primary' : 'bg-muted'
-                        }`}
-                      >
-                        <span
-                          className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform ${
-                            notifySlack ? 'translate-x-4' : 'translate-x-0.5'
-                          }`}
-                        />
-                      </button>
+                      <Toggle checked={notifySlack} onChange={setNotifySlack} />
                     </div>
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm">Email Notification</p>
                         <p className="text-xs text-muted-foreground">Send meeting summary via email</p>
                       </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={notifyEmail}
-                        onClick={() => setNotifyEmail(!notifyEmail)}
-                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
-                          notifyEmail ? 'bg-primary' : 'bg-muted'
-                        }`}
-                      >
-                        <span
-                          className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform ${
-                            notifyEmail ? 'translate-x-4' : 'translate-x-0.5'
-                          }`}
-                        />
-                      </button>
+                      <Toggle checked={notifyEmail} onChange={setNotifyEmail} />
                     </div>
                   </div>
                 </div>
 
-                <Separator />
+                <Divider />
 
                 {/* Blocklist */}
                 <div className="space-y-2">
@@ -782,7 +671,9 @@ export default function SettingsPage() {
                     onChange={(e) => setBlocklistPatterns(e.target.value)}
                     rows={3}
                     placeholder={"1:1 with*\nStandup\nAll Hands"}
-                    className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+                    className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm
+                               placeholder:text-muted-foreground/50 focus-visible:outline-none focus-visible:ring-2
+                               focus-visible:ring-primary/30 resize-none"
                   />
                   <p className="text-xs text-muted-foreground">
                     One pattern per line. Meetings matching these patterns will be skipped. Use * as wildcard.
@@ -790,24 +681,31 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="flex justify-end">
-                  <Button onClick={handleSaveBotConfig} disabled={savingBot}>
+                  <Button onClick={handleSaveBotConfig} disabled={savingBot} className="cursor-pointer">
                     {savingBot ? 'Saving...' : 'Save Bot Settings'}
                   </Button>
                 </div>
-              </CardContent>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground py-2">
+                Enable the meeting bot to configure automatic recording and transcription settings.
+              </p>
             )}
-          </Card>
+          </Section>
         )}
 
-        <Separator />
-
         {/* ── Danger Zone ── */}
-        <Card className="border-destructive/50 shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-lg text-destructive">Danger Zone</CardTitle>
-            <CardDescription>Irreversible actions that affect your account</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <section className="rounded-xl border border-destructive/30 bg-card">
+          <div className="flex items-center gap-3 px-5 py-4 border-b border-destructive/20">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-destructive/10">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+            </span>
+            <div>
+              <h2 className="text-sm font-semibold text-destructive">Danger Zone</h2>
+              <p className="text-xs text-muted-foreground">Irreversible actions that affect your account</p>
+            </div>
+          </div>
+          <div className="px-5 py-5">
             <div className="flex items-center justify-between rounded-lg border border-destructive/20 p-4">
               <div>
                 <p className="text-sm font-medium">Sign Out</p>
@@ -815,7 +713,7 @@ export default function SettingsPage() {
               </div>
               <Dialog open={showSignOutDialog} onOpenChange={setShowSignOutDialog}>
                 <DialogTrigger asChild>
-                  <Button variant="destructive" size="sm">
+                  <Button variant="destructive" size="sm" className="cursor-pointer">
                     Sign Out
                   </Button>
                 </DialogTrigger>
@@ -827,27 +725,25 @@ export default function SettingsPage() {
                     </DialogDescription>
                   </DialogHeader>
                   <DialogFooter className="gap-2 sm:gap-0">
-                    <Button variant="outline" onClick={() => setShowSignOutDialog(false)}>
+                    <Button variant="outline" onClick={() => setShowSignOutDialog(false)} className="cursor-pointer">
                       Cancel
                     </Button>
-                    <Button variant="destructive" onClick={handleSignOut}>
+                    <Button variant="destructive" onClick={handleSignOut} className="cursor-pointer">
                       Sign Out
                     </Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       </div>
     </div>
   )
 }
 
-/* ──────────────────────────────────────────────────────
- * Inline sub-component: shows a compact summary of
- * connected integrations within the settings page
- * ──────────────────────────────────────────────────── */
+/* ─── Connected Integrations Summary ──────────────────────────────── */
+
 function ConnectedIntegrationsSummary() {
   const supabase = createClient()
   const [integrations, setIntegrations] = useState<
@@ -887,7 +783,7 @@ function ConnectedIntegrationsSummary() {
     return (
       <div className="space-y-2">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-8 animate-pulse rounded bg-muted" />
+          <div key={i} className="h-10 animate-pulse rounded-lg bg-muted/50" />
         ))}
       </div>
     )
@@ -895,11 +791,12 @@ function ConnectedIntegrationsSummary() {
 
   if (integrations.length === 0) {
     return (
-      <div className="py-4 text-center">
-        <p className="text-sm text-muted-foreground">No integrations connected yet.</p>
-        <a href="/integrations" className="text-sm text-primary hover:underline">
+      <div className="flex flex-col items-center py-6 text-center">
+        <p className="text-sm text-muted-foreground mb-1">No integrations connected yet</p>
+        <Link href="/integrations" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
           Connect your first integration
-        </a>
+          <ChevronRight className="h-3 w-3" />
+        </Link>
       </div>
     )
   }
@@ -909,10 +806,10 @@ function ConnectedIntegrationsSummary() {
       {integrations.map((integration) => (
         <div
           key={integration.key}
-          className="flex items-center justify-between rounded-lg border px-3 py-2"
+          className="flex items-center justify-between rounded-lg border border-border/50 px-3 py-2.5 transition-colors duration-200 hover:bg-muted/30"
         >
-          <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded bg-muted text-xs font-bold">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-xs font-bold text-primary">
               {integration.name[0]}
             </div>
             <div>
@@ -922,24 +819,28 @@ function ConnectedIntegrationsSummary() {
               )}
             </div>
           </div>
-          <Badge
-            variant={integration.health_status === 'healthy' ? 'default' : 'secondary'}
-            className={`text-[10px] ${
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium ${
               integration.health_status === 'healthy'
-                ? 'border-green-500/50 bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-400'
+                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400'
                 : integration.health_status === 'unhealthy'
-                ? 'border-red-500/50 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400'
-                : 'border-yellow-500/50 bg-yellow-50 text-yellow-700 dark:bg-yellow-950/30 dark:text-yellow-400'
+                ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400'
+                : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400'
             }`}
           >
+            <span className={`h-1.5 w-1.5 rounded-full ${
+              integration.health_status === 'healthy' ? 'bg-emerald-500'
+                : integration.health_status === 'unhealthy' ? 'bg-red-500' : 'bg-amber-500'
+            }`} />
             {integration.health_status}
-          </Badge>
+          </span>
         </div>
       ))}
       <div className="pt-2">
-        <a href="/integrations" className="text-xs text-primary hover:underline">
-          Manage all integrations &rarr;
-        </a>
+        <Link href="/integrations" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+          Manage all integrations
+          <ExternalLink className="h-3 w-3" />
+        </Link>
       </div>
     </div>
   )

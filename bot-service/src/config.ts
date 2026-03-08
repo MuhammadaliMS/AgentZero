@@ -26,7 +26,7 @@ export const config = {
 
   // DOM Agent (LLM-powered DOM understanding)
   openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
-  domAgentModel: process.env.DOM_AGENT_MODEL || 'google/gemini-2.0-flash-001',
+  domAgentModel: process.env.DOM_AGENT_MODEL || 'minimax/minimax-m2.5',
   domAgentEnabled: process.env.DOM_AGENT_ENABLED !== 'false', // enabled by default
 
   // Paths

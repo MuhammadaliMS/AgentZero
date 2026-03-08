@@ -1028,20 +1028,13 @@ export class MeetingBot {
       } catch { /* try next strategy */ }
     }
 
-    // Strategy 3: Ask DomAgent LLM to find the element
+    // Strategy 3: DomAgent agentic loop — find and click
     if (this.domAgent) {
-      console.log(`[bot/${this.meetingId.slice(0, 8)}] Selectors failed for "${description}" — asking DomAgent...`)
-      const discovered = await this.domAgent.findElement(description)
-      if (discovered) {
-        try {
-          await this.page.click(discovered)
-          console.log(`[bot/${this.meetingId.slice(0, 8)}] DomAgent found: ${discovered}`)
-          return true
-        } catch {
-          console.warn(`[bot/${this.meetingId.slice(0, 8)}] DomAgent selector "${discovered}" found but click failed`)
-        }
-      } else {
-        console.warn(`[bot/${this.meetingId.slice(0, 8)}] DomAgent could not find: "${description}"`)
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Selectors failed for "${description}" — running DomAgent agentic loop...`)
+      const clicked = await this.domAgent.findAndClick(description)
+      if (clicked) {
+        console.log(`[bot/${this.meetingId.slice(0, 8)}] DomAgent agentic loop found and clicked element`)
+        return true
       }
     }
 

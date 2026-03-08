@@ -3,12 +3,41 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { Badge } from '@/components/ui/badge'
 import {
   Mic, Clock, Users, CheckCircle2, AlertCircle, Loader2,
-  Video, CalendarDays, ArrowRight, Search, Sparkles,
+  Video, CalendarDays, ChevronRight, Search, Sparkles,
 } from 'lucide-react'
 import type { MeetingStatus, MeetingPlatform } from '@/types/meetings'
+
+/* ─── Status visual config ─────────────────────────────────────────── */
+
+interface StatusStyle {
+  label: string
+  dot: string
+  text: string
+  bg: string
+  icon: React.ElementType
+  pulse?: boolean
+}
+
+const STATUS_MAP: Record<MeetingStatus, StatusStyle> = {
+  scheduled:    { label: 'Scheduled',    dot: 'bg-blue-500',    text: 'text-blue-700 dark:text-blue-300',    bg: 'bg-blue-50 dark:bg-blue-950/30',    icon: CalendarDays },
+  joining:      { label: 'Joining',      dot: 'bg-amber-500',   text: 'text-amber-700 dark:text-amber-300',  bg: 'bg-amber-50 dark:bg-amber-950/30',  icon: Loader2, pulse: true },
+  recording:    { label: 'Recording',    dot: 'bg-red-500',     text: 'text-red-700 dark:text-red-300',      bg: 'bg-red-50 dark:bg-red-950/30',      icon: Mic, pulse: true },
+  transcribing: { label: 'Transcribing', dot: 'bg-violet-500',  text: 'text-violet-700 dark:text-violet-300', bg: 'bg-violet-50 dark:bg-violet-950/30', icon: Loader2, pulse: true },
+  processing:   { label: 'Processing',   dot: 'bg-orange-500',  text: 'text-orange-700 dark:text-orange-300', bg: 'bg-orange-50 dark:bg-orange-950/30', icon: Loader2, pulse: true },
+  completed:    { label: 'Completed',    dot: 'bg-emerald-500', text: 'text-emerald-700 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-950/30', icon: CheckCircle2 },
+  failed:       { label: 'Failed',       dot: 'bg-red-500',     text: 'text-red-700 dark:text-red-300',      bg: 'bg-red-50 dark:bg-red-950/30',      icon: AlertCircle },
+  skipped:      { label: 'Skipped',      dot: 'bg-gray-400',    text: 'text-gray-600 dark:text-gray-400',    bg: 'bg-gray-50 dark:bg-gray-900/30',    icon: AlertCircle },
+}
+
+const PLATFORM_LABEL: Record<string, string> = {
+  google_meet: 'Google Meet',
+  zoom: 'Zoom',
+  teams: 'Teams',
+}
+
+/* ─── Types ────────────────────────────────────────────────────────── */
 
 interface MeetingRow {
   id: string
@@ -22,249 +51,258 @@ interface MeetingRow {
   created_at: string
 }
 
-const STATUS_CONFIG: Record<MeetingStatus, { label: string; color: string; bgColor: string; icon: React.ElementType }> = {
-  scheduled: { label: 'Scheduled', color: 'text-blue-600 dark:text-blue-400', bgColor: 'bg-blue-50 dark:bg-blue-950/40', icon: CalendarDays },
-  joining: { label: 'Joining...', color: 'text-amber-600 dark:text-amber-400', bgColor: 'bg-amber-50 dark:bg-amber-950/40', icon: Loader2 },
-  recording: { label: 'Recording', color: 'text-red-500 dark:text-red-400', bgColor: 'bg-red-50 dark:bg-red-950/40', icon: Mic },
-  transcribing: { label: 'Transcribing', color: 'text-violet-600 dark:text-violet-400', bgColor: 'bg-violet-50 dark:bg-violet-950/40', icon: Loader2 },
-  processing: { label: 'Processing', color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-50 dark:bg-orange-950/40', icon: Loader2 },
-  completed: { label: 'Completed', color: 'text-emerald-600 dark:text-emerald-400', bgColor: 'bg-emerald-50 dark:bg-emerald-950/40', icon: CheckCircle2 },
-  failed: { label: 'Failed', color: 'text-red-600 dark:text-red-400', bgColor: 'bg-red-50 dark:bg-red-950/40', icon: AlertCircle },
-  skipped: { label: 'Skipped', color: 'text-gray-500 dark:text-gray-400', bgColor: 'bg-gray-50 dark:bg-gray-950/40', icon: AlertCircle },
-}
+type Filter = 'all' | 'upcoming' | 'completed'
 
-const PLATFORM_LABELS: Record<string, { label: string; color: string }> = {
-  google_meet: { label: 'Google Meet', color: 'text-emerald-700 bg-emerald-50 dark:text-emerald-400 dark:bg-emerald-950/40' },
-  zoom: { label: 'Zoom', color: 'text-blue-700 bg-blue-50 dark:text-blue-400 dark:bg-blue-950/40' },
-  teams: { label: 'Teams', color: 'text-violet-700 bg-violet-50 dark:text-violet-400 dark:bg-violet-950/40' },
-}
+/* ─── Helpers ──────────────────────────────────────────────────────── */
 
-type FilterType = 'all' | 'upcoming' | 'completed'
-
-function getRelativeDate(dateStr: string): string {
-  const date = new Date(dateStr)
+function relativeLabel(iso: string): string {
+  const d = new Date(iso)
   const now = new Date()
-  const diffMs = date.getTime() - now.getTime()
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-
-  if (diffMs < 0) {
-    const absDays = Math.abs(diffDays)
-    if (absDays === 0) return 'Today'
-    if (absDays === 1) return 'Yesterday'
-    return `${absDays} days ago`
-  }
-
-  if (diffHours < 1) return 'Starting soon'
-  if (diffDays === 0) return 'Today'
-  if (diffDays === 1) return 'Tomorrow'
-  if (diffDays < 7) return `In ${diffDays} days`
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const days = Math.round((d.getTime() - now.getTime()) / 86_400_000)
+  if (days < -1) return `${Math.abs(days)}d ago`
+  if (days < 0)  return 'Today'
+  if (days === 0) return 'Today'
+  if (days === 1) return 'Tomorrow'
+  if (days < 7)  return `In ${days}d`
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
+
+function initials(name: string) {
+  return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
+}
+
+const AVATAR_RING = [
+  'ring-blue-200 bg-blue-100 text-blue-700 dark:ring-blue-800 dark:bg-blue-900/60 dark:text-blue-300',
+  'ring-emerald-200 bg-emerald-100 text-emerald-700 dark:ring-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300',
+  'ring-violet-200 bg-violet-100 text-violet-700 dark:ring-violet-800 dark:bg-violet-900/60 dark:text-violet-300',
+  'ring-amber-200 bg-amber-100 text-amber-700 dark:ring-amber-800 dark:bg-amber-900/60 dark:text-amber-300',
+  'ring-rose-200 bg-rose-100 text-rose-700 dark:ring-rose-800 dark:bg-rose-900/60 dark:text-rose-300',
+]
+
+/* ─── Page ─────────────────────────────────────────────────────────── */
 
 export default function MeetingsPage() {
   const supabase = createClient() as any
   const [meetings, setMeetings] = useState<MeetingRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<FilterType>('all')
-  const [searchQuery, setSearchQuery] = useState('')
+  const [filter, setFilter] = useState<Filter>('all')
+  const [search, setSearch] = useState('')
 
-  const loadMeetings = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true)
     try {
-      let query = supabase
+      let q = supabase
         .from('meetings')
         .select('id, title, platform, scheduled_start, duration_seconds, status, participants, summary_ready, created_at')
         .order('scheduled_start', { ascending: true })
         .limit(50)
 
-      if (filter === 'upcoming') {
-        query = query.in('status', ['scheduled', 'joining', 'recording'])
-      } else if (filter === 'completed') {
-        query = query.eq('status', 'completed')
-      }
+      if (filter === 'upcoming')  q = q.in('status', ['scheduled', 'joining', 'recording'])
+      if (filter === 'completed') q = q.eq('status', 'completed')
 
-      const { data, error } = await query
+      const { data, error } = await q
       if (error) throw error
-      setMeetings((data || []) as unknown as MeetingRow[])
-    } catch (err) {
-      console.error('Failed to load meetings:', err)
+      setMeetings((data ?? []) as unknown as MeetingRow[])
+    } catch (e) {
+      console.error('Failed to load meetings:', e)
     } finally {
       setLoading(false)
     }
   }, [supabase, filter])
 
-  useEffect(() => {
-    loadMeetings()
-  }, [loadMeetings])
+  useEffect(() => { load() }, [load])
 
-  const filteredMeetings = searchQuery
-    ? meetings.filter(m => m.title.toLowerCase().includes(searchQuery.toLowerCase()))
+  const visible = search
+    ? meetings.filter(m => m.title.toLowerCase().includes(search.toLowerCase()))
     : meetings
 
-  const filters: { key: FilterType; label: string; count?: number }[] = [
-    { key: 'all', label: 'All Meetings' },
-    { key: 'upcoming', label: 'Upcoming' },
-    { key: 'completed', label: 'Completed' },
-  ]
+  /* ─── Render ───────────────────────────────────────────────────── */
 
   return (
-    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-8">
-      {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-1">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-8 sm:py-10">
+
+      {/* ── Header ─────────────────────────────────────────────────── */}
+      <header className="mb-8 sm:mb-10">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">
             <Video className="h-5 w-5 text-primary" />
-          </div>
+          </span>
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Meetings</h1>
-            <p className="text-sm text-muted-foreground">
-              Recorded meetings with AI-powered summaries and action items
+            <p className="text-[13px] text-muted-foreground leading-none mt-0.5">
+              AI-powered summaries, action items &amp; transcripts
             </p>
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* Search + Filters */}
+      {/* ── Toolbar ────────────────────────────────────────────────── */}
       <div className="mb-6 flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
+        {/* Search */}
+        <label className="relative flex-1 max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/50" />
           <input
             type="text"
-            placeholder="Search meetings..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full h-9 pl-9 pr-3 rounded-lg border border-border bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search meetings…"
+            className="w-full h-9 rounded-lg border border-border bg-card pl-9 pr-3 text-sm
+                       placeholder:text-muted-foreground/40
+                       focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary/40
+                       transition-[box-shadow,border-color] duration-200"
           />
-        </div>
-        <div className="flex gap-1 p-0.5 rounded-lg bg-muted/60">
-          {filters.map((f) => (
+        </label>
+
+        {/* Filter pills */}
+        <nav className="flex gap-0.5 rounded-lg bg-muted/50 p-0.5" role="tablist">
+          {(['all', 'upcoming', 'completed'] as const).map(f => (
             <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                filter === f.key
-                  ? 'bg-background text-foreground shadow-sm'
+              key={f}
+              role="tab"
+              aria-selected={filter === f}
+              onClick={() => setFilter(f)}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all duration-200
+                ${filter === f
+                  ? 'bg-card text-foreground shadow-sm ring-1 ring-border/60'
                   : 'text-muted-foreground hover:text-foreground'
-              }`}
+                }`}
             >
-              {f.label}
+              {f === 'all' ? 'All' : f === 'upcoming' ? 'Upcoming' : 'Completed'}
             </button>
           ))}
-        </div>
+        </nav>
       </div>
 
-      {/* Meeting List */}
+      {/* ── List ───────────────────────────────────────────────────── */}
       {loading ? (
-        <div className="space-y-3">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-[76px] animate-pulse rounded-xl bg-muted/40" />
+        <ul className="space-y-2.5" aria-busy="true">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <li key={i} className="h-[72px] rounded-xl bg-muted/30 animate-pulse" />
           ))}
-        </div>
-      ) : filteredMeetings.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 px-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/60 mb-4">
-            <Video className="h-6 w-6 text-muted-foreground/40" />
-          </div>
-          <p className="text-sm font-medium text-foreground/70 mb-1">No meetings found</p>
-          <p className="text-xs text-muted-foreground text-center max-w-xs">
-            {searchQuery
-              ? 'Try a different search term.'
-              : filter === 'upcoming'
-                ? 'No upcoming meetings scheduled.'
-                : 'Meetings will appear here once your calendar is synced and the bot starts recording.'}
+        </ul>
+      ) : visible.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/50 mb-4">
+            <Video className="h-6 w-6 text-muted-foreground/30" />
+          </span>
+          <p className="text-sm font-medium text-foreground/60 mb-0.5">No meetings found</p>
+          <p className="text-xs text-muted-foreground max-w-xs">
+            {search ? 'Try a different search term.' : 'Your synced calendar meetings will appear here.'}
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {filteredMeetings.map((meeting) => {
-            const statusConfig = STATUS_CONFIG[meeting.status]
-            const StatusIcon = statusConfig.icon
-            const isSpinning = ['joining', 'transcribing', 'processing'].includes(meeting.status)
-            const date = meeting.scheduled_start ? new Date(meeting.scheduled_start) : null
-            const duration = meeting.duration_seconds
-              ? `${Math.round(meeting.duration_seconds / 60)} min`
-              : null
-            const platform = meeting.platform ? PLATFORM_LABELS[meeting.platform] : null
-            const relativeDate = meeting.scheduled_start ? getRelativeDate(meeting.scheduled_start) : null
-
-            return (
-              <Link key={meeting.id} href={`/meetings/${meeting.id}`}>
-                <div className="group relative flex items-center gap-4 px-4 py-3.5 rounded-xl border border-border/60 bg-card hover:bg-accent/30 hover:border-border transition-all cursor-pointer">
-                  {/* Left accent for live meetings */}
-                  {meeting.status === 'recording' && (
-                    <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-full bg-red-500 animate-pulse" />
-                  )}
-
-                  {/* Platform icon */}
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${statusConfig.bgColor}`}>
-                    {meeting.status === 'recording' ? (
-                      <div className="relative">
-                        <Mic className={`h-4.5 w-4.5 ${statusConfig.color}`} />
-                        <div className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                      </div>
-                    ) : meeting.summary_ready ? (
-                      <Sparkles className="h-4.5 w-4.5 text-primary" />
-                    ) : (
-                      <Video className={`h-4.5 w-4.5 ${meeting.status === 'completed' ? 'text-emerald-500' : 'text-muted-foreground/60'}`} />
-                    )}
-                  </div>
-
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">
-                        {meeting.title}
-                      </p>
-                      {platform && (
-                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${platform.color}`}>
-                          {platform.label}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                      {date && (
-                        <span className="flex items-center gap-1">
-                          <CalendarDays className="h-3 w-3" />
-                          {date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                          {' '}
-                          {date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                        </span>
-                      )}
-                      {duration && (
-                        <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          {duration}
-                        </span>
-                      )}
-                      {meeting.participants.length > 0 && (
-                        <span className="flex items-center gap-1">
-                          <Users className="h-3 w-3" />
-                          {meeting.participants.length} participant{meeting.participants.length !== 1 ? 's' : ''}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Right side: relative time + status */}
-                  <div className="flex items-center gap-3 shrink-0">
-                    {relativeDate && (
-                      <span className="text-[11px] text-muted-foreground/70 hidden sm:block">
-                        {relativeDate}
-                      </span>
-                    )}
-                    <div className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium ${statusConfig.bgColor} ${statusConfig.color}`}>
-                      <StatusIcon className={`h-3 w-3 ${isSpinning ? 'animate-spin' : ''}`} />
-                      {statusConfig.label}
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground/30 group-hover:text-primary/60 transition-colors hidden sm:block" />
-                  </div>
-                </div>
-              </Link>
-            )
-          })}
-        </div>
+        <ul className="space-y-2">
+          {visible.map(m => <MeetingCard key={m.id} m={m} />)}
+        </ul>
       )}
     </div>
+  )
+}
+
+/* ─── Meeting Card ─────────────────────────────────────────────────── */
+
+function MeetingCard({ m }: { m: MeetingRow }) {
+  const s = STATUS_MAP[m.status]
+  const Icon = s.icon
+  const isLive = m.status === 'recording'
+  const date = m.scheduled_start ? new Date(m.scheduled_start) : null
+  const dur = m.duration_seconds ? `${Math.round(m.duration_seconds / 60)}m` : null
+
+  return (
+    <li>
+      <Link
+        href={`/meetings/${m.id}`}
+        className="group relative flex items-center gap-4 rounded-xl border border-border/50 bg-card
+                   px-4 py-3.5 cursor-pointer
+                   transition-all duration-200 ease-out
+                   hover:border-border hover:shadow-[0_2px_12px_rgba(0,0,0,0.04)]
+                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+      >
+        {/* Live accent */}
+        {isLive && (
+          <span className="absolute left-0 inset-y-3 w-[3px] rounded-full bg-red-500 animate-pulse" />
+        )}
+
+        {/* Icon */}
+        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors duration-200 ${s.bg}`}>
+          {m.summary_ready
+            ? <Sparkles className="h-4 w-4 text-primary" />
+            : <Icon className={`h-4 w-4 ${s.text} ${s.pulse ? 'animate-spin' : ''}`} />}
+        </span>
+
+        {/* Body */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-sm font-medium truncate group-hover:text-primary transition-colors duration-200">
+              {m.title}
+            </span>
+            {m.platform && (
+              <span className="hidden sm:inline-flex text-[10px] font-medium px-1.5 py-px rounded bg-muted text-muted-foreground">
+                {PLATFORM_LABEL[m.platform] ?? m.platform}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            {date && (
+              <span className="inline-flex items-center gap-1">
+                <CalendarDays className="h-3 w-3" />
+                {date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                {', '}
+                {date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+              </span>
+            )}
+            {dur && (
+              <span className="inline-flex items-center gap-1">
+                <Clock className="h-3 w-3" />{dur}
+              </span>
+            )}
+            {m.participants.length > 0 && (
+              <span className="hidden sm:inline-flex items-center gap-1">
+                <Users className="h-3 w-3" />{m.participants.length}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Right */}
+        <div className="flex items-center gap-3 shrink-0">
+          {/* Stacked avatars (desktop) */}
+          {m.participants.length > 0 && (
+            <div className="hidden md:flex -space-x-1.5">
+              {m.participants.slice(0, 3).map((p, i) => (
+                <span
+                  key={i}
+                  title={p.name}
+                  className={`flex h-6 w-6 items-center justify-center rounded-full text-[9px] font-semibold ring-2 ring-card ${AVATAR_RING[i % AVATAR_RING.length]}`}
+                >
+                  {initials(p.name)}
+                </span>
+              ))}
+              {m.participants.length > 3 && (
+                <span className="flex h-6 w-6 items-center justify-center rounded-full text-[9px] font-medium ring-2 ring-card bg-muted text-muted-foreground">
+                  +{m.participants.length - 3}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Relative tag */}
+          {m.scheduled_start && (
+            <span className="hidden lg:block text-[11px] text-muted-foreground/60 tabular-nums w-14 text-right">
+              {relativeLabel(m.scheduled_start)}
+            </span>
+          )}
+
+          {/* Status dot + label */}
+          <span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium ${s.bg} ${s.text}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${s.dot} ${s.pulse ? 'animate-pulse' : ''}`} />
+            {s.label}
+          </span>
+
+          <ChevronRight className="h-4 w-4 text-muted-foreground/25 group-hover:text-primary/50 transition-colors duration-200" />
+        </div>
+      </Link>
+    </li>
   )
 }

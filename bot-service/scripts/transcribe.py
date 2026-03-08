@@ -107,14 +107,12 @@ def transcribe_groq(audio_path: str, language: str = "en") -> dict:
             "https://api.groq.com/openai/v1/audio/transcriptions",
             headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
             files={"file": (os.path.basename(audio_path), f, "audio/mpeg")},
-            # Use list of tuples to send both word AND segment granularities
-            data=[
-                ("model", "whisper-large-v3"),
-                ("response_format", "verbose_json"),
-                ("timestamp_granularities[]", "word"),
-                ("timestamp_granularities[]", "segment"),
-                ("language", language),
-            ],
+            data={
+                "model": "whisper-large-v3",
+                "response_format": "verbose_json",
+                "timestamp_granularities[]": "segment",
+                "language": language,
+            },
             timeout=120.0,
         )
 

@@ -242,26 +242,36 @@ export class MeetingScheduler {
       process.stderr.write(`[transcribe/${meetingId.slice(0, 8)}] ${data}`)
     })
 
-    proc.on('close', async (code) => {
-      if (code === 0) {
-        // Transcription script succeeded — it will call the webhook with
-        // 'transcription_complete' which triggers summarization on Vercel.
-        // Do NOT update meeting status here to avoid race condition with webhook.
-        console.log(`[scheduler] Transcription process exited successfully for ${meetingId}`)
-      } else {
-        // Transcription script failed — notify webhook so meeting gets marked as failed
-        console.error(`[scheduler] Transcription failed with code ${code} for ${meetingId}`)
-        await this.supabase
-          .from('meetings')
-          .update({
-            status: 'failed',
+    // Wrap in a Promise so the caller awaits until the child process finishes.
+    // This keeps the bot in activeBots during transcription, preventing re-joins.
+    return new Promise<void>((resolve) => {
+      proc.on('close', async (code) => {
+        if (code === 0) {
+          // Transcription script succeeded — it will call the webhook with
+          // 'transcription_complete' which triggers summarization on Vercel.
+          // Do NOT update meeting status here to avoid race condition with webhook.
+          console.log(`[scheduler] Transcription process exited successfully for ${meetingId}`)
+        } else {
+          // Transcription script failed — notify webhook so meeting gets marked as failed
+          console.error(`[scheduler] Transcription failed with code ${code} for ${meetingId}`)
+          await this.supabase
+            .from('meetings')
+            .update({
+              status: 'failed',
+              error_message: `Transcription process exited with code ${code}`,
+            })
+            .eq('id', meetingId)
+          await this.notifyWebhook(meetingId, 'bot_error', {
             error_message: `Transcription process exited with code ${code}`,
           })
-          .eq('id', meetingId)
-        this.notifyWebhook(meetingId, 'bot_error', {
-          error_message: `Transcription process exited with code ${code}`,
-        })
-      }
+        }
+        resolve()
+      })
+
+      proc.on('error', (err) => {
+        console.error(`[scheduler] Failed to start transcription process for ${meetingId}:`, err.message)
+        resolve() // Don't leave the bot stuck in activeBots
+      })
     })
   }
 

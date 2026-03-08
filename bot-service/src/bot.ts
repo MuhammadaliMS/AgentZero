@@ -23,6 +23,7 @@ import { spawn, type ChildProcess } from 'child_process'
 import { mkdirSync, existsSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { config } from './config.js'
+import { DomAgent, type SpeakerPatterns } from './dom-agent.js'
 
 // Enable stealth mode to bypass Google's bot detection
 puppeteer.use(StealthPlugin())
@@ -80,6 +81,12 @@ export class MeetingBot {
   private lastCaptionKey: string = ''
   private captionsEnabled: boolean = false
 
+  // DOM Agent — LLM-powered DOM understanding
+  private domAgent: DomAgent | null = null
+  private discoveredPatterns: SpeakerPatterns | null = null
+  private consecutiveNulls: number = 0
+  private domAnalysisInProgress: boolean = false
+
   constructor(meetingId: string, meetingUrl: string, platform: string | null, title: string) {
     this.meetingId = meetingId
     this.meetingUrl = meetingUrl
@@ -100,6 +107,15 @@ export class MeetingBot {
       const joined = await this.joinMeeting()
       if (!joined) {
         return { status: 'failed', error: 'Could not join meeting' }
+      }
+
+      // Initialize DOM Agent if OpenRouter API key is configured
+      if (config.domAgentEnabled && config.openrouterApiKey && this.page) {
+        this.domAgent = new DomAgent(this.page, {
+          apiKey: config.openrouterApiKey,
+          model: config.domAgentModel,
+        })
+        console.log(`[bot/${this.meetingId.slice(0, 8)}] DOM Agent initialized (${config.domAgentModel})`)
       }
 
       // Try to enable captions (best-effort, not required)
@@ -600,26 +616,18 @@ export class MeetingBot {
       console.log(`[bot/${this.meetingId.slice(0, 8)}] After pre-screens: ${pageText2.replace(/\n/g, ' | ').substring(0, 400)}`)
 
       // ── Step 4: Turn off camera + mic if on the pre-join lobby ──────────
-      try {
-        const cam = await this.page.$('[data-is-muted][aria-label*="camera" i]')
-          || await this.page.$('[aria-label*="Turn off camera" i]')
-          || await this.page.$('[data-tooltip*="camera" i]')
-        if (cam) {
-          await cam.click()
-          console.log(`[bot/${this.meetingId.slice(0, 8)}] Camera toggled off`)
-        }
-      } catch { /* already off */ }
+      const camToggled = await this.clickWithFallback(
+        ['[data-is-muted][aria-label*="camera" i]', '[aria-label*="Turn off camera" i]', '[data-tooltip*="camera" i]'],
+        'the camera toggle button to turn off the camera on the Google Meet pre-join screen',
+      )
+      if (camToggled) console.log(`[bot/${this.meetingId.slice(0, 8)}] Camera toggled off`)
       await this.sleep(500)
 
-      try {
-        const mic = await this.page.$('[data-is-muted][aria-label*="microphone" i]')
-          || await this.page.$('[aria-label*="Turn off microphone" i]')
-          || await this.page.$('[data-tooltip*="microphone" i]')
-        if (mic) {
-          await mic.click()
-          console.log(`[bot/${this.meetingId.slice(0, 8)}] Microphone toggled off`)
-        }
-      } catch { /* already off */ }
+      const micToggled = await this.clickWithFallback(
+        ['[data-is-muted][aria-label*="microphone" i]', '[aria-label*="Turn off microphone" i]', '[data-tooltip*="microphone" i]'],
+        'the microphone toggle button to mute the microphone on the Google Meet pre-join screen',
+      )
+      if (micToggled) console.log(`[bot/${this.meetingId.slice(0, 8)}] Microphone toggled off`)
       await this.sleep(500)
 
       // ── Step 5: Enter name if prompted ─────────────────────────────────
@@ -636,10 +644,7 @@ export class MeetingBot {
         }
       } catch { /* no name prompt */ }
 
-      // Click join button — try multiple strategies
-      let joined = false
-
-      // Strategy 1: Direct selectors
+      // Click join button — uses clickWithFallback: CSS selectors → text → DomAgent LLM
       const joinSelectors = [
         'button[data-idom-class*="join"]',
         '[aria-label*="Join now" i]',
@@ -647,52 +652,12 @@ export class MeetingBot {
         '[aria-label*="Join meeting" i]',
         'button[jsname="Qx7uuf"]',  // Known Google Meet join button jsname
       ]
-      for (const sel of joinSelectors) {
-        try {
-          const btn = await this.page.$(sel)
-          if (btn) {
-            console.log(`[bot/${this.meetingId.slice(0, 8)}] Found join button via selector: ${sel}`)
-            await btn.click()
-            joined = true
-            break
-          }
-        } catch { /* try next */ }
-      }
-
-      // Strategy 2: Text-based search on buttons and spans
-      if (!joined) {
-        const joinTexts = ['join now', 'ask to join', 'join meeting', 'join']
-        for (const btn of await this.page.$$('button, [role="button"]')) {
-          const text = await btn.evaluate((el: Element) => el.textContent?.trim().toLowerCase() || '')
-          for (const target of joinTexts) {
-            if (text === target || text.includes(target)) {
-              console.log(`[bot/${this.meetingId.slice(0, 8)}] Found join button via text: "${text}"`)
-              await btn.click()
-              joined = true
-              break
-            }
-          }
-          if (joined) break
-        }
-      }
-
-      // Strategy 3: Look for spans inside buttons containing join text
-      if (!joined) {
-        const spans = await this.page.$$('button span, [role="button"] span')
-        for (const span of spans) {
-          const text = await span.evaluate((el: Element) => el.textContent?.trim().toLowerCase() || '')
-          if (text === 'join now' || text === 'ask to join' || text === 'join') {
-            console.log(`[bot/${this.meetingId.slice(0, 8)}] Found join button via span text: "${text}"`)
-            // Click the parent button, not the span
-            await span.evaluate((el: Element) => {
-              const button = el.closest('button') || el.closest('[role="button"]')
-              if (button) (button as HTMLElement).click()
-            })
-            joined = true
-            break
-          }
-        }
-      }
+      const joinTextPatterns = ['join now', 'ask to join', 'join meeting', 'join']
+      const joined = await this.clickWithFallback(
+        joinSelectors,
+        'the Join Now or Ask to Join button on the Google Meet pre-join screen',
+        joinTextPatterns,
+      )
 
       if (!joined) {
         // Debug: take a screenshot and dump button info
@@ -999,39 +964,195 @@ export class MeetingBot {
     }
   }
 
+  // ─── Helper: Bot Name Check ────────────────────────────────────────────
+
+  private isBotName(name: string): boolean {
+    const lower = name.toLowerCase()
+    return lower === 'zerowing' || lower === 'zerowing (meeting bot)' ||
+           lower === 'captain' || lower === 'captain (meeting bot)' ||
+           lower === 'meeting bot' || lower === 'bot' || lower === 'you'
+  }
+
+  // ─── Helper: Add Speaker Event ────────────────────────────────────────
+
+  private addSpeakerEvent(speaker: string, elapsed: number): void {
+    if (this.speakerTimeline.length > 0) {
+      this.speakerTimeline[this.speakerTimeline.length - 1].endTime = elapsed
+    }
+    this.speakerTimeline.push({ speaker, startTime: elapsed, endTime: elapsed })
+    this.currentSpeaker = speaker
+  }
+
+  // ─── Click With Fallback (CSS → Text → DomAgent LLM) ─────────────────
+
+  /**
+   * Try to click an element using hardcoded selectors first,
+   * then fall back to asking the DomAgent LLM if all selectors fail.
+   */
+  private async clickWithFallback(
+    selectors: string[],
+    description: string,
+    textPatterns?: string[],
+  ): Promise<boolean> {
+    if (!this.page) return false
+
+    // Strategy 1: Try each hardcoded CSS selector
+    for (const sel of selectors) {
+      try {
+        const el = await this.page.$(sel)
+        if (el) {
+          const isVisible = await el.evaluate((e: Element) => {
+            const rect = e.getBoundingClientRect()
+            return rect.width > 0 && rect.height > 0
+          })
+          if (isVisible) {
+            await el.click()
+            return true
+          }
+        }
+      } catch { /* try next */ }
+    }
+
+    // Strategy 2: Text-based search on buttons
+    if (textPatterns && textPatterns.length > 0) {
+      try {
+        for (const btn of await this.page.$$('button, [role="button"]')) {
+          const text = await btn.evaluate((el: Element) => el.textContent?.trim().toLowerCase() || '')
+          for (const pattern of textPatterns) {
+            if (text === pattern || text.includes(pattern)) {
+              await btn.click()
+              return true
+            }
+          }
+        }
+      } catch { /* try next strategy */ }
+    }
+
+    // Strategy 3: Ask DomAgent LLM to find the element
+    if (this.domAgent) {
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Selectors failed for "${description}" — asking DomAgent...`)
+      const discovered = await this.domAgent.findElement(description)
+      if (discovered) {
+        try {
+          await this.page.click(discovered)
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] DomAgent found: ${discovered}`)
+          return true
+        } catch {
+          console.warn(`[bot/${this.meetingId.slice(0, 8)}] DomAgent selector "${discovered}" found but click failed`)
+        }
+      } else {
+        console.warn(`[bot/${this.meetingId.slice(0, 8)}] DomAgent could not find: "${description}"`)
+      }
+    }
+
+    return false
+  }
+
   // ─── Active Speaker Detection (DOM) ────────────────────────────────────
 
   private async detectActiveSpeaker(): Promise<void> {
     if (!this.page) return
 
     try {
+      let speaker: string | null = null
       const isGoogleMeet = this.platform === 'google_meet' || this.meetingUrl.includes('meet.google.com')
-      const speaker = isGoogleMeet
-        ? await this.detectGoogleMeetSpeaker()
-        : await this.detectZoomSpeaker()
 
-      if (speaker && speaker !== 'Zerowing' && speaker !== 'Zerowing (Meeting Bot)') {
+      // Tier 1: Try DOM-based detection with DISCOVERED patterns (from DomAgent analysis)
+      if (!speaker && this.discoveredPatterns) {
+        speaker = await this.detectWithDiscoveredPatterns()
+      }
+
+      // Tier 2: Try DOM-based detection with HARDCODED patterns (existing selectors)
+      if (!speaker) {
+        speaker = isGoogleMeet
+          ? await this.detectGoogleMeetSpeaker()
+          : await this.detectZoomSpeaker()
+      }
+
+      // Tier 3: Try caption-based detection (data-sender-name — most reliable if captions on)
+      if (!speaker) {
+        speaker = await this.getLatestCaptionSpeaker()
+      }
+
+      if (speaker && !this.isBotName(speaker)) {
         this.participants.add(speaker)
+        this.consecutiveNulls = 0 // Reset failure counter
 
         if (speaker !== this.currentSpeaker) {
           const elapsed = (Date.now() - this.startTime) / 1000
-
-          // Finalize previous speaker's end time
-          if (this.speakerTimeline.length > 0) {
-            this.speakerTimeline[this.speakerTimeline.length - 1].endTime = elapsed
-          }
-
-          this.speakerTimeline.push({
-            speaker,
-            startTime: elapsed,
-            endTime: elapsed, // Will be updated
-          })
-
-          this.currentSpeaker = speaker
+          this.addSpeakerEvent(speaker, elapsed)
         }
+      } else {
+        this.consecutiveNulls++
       }
     } catch {
       // Best-effort, don't crash the bot
+      this.consecutiveNulls++
+    }
+  }
+
+  /**
+   * Detect speaker using patterns discovered by DomAgent LLM analysis.
+   */
+  private async detectWithDiscoveredPatterns(): Promise<string | null> {
+    if (!this.discoveredPatterns || !this.page) return null
+
+    try {
+      return await this.page.evaluate((patterns: SpeakerPatterns) => {
+        // Try the discovered active speaker selector
+        const speakingEl = document.querySelector(patterns.activeSpeakerSelector)
+        if (!speakingEl) return null
+
+        // Extract name using discovered method
+        const tile = speakingEl.closest(patterns.tileSelector) || speakingEl
+
+        // Try data attribute extraction
+        if (patterns.nameExtraction.startsWith('data-')) {
+          const name = tile.getAttribute(patterns.nameExtraction)
+          if (name) return name.trim()
+        }
+
+        // Try aria-label extraction (name before first comma)
+        if (patterns.nameExtraction === 'aria-label') {
+          const label = tile.getAttribute('aria-label') || ''
+          const match = label.match(/^([^,]+)/)
+          if (match && match[1].trim().length > 1) return match[1].trim()
+        }
+
+        // Try it as a CSS selector for a name element
+        try {
+          const nameEl = tile.querySelector(patterns.nameExtraction)
+          if (nameEl?.textContent) return nameEl.textContent.trim()
+        } catch { /* not a valid selector */ }
+
+        // Fallback: look for data-self-name within the tile
+        const selfName = tile.querySelector('[data-self-name]')?.getAttribute('data-self-name')
+        if (selfName) return selfName.trim()
+
+        return null
+      }, this.discoveredPatterns)
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Get the most recent speaker from live captions (data-sender-name).
+   * Works even if captionsEnabled is false — captions might be on externally.
+   */
+  private async getLatestCaptionSpeaker(): Promise<string | null> {
+    if (!this.page) return null
+
+    try {
+      return await this.page.evaluate(() => {
+        const senderEls = document.querySelectorAll('[data-sender-name]')
+        if (senderEls.length === 0) return null
+        // Return the last (most recent) caption speaker
+        const lastEl = senderEls[senderEls.length - 1]
+        return lastEl.getAttribute('data-sender-name') || null
+      })
+    } catch {
+      return null
     }
   }
 
@@ -1120,31 +1241,54 @@ export class MeetingBot {
     if (!this.page) return
     try {
       const isGoogleMeet = this.platform !== 'zoom' && !this.meetingUrl.includes('zoom.us')
+      const captionSelectors = isGoogleMeet
+        ? ['[aria-label*="captions" i]', '[aria-label*="subtitles" i]', '[data-tooltip*="captions" i]']
+        : ['[aria-label*="live transcript" i]', '[aria-label*="closed caption" i]', '[aria-label*="captions" i]']
 
-      if (isGoogleMeet) {
-        // Try clicking the CC button
-        for (const sel of ['[aria-label*="captions" i]', '[aria-label*="subtitles" i]', '[data-tooltip*="captions" i]']) {
-          const btn = await this.page.$(sel)
-          if (btn) {
-            await btn.click()
-            await this.sleep(1000)
-            this.captionsEnabled = true
-            console.log(`[bot/${this.meetingId.slice(0, 8)}] Captions enabled (bonus)`)
-            return
-          }
+      // Method 1: Try hardcoded selectors
+      for (const sel of captionSelectors) {
+        const btn = await this.page.$(sel)
+        if (btn) {
+          await btn.click()
+          await this.sleep(1500)
+          this.captionsEnabled = true
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Captions enabled via selector`)
+          return
         }
-      } else {
-        for (const sel of ['[aria-label*="live transcript" i]', '[aria-label*="closed caption" i]', '[aria-label*="captions" i]']) {
-          const btn = await this.page.$(sel)
-          if (btn) {
-            await btn.click()
-            await this.sleep(1000)
+      }
+
+      // Method 2: Keyboard shortcut (Google Meet: 'c' toggles captions)
+      if (isGoogleMeet) {
+        await this.page.keyboard.press('c')
+        await this.sleep(2000)
+        // Verify captions appeared
+        const hasCaptions = await this.page.$('[data-sender-name]')
+        if (hasCaptions) {
+          this.captionsEnabled = true
+          console.log(`[bot/${this.meetingId.slice(0, 8)}] Captions enabled via keyboard shortcut 'c'`)
+          return
+        }
+      }
+
+      // Method 3: Ask DomAgent to find the captions button
+      if (!this.captionsEnabled) {
+        const clicked = await this.clickWithFallback(
+          captionSelectors,
+          isGoogleMeet
+            ? 'the closed captions or subtitles toggle button in the bottom toolbar of Google Meet'
+            : 'the closed captions or live transcript toggle button in the Zoom toolbar',
+        )
+        if (clicked) {
+          await this.sleep(1500)
+          const hasCaptions = await this.page.$('[data-sender-name]')
+          if (hasCaptions) {
             this.captionsEnabled = true
-            console.log(`[bot/${this.meetingId.slice(0, 8)}] Zoom captions enabled (bonus)`)
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Captions enabled via DomAgent`)
             return
           }
         }
       }
+
       console.log(`[bot/${this.meetingId.slice(0, 8)}] Captions not available — will use audio transcription via Groq`)
     } catch {
       console.log(`[bot/${this.meetingId.slice(0, 8)}] Could not enable captions — will use Groq`)
@@ -1152,13 +1296,14 @@ export class MeetingBot {
   }
 
   private async scrapeCaptions(): Promise<void> {
-    if (!this.page || !this.captionsEnabled) return
+    // Always try scraping — captions might be enabled externally or by other participants
+    if (!this.page) return
 
     try {
       const captions = await this.page.evaluate(() => {
         const results: { speaker: string; text: string }[] = []
 
-        // Google Meet captions
+        // Google Meet captions — primary source with speaker names
         const senderEls = document.querySelectorAll('[data-sender-name]')
         for (const el of senderEls) {
           const speaker = el.getAttribute('data-sender-name') || 'Unknown'
@@ -1166,7 +1311,7 @@ export class MeetingBot {
           if (text) results.push({ speaker, text })
         }
 
-        // Generic caption containers
+        // Generic caption containers (no speaker names)
         if (results.length === 0) {
           const containers = document.querySelectorAll('[class*="caption"], [class*="subtitle"]')
           for (const c of containers) {
@@ -1177,6 +1322,14 @@ export class MeetingBot {
 
         return results
       })
+
+      if (captions.length === 0) return
+
+      // If we see captions but haven't flagged them as enabled, do so now
+      if (!this.captionsEnabled) {
+        this.captionsEnabled = true
+        console.log(`[bot/${this.meetingId.slice(0, 8)}] Captions detected (externally enabled)`)
+      }
 
       const elapsed = (Date.now() - this.startTime) / 1000
       for (const cap of captions) {
@@ -1194,6 +1347,15 @@ export class MeetingBot {
           endTime: elapsed,
         })
         this.lastCaptionKey = key
+
+        // ALSO feed caption speaker into the speaker timeline
+        // Captions have verified speaker names from Google — most reliable source
+        if (cap.speaker && cap.speaker !== 'Unknown' && !this.isBotName(cap.speaker)) {
+          this.participants.add(cap.speaker)
+          if (cap.speaker !== this.currentSpeaker) {
+            this.addSpeakerEvent(cap.speaker, elapsed)
+          }
+        }
       }
     } catch { /* best-effort */ }
   }
@@ -1207,15 +1369,16 @@ export class MeetingBot {
 
     let elapsed = 0
     let lastEndCheck = 0
+    let domAnalysisScheduled = false
 
     while (!this.shouldStop && elapsed < MAX_DURATION_MS) {
       await this.sleep(POLL_MS)
       elapsed += POLL_MS
 
-      // Detect active speaker from DOM
+      // Detect active speaker from DOM (3-tier cascade: discovered → hardcoded → captions)
       await this.detectActiveSpeaker()
 
-      // Scrape captions if available
+      // Scrape captions (always try — also feeds speaker names into timeline)
       await this.scrapeCaptions()
 
       // Check for meeting end every 15s
@@ -1233,10 +1396,75 @@ export class MeetingBot {
         await this.scrapeParticipantNames()
       }
 
+      // ── DOM Agent: Proactive speaker pattern discovery ──
+      // After ~20s in meeting and participants detected, run DOM analysis once
+      if (
+        !domAnalysisScheduled &&
+        elapsed > 20000 &&
+        this.participants.size > 0 &&
+        this.domAgent &&
+        !this.discoveredPatterns
+      ) {
+        domAnalysisScheduled = true
+        console.log(`[bot/${this.meetingId.slice(0, 8)}] Running proactive DOM analysis for speaker detection...`)
+        try {
+          this.discoveredPatterns = await this.domAgent.discoverSpeakerPatterns()
+          if (this.discoveredPatterns) {
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] ✓ DOM Agent discovered speaker patterns: tile="${this.discoveredPatterns.tileSelector}", speaker="${this.discoveredPatterns.activeSpeakerSelector}", name="${this.discoveredPatterns.nameExtraction}"`)
+          } else {
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] DOM Agent could not discover speaker patterns — using hardcoded fallbacks`)
+          }
+        } catch (err) {
+          console.warn(`[bot/${this.meetingId.slice(0, 8)}] DOM analysis error:`, (err as Error).message)
+        }
+      }
+
+      // ── DOM Agent: Re-analyze if detection is consistently failing ──
+      // If 30+ consecutive nulls (60s of failure), try re-discovering patterns
+      if (
+        this.consecutiveNulls >= 30 &&
+        !this.domAnalysisInProgress &&
+        this.domAgent &&
+        elapsed > 60000 // Don't re-analyze in the first minute
+      ) {
+        this.domAnalysisInProgress = true
+        console.log(`[bot/${this.meetingId.slice(0, 8)}] Speaker detection failing for 60s — re-running DOM analysis...`)
+        try {
+          const newPatterns = await this.domAgent.discoverSpeakerPatterns()
+          if (newPatterns) {
+            this.discoveredPatterns = newPatterns
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] ✓ Re-discovered speaker patterns`)
+          }
+        } catch { /* best-effort */ }
+        this.domAnalysisInProgress = false
+        this.consecutiveNulls = 0  // Reset counter regardless
+      }
+
+      // ── DOM Agent: Fallback participant scraping ──
+      // If participant scraping returned nothing after 30s, try DomAgent
+      if (
+        elapsed > 30000 &&
+        this.participants.size === 0 &&
+        this.domAgent &&
+        elapsed % 60000 < POLL_MS  // Try once per minute
+      ) {
+        try {
+          const names = await this.domAgent.findParticipantNames()
+          if (names.length > 0) {
+            for (const name of names) {
+              if (!this.isBotName(name)) this.participants.add(name)
+            }
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] DomAgent found participants: ${names.join(', ')}`)
+            await this.updateMeetingParticipants(names.filter(n => !this.isBotName(n)))
+          }
+        } catch { /* best-effort */ }
+      }
+
       // Log progress every 5 min
       if (elapsed % (5 * 60 * 1000) < POLL_MS) {
         const mins = Math.round(elapsed / 60000)
-        console.log(`[bot/${this.meetingId.slice(0, 8)}] Recording... ${mins}min, ${this.speakerTimeline.length} speaker events, ${this.participants.size} participants`)
+        const domAgentCalls = this.domAgent?.calls ?? 0
+        console.log(`[bot/${this.meetingId.slice(0, 8)}] Recording... ${mins}min, ${this.speakerTimeline.length} speaker events, ${this.participants.size} participants, ${domAgentCalls} DomAgent calls`)
       }
     }
 

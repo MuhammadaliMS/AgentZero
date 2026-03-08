@@ -24,6 +24,11 @@ export const config = {
   googleAccountUser: process.env.GOOGLE_ACCOUNT_USER || '',
   googleAccountPassword: process.env.GOOGLE_ACCOUNT_PASSWORD || '',
 
+  // DOM Agent (LLM-powered DOM understanding)
+  openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
+  domAgentModel: process.env.DOM_AGENT_MODEL || 'google/gemini-2.0-flash-001',
+  domAgentEnabled: process.env.DOM_AGENT_ENABLED !== 'false', // enabled by default
+
   // Paths
   recordingDir: process.env.RECORDING_DIR || '/tmp/recordings',
   transcribeScript: process.env.TRANSCRIBE_SCRIPT || './scripts/transcribe.py',
@@ -46,4 +51,5 @@ export function validateConfig(): void {
   console.log(`  Max concurrent: ${config.maxConcurrentBots}`)
   console.log(`  Transcription: ${config.transcriptionEngine}`)
   console.log(`  Google account: ${config.googleAccountUser ? config.googleAccountUser : '(not set — joining as guest)'}`)
+  console.log(`  DOM Agent: ${config.domAgentEnabled && config.openrouterApiKey ? `enabled (${config.domAgentModel})` : 'disabled'}`)
 }

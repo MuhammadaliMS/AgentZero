@@ -928,10 +928,28 @@ export class MeetingBot {
         return found
       })
 
+      // Fix doubled names from textContent (e.g., "Ali SAli S" → "Ali S")
+      const dedup = (name: string): string => {
+        if (name.length >= 4 && name.length % 2 === 0) {
+          const half = name.length / 2
+          if (name.slice(0, half) === name.slice(half)) return name.slice(0, half)
+        }
+        // Also catch odd-length near-duplicates like "Ali S Ali S" with space join
+        const mid = Math.floor(name.length / 2)
+        for (let i = mid - 1; i <= mid + 1; i++) {
+          if (i > 0 && i < name.length) {
+            const a = name.slice(0, i).trim()
+            const b = name.slice(i).trim()
+            if (a && b && a === b) return a
+          }
+        }
+        return name
+      }
+
       // Filter out bot names and duplicates
       const botNames = new Set(['zerowing', 'zerowing (meeting bot)', 'captain', 'meeting bot', 'bot', 'you'])
       const uniqueNames = [...new Set(
-        names.filter(n => n && !botNames.has(n.toLowerCase()))
+        names.map(n => dedup(n.trim())).filter(n => n && !botNames.has(n.toLowerCase()))
       )]
 
       if (uniqueNames.length > 0) {

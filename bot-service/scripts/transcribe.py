@@ -102,12 +102,14 @@ def transcribe_groq(audio_path: str, language: str = "en") -> dict:
             "https://api.groq.com/openai/v1/audio/transcriptions",
             headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
             files={"file": (os.path.basename(audio_path), f, "audio/mpeg")},
-            data={
-                "model": "whisper-large-v3",
-                "response_format": "verbose_json",
-                "timestamp_granularities[]": "word",
-                "language": language,
-            },
+            # Use list of tuples to send both word AND segment granularities
+            data=[
+                ("model", "whisper-large-v3"),
+                ("response_format", "verbose_json"),
+                ("timestamp_granularities[]", "word"),
+                ("timestamp_granularities[]", "segment"),
+                ("language", language),
+            ],
             timeout=120.0,
         )
 
@@ -412,7 +414,8 @@ def _get_fallback_speaker(participants: list[str] | None) -> str:
 
 
 def _segments_with_speaker(transcript: dict, speaker_name: str) -> list[dict]:
-    """Create segments from transcript with a fixed speaker name."""
+    """Create segments from transcript with a fixed speaker name.
+    Uses segments if available, falls back to building from words or text."""
     final_segments = []
     for seg in transcript.get("segments", []):
         final_segments.append({
@@ -422,6 +425,44 @@ def _segments_with_speaker(transcript: dict, speaker_name: str) -> list[dict]:
             "end_time": seg["end"],
             "word_count": len(seg["text"].split()),
         })
+
+    # Fallback: if no segments but words exist, build from words
+    if not final_segments and transcript.get("words"):
+        chunk_text, chunk_start = [], 0.0
+        for w in transcript["words"]:
+            if not chunk_text:
+                chunk_start = w.get("start", 0)
+            chunk_text.append(w["word"])
+            if len(chunk_text) >= 20 or w["word"].rstrip().endswith((".", "!", "?")):
+                text = " ".join(chunk_text).strip()
+                final_segments.append({
+                    "speaker": speaker_name,
+                    "text": text,
+                    "start_time": chunk_start,
+                    "end_time": w.get("end", 0),
+                    "word_count": len(chunk_text),
+                })
+                chunk_text = []
+        if chunk_text:
+            text = " ".join(chunk_text).strip()
+            final_segments.append({
+                "speaker": speaker_name,
+                "text": text,
+                "start_time": chunk_start,
+                "end_time": transcript["words"][-1].get("end", 0),
+                "word_count": len(chunk_text),
+            })
+
+    # Last resort: if still nothing, use the full text
+    if not final_segments and transcript.get("text"):
+        final_segments.append({
+            "speaker": speaker_name,
+            "text": transcript["text"],
+            "start_time": 0,
+            "end_time": 0,
+            "word_count": len(transcript["text"].split()),
+        })
+
     return final_segments
 
 
@@ -505,6 +546,27 @@ def run_pipeline(
         word_count = len(transcript.get("words", []))
         seg_count = len(transcript.get("segments", []))
         print(f"  Done: {word_count} words, {seg_count} segments ({time.time() - step_start:.1f}s)\n")
+
+        # When Groq returns words but no segments, build segments from words
+        if seg_count == 0 and word_count > 0:
+            print("  Building segments from word timestamps (Groq returned no segments)...")
+            words = transcript["words"]
+            segments = []
+            chunk = []
+            for w in words:
+                chunk.append(w)
+                # Split every ~20 words or at sentence-ending punctuation
+                is_sentence_end = w["word"].rstrip().endswith((".", "!", "?"))
+                if len(chunk) >= 20 or (is_sentence_end and len(chunk) >= 5):
+                    text = " ".join(c["word"] for c in chunk).strip()
+                    segments.append({"text": text, "start": chunk[0]["start"], "end": chunk[-1]["end"]})
+                    chunk = []
+            if chunk:
+                text = " ".join(c["word"] for c in chunk).strip()
+                segments.append({"text": text, "start": chunk[0]["start"], "end": chunk[-1]["end"]})
+            transcript["segments"] = segments
+            seg_count = len(segments)
+            print(f"  Built {seg_count} segments from {word_count} words")
 
         # Handle empty transcript (silent audio / no speech detected)
         if seg_count == 0 and word_count == 0:

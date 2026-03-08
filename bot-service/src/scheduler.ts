@@ -135,12 +135,13 @@ export class MeetingScheduler {
             duration_seconds: result.durationSeconds,
           })
 
-          // Run transcription with speaker timeline + captions
+          // Run transcription with speaker timeline + captions + participants
           await this.runTranscription(
             meeting.id,
             result.recordingPath!,
             result.speakerTimelinePath,
             result.transcriptPath,
+            meeting.participants,
           )
         } else {
           // Bot returned 'failed' or 'no_audio' — mark the meeting so scheduler doesn't retry endlessly
@@ -182,6 +183,7 @@ export class MeetingScheduler {
     recordingPath: string,
     speakerTimelinePath?: string,
     captionsPath?: string,
+    participants?: Array<{ name: string; email: string }>,
   ): Promise<void> {
     const { spawn } = await import('child_process')
 
@@ -202,6 +204,12 @@ export class MeetingScheduler {
     // Pass captions if available (can skip Groq entirely!)
     if (captionsPath) {
       args.push('--captions', captionsPath)
+    }
+
+    // Pass participant names so transcription can label speakers
+    if (participants && participants.length > 0) {
+      const names = participants.map(p => p.name).join(',')
+      args.push('--participants', names)
     }
 
     const proc = spawn('python3', args, {

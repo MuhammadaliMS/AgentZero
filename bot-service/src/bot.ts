@@ -919,6 +919,86 @@ export class MeetingBot {
     }
   }
 
+  // ─── Participant Name Scraping (DOM) ─────────────────────────────────
+
+  private participantsSscraped = false
+
+  private async scrapeParticipantNames(): Promise<void> {
+    if (!this.page || this.participantsSscraped) return
+
+    try {
+      const names: string[] = await this.page.evaluate(() => {
+        const found: string[] = []
+
+        // Method 1: data-self-name attributes on participant tiles
+        const selfNameEls = document.querySelectorAll('[data-self-name]')
+        for (const el of selfNameEls) {
+          const name = el.getAttribute('data-self-name')?.trim()
+          if (name) found.push(name)
+        }
+
+        // Method 2: Participant tiles with name labels
+        // Google Meet renders name labels inside video tiles
+        const nameClasses = ['ZjFb7c', 'cS7aqe', 'zWGUib', 'XEazBc']
+        for (const cls of nameClasses) {
+          const els = document.querySelectorAll(`[class*="${cls}"]`)
+          for (const el of els) {
+            const name = el.textContent?.trim()
+            if (name && name.length > 0 && name.length < 60) found.push(name)
+          }
+        }
+
+        // Method 3: aria-label on participant tiles often has "Name, muted" etc.
+        const tiles = document.querySelectorAll('[data-participant-id]')
+        for (const tile of tiles) {
+          const ariaLabel = tile.getAttribute('aria-label') || ''
+          // Extract name from patterns like "Muhammad Ali, microphone on" or just "Muhammad Ali"
+          const nameMatch = ariaLabel.match(/^([^,]+)/)
+          if (nameMatch && nameMatch[1].trim().length > 1) {
+            found.push(nameMatch[1].trim())
+          }
+        }
+
+        return found
+      })
+
+      // Filter out bot names and duplicates
+      const botNames = new Set(['zerowing', 'zerowing (meeting bot)', 'captain', 'meeting bot', 'bot', 'you'])
+      const uniqueNames = [...new Set(
+        names.filter(n => n && !botNames.has(n.toLowerCase()))
+      )]
+
+      if (uniqueNames.length > 0) {
+        for (const name of uniqueNames) {
+          this.participants.add(name)
+        }
+        this.participantsSscraped = true
+        console.log(`[bot/${this.meetingId.slice(0, 8)}] Scraped participant names: ${uniqueNames.join(', ')}`)
+
+        // Update meeting record with participant names
+        await this.updateMeetingParticipants(uniqueNames)
+      }
+    } catch {
+      // Best-effort, don't crash the bot
+    }
+  }
+
+  private async updateMeetingParticipants(names: string[]): Promise<void> {
+    try {
+      const { createClient } = await import('@supabase/supabase-js')
+      const supabase = createClient(config.supabaseUrl, config.supabaseServiceKey)
+
+      const participants = names.map(name => ({ name, email: '' }))
+
+      await supabase
+        .from('meetings')
+        .update({ participants })
+        .eq('id', this.meetingId)
+    } catch (err) {
+      console.error(`[bot/${this.meetingId.slice(0, 8)}] Failed to update participants:`, (err as Error).message)
+    }
+  }
+
   // ─── Active Speaker Detection (DOM) ────────────────────────────────────
 
   private async detectActiveSpeaker(): Promise<void> {
@@ -1147,6 +1227,12 @@ export class MeetingBot {
         }
       }
 
+      // Re-scrape participant names every 30s (in case new people join)
+      if (elapsed % 30000 < POLL_MS) {
+        this.participantsSscraped = false  // Allow re-scraping
+        await this.scrapeParticipantNames()
+      }
+
       // Log progress every 5 min
       if (elapsed % (5 * 60 * 1000) < POLL_MS) {
         const mins = Math.round(elapsed / 60000)
@@ -1231,6 +1317,9 @@ export class MeetingBot {
         if (!this.wasEverNotAlone) {
           this.wasEverNotAlone = true
           console.log(`[bot/${this.meetingId.slice(0, 8)}] Detected ${result.participantCount} participants in meeting`)
+
+          // Scrape participant names on first detection of other participants
+          await this.scrapeParticipantNames()
         }
         this.aloneStartTime = 0 // Reset alone timer
       }

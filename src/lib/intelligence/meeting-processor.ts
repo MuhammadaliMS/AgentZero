@@ -127,7 +127,11 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       .eq('org_id', meeting.org_id)
       .maybeSingle()
 
-    const model = botConfig?.summarization_model || DEFAULT_SUMMARIZATION_MODEL
+    let model = botConfig?.summarization_model || DEFAULT_SUMMARIZATION_MODEL
+    // Ensure model has provider prefix for OpenRouter (e.g. "anthropic/claude-...")
+    if (model && !model.includes('/')) {
+      model = `anthropic/${model}`
+    }
 
     // 3. Assemble full transcript
     const { data: segments, error: segErr } = await supabase

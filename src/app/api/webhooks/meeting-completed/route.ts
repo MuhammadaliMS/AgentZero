@@ -94,7 +94,30 @@ export async function POST(request: NextRequest) {
     }
 
     case 'transcription_complete': {
-      // Transcript segments are in DB. Trigger AI summarization.
+      // Verify transcript segments actually exist before triggering summarization
+      const { count: segmentCount } = await admin
+        .from('transcript_segments')
+        .select('id', { count: 'exact', head: true })
+        .eq('meeting_id', body.meeting_id)
+        .eq('is_final', true)
+
+      if (!segmentCount || segmentCount === 0) {
+        console.error(`[webhook/meeting-completed] transcription_complete received but 0 segments in DB for ${body.meeting_id}`)
+        await admin
+          .from('meetings')
+          .update({
+            status: 'failed',
+            error_message: 'Transcription reported complete but no segments found in database',
+          })
+          .eq('id', body.meeting_id)
+        return NextResponse.json({
+          ok: false,
+          status: 'failed',
+          message: 'No transcript segments found in database despite transcription_complete event.',
+        }, { status: 422 })
+      }
+
+      // Transcript segments confirmed in DB. Trigger AI summarization.
       await admin
         .from('meetings')
         .update({
@@ -102,6 +125,8 @@ export async function POST(request: NextRequest) {
           transcript_ready: true,
         })
         .eq('id', body.meeting_id)
+
+      console.log(`[webhook/meeting-completed] ${segmentCount} segments confirmed for ${body.meeting_id} — triggering summarization`)
 
       // Run summarization in background (don't block webhook response)
       waitUntil(

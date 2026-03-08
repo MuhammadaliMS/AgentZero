@@ -234,23 +234,18 @@ export class MeetingScheduler {
 
     proc.on('close', async (code) => {
       if (code === 0) {
-        console.log(`[scheduler] Transcription completed for ${meetingId}`)
-        // Update meeting status to completed
-        await this.supabase
-          .from('meetings')
-          .update({
-            status: 'completed',
-            actual_end: new Date().toISOString(),
-          })
-          .eq('id', meetingId)
+        // Transcription script succeeded — it will call the webhook with
+        // 'transcription_complete' which triggers summarization on Vercel.
+        // Do NOT update meeting status here to avoid race condition with webhook.
+        console.log(`[scheduler] Transcription process exited successfully for ${meetingId}`)
       } else {
+        // Transcription script failed — notify webhook so meeting gets marked as failed
         console.error(`[scheduler] Transcription failed with code ${code} for ${meetingId}`)
         await this.supabase
           .from('meetings')
           .update({
             status: 'failed',
-            actual_end: new Date().toISOString(),
-            skip_reason: `Transcription process exited with code ${code}`,
+            error_message: `Transcription process exited with code ${code}`,
           })
           .eq('id', meetingId)
         this.notifyWebhook(meetingId, 'bot_error', {

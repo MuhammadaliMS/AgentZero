@@ -463,12 +463,15 @@ def run_pipeline(
 
             print("[Upload] Writing to Supabase...")
             uploaded = upload_segments_to_supabase(meeting_id, final_segments)
+            if uploaded == 0:
+                print("  ERROR: Supabase upload failed — aborting pipeline")
+                sys.exit(1)
             upload_speaker_map(meeting_id, final_segments)
             print(f"  Done: {uploaded} segments uploaded\n")
 
             total_time = time.time() - total_start
             notify_webhook(meeting_id, "transcription_complete",
-                           segment_count=len(final_segments), duration_seconds=int(total_time))
+                           segment_count=uploaded, duration_seconds=int(total_time))
 
             print(f"\n{'='*60}")
             print(f"Pipeline complete in {total_time:.1f}s (captions fast-path)")
@@ -507,9 +510,22 @@ def run_pipeline(
         if seg_count == 0 and word_count == 0:
             text = transcript.get("text", "").strip()
             if not text:
-                print("  ⚠ No speech detected in recording — uploading empty transcript")
-                # Upload empty transcript to Supabase so meeting isn't stuck
-                upload_to_supabase(meeting_id, [], full_text="(No speech detected in recording)")
+                print("  ⚠ No speech detected in recording")
+                # Create a single marker segment so the pipeline knows transcription ran
+                empty_seg = [{
+                    "speaker": "System",
+                    "text": "(No speech detected in recording)",
+                    "start_time": 0,
+                    "end_time": 0,
+                    "word_count": 0,
+                }]
+                uploaded = upload_segments_to_supabase(meeting_id, empty_seg)
+                if uploaded == 0:
+                    print("  ERROR: Failed to upload empty transcript marker")
+                    sys.exit(1)
+                total_time = time.time() - total_start
+                notify_webhook(meeting_id, "transcription_complete",
+                               segment_count=0, duration_seconds=int(total_time))
                 return
             else:
                 # Text was returned but no segments — create a single segment
@@ -548,12 +564,15 @@ def run_pipeline(
         print("[4/4] Uploading to Supabase...")
         step_start = time.time()
         uploaded = upload_segments_to_supabase(meeting_id, final_segments)
+        if uploaded == 0:
+            print("  ERROR: Supabase upload failed — aborting pipeline")
+            sys.exit(1)
         upload_speaker_map(meeting_id, final_segments)
         print(f"  Done: {uploaded} segments uploaded ({time.time() - step_start:.1f}s)\n")
 
     total_time = time.time() - total_start
     notify_webhook(meeting_id, "transcription_complete",
-                   segment_count=len(final_segments), duration_seconds=int(total_time))
+                   segment_count=uploaded, duration_seconds=int(total_time))
 
     print(f"\n{'='*60}")
     print(f"Pipeline complete in {total_time:.1f}s")

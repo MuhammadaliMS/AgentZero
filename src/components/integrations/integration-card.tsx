@@ -1,9 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
   DialogContent,
@@ -20,52 +18,28 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { CheckCircle, ChevronDown, RefreshCw, X, TestTubeDiagonal } from 'lucide-react'
+import { CheckCircle, ChevronDown, RefreshCw, X, TestTubeDiagonal, ArrowRight } from 'lucide-react'
 import type { IntegrationWithStatus } from '@/types/integrations'
 import { ApiKeyForm } from '@/components/onboarding/api-key-form'
 import { toast } from 'sonner'
 
-const CATEGORY_LABELS: Record<string, string> = {
-  email: 'Email',
-  messenger: 'Messaging',
-  calendar: 'Calendar',
-  risk_and_compliance: 'Compliance',
-  endpoint_detection: 'Security',
-  vulnerability_management: 'Security',
-  developer_tools: 'Dev Tools',
-  content_management: 'Content',
-  meeting_intelligence: 'Meetings',
-}
-
 function HealthDot({ status }: { status?: string }) {
-  // DB constraint: health_status IN ('unknown', 'healthy', 'degraded', 'error')
-  const color =
-    status === 'healthy'
-      ? 'bg-green-500'
-      : status === 'error'
-      ? 'bg-red-500'
-      : status === 'degraded'
-      ? 'bg-yellow-500'
-      : 'bg-gray-400' // 'unknown' or undefined
-
-  const label =
-    status === 'healthy'
-      ? 'Healthy'
-      : status === 'error'
-      ? 'Connection error'
-      : status === 'degraded'
-      ? 'Degraded'
-      : 'Unknown status'
+  const config: Record<string, { color: string; ping: string; label: string }> = {
+    healthy: { color: 'bg-emerald-500', ping: 'bg-emerald-400', label: 'Healthy' },
+    error: { color: 'bg-red-500', ping: '', label: 'Connection error' },
+    degraded: { color: 'bg-amber-500', ping: '', label: 'Degraded' },
+  }
+  const { color, ping, label } = config[status || ''] || { color: 'bg-slate-400', ping: '', label: 'Unknown status' }
 
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="relative flex h-2.5 w-2.5">
-            {status === 'healthy' && (
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-40" />
+          <span className="relative flex h-2 w-2">
+            {ping && (
+              <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${ping} opacity-40`} />
             )}
-            <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${color}`} />
+            <span className={`relative inline-flex h-2 w-2 rounded-full ${color}`} />
           </span>
         </TooltipTrigger>
         <TooltipContent side="top">
@@ -172,94 +146,99 @@ export function IntegrationCard({
 
   return (
     <>
-      <Card
-        className={`shadow-sm hover:shadow-md transition-shadow ${
+      <div
+        className={`group flex items-center gap-3 rounded-xl border p-3.5 transition-all duration-200 hover:shadow-md cursor-default ${
           integration.connected
             ? integration.health_status === 'error'
-              ? 'border-red-500/30 bg-red-50/30 dark:bg-red-950/5'
-              : 'border-green-500/30 bg-green-50/30 dark:bg-green-950/5'
-            : 'hover:border-foreground/20'
+              ? 'border-red-200 dark:border-red-800/40 bg-red-50/50 dark:bg-red-950/10'
+              : 'border-emerald-200/60 dark:border-emerald-800/30 bg-emerald-50/30 dark:bg-emerald-950/10'
+            : 'border-border/50 hover:border-border bg-card'
         }`}
       >
-        <CardContent className="flex items-center gap-3 p-4">
-          {/* Icon */}
-          <div
-            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-lg font-bold ${
-              integration.connected
-                ? 'bg-primary/10 text-primary'
-                : 'bg-muted text-muted-foreground'
-            }`}
-          >
-            {integration.name[0]}
-          </div>
+        {/* Icon */}
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-base font-bold transition-colors ${
+            integration.connected
+              ? 'bg-primary/10 text-primary'
+              : 'bg-muted text-muted-foreground group-hover:bg-primary/5 group-hover:text-primary/70'
+          }`}
+        >
+          {integration.name[0]}
+        </div>
 
-          {/* Info */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <p className="font-medium text-sm">{integration.name}</p>
-              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                {CATEGORY_LABELS[integration.category] || integration.category}
-              </Badge>
-              {integration.connected && <HealthDot status={integration.health_status} />}
-            </div>
-            {integration.connected && connectedAccount ? (
-              <p className="text-xs text-muted-foreground truncate">{connectedAccount}</p>
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="font-medium text-sm">{integration.name}</p>
+            {integration.connected && <HealthDot status={integration.health_status} />}
+          </div>
+          <p className="text-xs text-muted-foreground truncate mt-0.5">
+            {integration.connected && connectedAccount
+              ? connectedAccount
+              : integration.description}
+          </p>
+        </div>
+
+        {/* Actions */}
+        {integration.connected ? (
+          <div className="flex shrink-0 items-center gap-2">
+            {showManagement ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1.5 px-2.5 text-xs rounded-lg cursor-pointer border-border/60"
+                  >
+                    <span className="hidden sm:inline">Manage</span>
+                    <ChevronDown className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={handleTestConnection} disabled={testing} className="cursor-pointer">
+                    <TestTubeDiagonal className="mr-2 h-3.5 w-3.5" />
+                    {testing ? 'Testing...' : 'Test Connection'}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleReconnect} className="cursor-pointer">
+                    <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                    Reconnect
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setShowDisconnectDialog(true)}
+                    className="text-destructive focus:text-destructive cursor-pointer"
+                  >
+                    <X className="mr-2 h-3.5 w-3.5" />
+                    Disconnect
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : (
-              <p className="text-xs text-muted-foreground truncate">
-                {integration.description}
-              </p>
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800/40 bg-emerald-50 dark:bg-emerald-950/20 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+                <CheckCircle className="h-3 w-3" />
+                Connected
+              </span>
             )}
           </div>
-
-          {/* Actions */}
-          {integration.connected ? (
-            <div className="flex shrink-0 items-center gap-2">
-              {showManagement ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-1">
-                      <span className="hidden sm:inline">Manage</span>
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem onClick={handleTestConnection} disabled={testing}>
-                      <TestTubeDiagonal className="mr-2 h-3.5 w-3.5" />
-                      {testing ? 'Testing...' : 'Test Connection'}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleReconnect}>
-                      <RefreshCw className="mr-2 h-3.5 w-3.5" />
-                      Reconnect
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => setShowDisconnectDialog(true)}
-                      className="text-destructive focus:text-destructive"
-                    >
-                      <X className="mr-2 h-3.5 w-3.5" />
-                      Disconnect
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : (
-                <Badge variant="outline" className="shrink-0 border-green-500 text-green-600">
-                  Connected
-                </Badge>
-              )}
-            </div>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleConnect}
-              disabled={connecting}
-              className="shrink-0"
-            >
-              {connecting ? 'Connecting...' : 'Connect'}
-            </Button>
-          )}
-        </CardContent>
-      </Card>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleConnect}
+            disabled={connecting}
+            className="shrink-0 h-8 gap-1.5 rounded-lg text-xs cursor-pointer hover:bg-primary hover:text-primary-foreground hover:border-primary transition-colors"
+          >
+            {connecting ? (
+              'Connecting...'
+            ) : (
+              <>
+                Connect
+                <ArrowRight className="h-3 w-3" />
+              </>
+            )}
+          </Button>
+        )}
+      </div>
 
       {/* API Key Form Dialog */}
       {showApiKeyForm && (
@@ -285,13 +264,14 @@ export function IntegrationCard({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setShowDisconnectDialog(false)}>
+            <Button variant="outline" onClick={() => setShowDisconnectDialog(false)} className="cursor-pointer">
               Cancel
             </Button>
             <Button
               variant="destructive"
               onClick={handleDisconnect}
               disabled={disconnecting}
+              className="cursor-pointer"
             >
               {disconnecting ? 'Disconnecting...' : 'Disconnect'}
             </Button>

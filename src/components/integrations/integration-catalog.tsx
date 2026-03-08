@@ -1,7 +1,6 @@
 'use client'
 
 import { IntegrationCard } from './integration-card'
-import { Skeleton } from '@/components/ui/skeleton'
 import type { IntegrationWithStatus } from '@/types/integrations'
 
 const CATEGORY_ORDER = [
@@ -41,9 +40,19 @@ export function IntegrationCatalog({
 }) {
   if (loading) {
     return (
-      <div className="space-y-3">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="h-16 w-full" />
+      <div className="space-y-6">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="space-y-2.5">
+            <div className="flex items-center gap-2">
+              <div className="h-3 w-24 animate-pulse rounded bg-muted/60" />
+              <div className="h-3 w-8 animate-pulse rounded bg-muted/40" />
+            </div>
+            <div className="space-y-2">
+              {Array.from({ length: 2 }).map((_, j) => (
+                <div key={j} className="h-[72px] animate-pulse rounded-xl bg-muted/40" />
+              ))}
+            </div>
+          </div>
         ))}
       </div>
     )
@@ -67,28 +76,45 @@ export function IntegrationCatalog({
 
   return (
     <div className="space-y-6">
-      {sortedGroups.map(([category, items]) => (
-        <div key={category}>
-          <div className="mb-2 flex items-center gap-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              {category}
-            </h3>
-            <span className="text-[10px] text-muted-foreground/60">
-              {items.filter(i => i.connected).length}/{items.length}
-            </span>
+      {sortedGroups.map(([category, items]) => {
+        const connectedCount = items.filter(i => i.connected).length
+        return (
+          <div key={category}>
+            {/* Category header */}
+            <div className="mb-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {category}
+                </h3>
+                <span className="text-[10px] text-muted-foreground/50">
+                  {connectedCount}/{items.length}
+                </span>
+              </div>
+              {/* Progress bar */}
+              <div className="hidden sm:flex items-center gap-2">
+                <div className="h-1 w-16 rounded-full bg-muted/60 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-primary/60 transition-all duration-500"
+                    style={{ width: `${items.length > 0 ? (connectedCount / items.length) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Cards */}
+            <div className="space-y-2">
+              {items.map(integration => (
+                <IntegrationCard
+                  key={integration.id}
+                  integration={integration}
+                  onConnected={onConnected}
+                  showManagement={showManagement}
+                />
+              ))}
+            </div>
           </div>
-          <div className="space-y-2">
-            {items.map(integration => (
-              <IntegrationCard
-                key={integration.id}
-                integration={integration}
-                onConnected={onConnected}
-                showManagement={showManagement}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

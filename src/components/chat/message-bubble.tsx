@@ -20,7 +20,6 @@ interface MessageBubbleProps {
 export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false)
 
-  // Extract text content from parts
   const textContent = extractTextContent(message.parts)
 
   const handleCopy = useCallback(async () => {
@@ -46,8 +45,10 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
   // System messages
   if (message.role === 'system') {
     return (
-      <div className="flex justify-center py-2">
-        <span className="text-xs text-muted-foreground italic">{textContent}</span>
+      <div className="flex justify-center py-3">
+        <span className="text-xs text-muted-foreground/60 italic px-3 py-1 rounded-full bg-muted/30">
+          {textContent}
+        </span>
       </div>
     )
   }
@@ -61,30 +62,31 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
   return (
     <div className={cn('group flex gap-3 py-3 justify-end animate-slide-up')}>
       <div className="flex flex-col gap-1 max-w-[80%]">
-        <div className="rounded-2xl px-4 py-3 bg-primary text-primary-foreground shadow-sm">
-          <p className="whitespace-pre-wrap text-sm">{textContent}</p>
+        {/* Message bubble */}
+        <div className="rounded-2xl rounded-br-md px-4 py-3 bg-primary text-primary-foreground shadow-sm shadow-primary/10">
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">{textContent}</p>
         </div>
 
-        {/* Action bar — shows on hover */}
+        {/* Hover action bar */}
         <div className={cn(
-          'flex items-center gap-1 transition-opacity justify-end',
-          'opacity-0 group-hover:opacity-100'
+          'flex items-center gap-0.5 transition-all duration-150 justify-end',
+          'opacity-0 group-hover:opacity-100 translate-y-0.5 group-hover:translate-y-0'
         )}>
-          <span className="text-[10px] text-muted-foreground mr-1">
+          <span className="text-[10px] text-muted-foreground/50 mr-1 tabular-nums">
             {formattedTime}
           </span>
 
-          {/* Copy button */}
+          {/* Copy */}
           {textContent.length > 0 && (
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleCopy}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
                   >
                     {copied ? (
-                      <Check className="h-3 w-3 text-green-500" />
+                      <Check className="h-3 w-3 text-emerald-500" />
                     ) : (
                       <Copy className="h-3 w-3" />
                     )}
@@ -97,14 +99,14 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
             </TooltipProvider>
           )}
 
-          {/* Retry button — only on the last user message */}
+          {/* Retry */}
           {isLastUserMessage && onRetry && (
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     onClick={() => onRetry(textContent)}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
                   >
                     <RotateCcw className="h-3 w-3" />
                   </button>
@@ -119,7 +121,7 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
       </div>
 
       {/* User avatar */}
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/15">
         <User className="h-4 w-4" />
       </div>
     </div>

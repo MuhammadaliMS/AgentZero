@@ -124,14 +124,14 @@ export function ConversationSidebar() {
   const totalCount = groupedConversations.reduce((acc, g) => acc + g.conversations.length, 0)
 
   return (
-    <div className="hidden md:flex h-full w-72 flex-col border-r bg-muted/20">
+    <div className="hidden md:flex h-full w-72 flex-col border-r border-border/50 bg-muted/10">
       {/* Header */}
-      <div className="flex h-13 items-center justify-between border-b px-4">
+      <div className="flex h-14 items-center justify-between border-b border-border/40 px-4">
         <span className="text-sm font-semibold tracking-tight">Conversations</span>
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+          className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
           asChild
         >
           <Link href="/chat">
@@ -142,19 +142,19 @@ export function ConversationSidebar() {
       </div>
 
       {/* Search */}
-      <div className="px-3 py-2">
+      <div className="px-3 py-2.5">
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search conversations..."
-            className="h-8 pl-8 text-xs bg-background/60 border-transparent focus:border-border"
+            className="h-8 pl-8 text-xs bg-background/50 border-border/40 focus:border-primary/40 focus:ring-1 focus:ring-primary/20 rounded-lg transition-all"
           />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
             >
               <X className="h-3 w-3" />
             </button>
@@ -165,43 +165,54 @@ export function ConversationSidebar() {
       {/* Conversation list */}
       <ScrollArea className="flex-1">
         <div className="px-2 pb-2">
+          {/* Loading skeleton */}
           {loading && (
             <div className="space-y-1 px-1 pt-1">
               {Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-2.5 rounded-lg px-2 py-2.5">
-                  <div className="h-8 w-8 shrink-0 animate-pulse rounded-lg bg-muted" />
+                  <div className="h-8 w-8 shrink-0 animate-pulse rounded-lg bg-muted/60" />
                   <div className="flex-1 space-y-1.5">
-                    <div className="h-3.5 w-3/4 animate-pulse rounded bg-muted" />
-                    <div className="h-2.5 w-1/3 animate-pulse rounded bg-muted" />
+                    <div className="h-3.5 w-3/4 animate-pulse rounded bg-muted/60" />
+                    <div className="h-2.5 w-1/3 animate-pulse rounded bg-muted/40" />
                   </div>
                 </div>
               ))}
             </div>
           )}
 
+          {/* Empty state - no conversations */}
           {!loading && totalCount === 0 && !searchQuery && (
-            <div className="px-3 py-10 text-center">
-              <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+            <div className="px-3 py-12 text-center">
+              <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">
                 <MessageSquare className="h-5 w-5 text-primary" />
               </div>
               <p className="text-sm font-medium text-foreground/80">No conversations yet</p>
-              <p className="mt-1 text-xs text-muted-foreground">Start a new one to get going.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Start a new one to get going.
+              </p>
             </div>
           )}
 
+          {/* Empty state - no search results */}
           {!loading && totalCount === 0 && searchQuery && (
-            <div className="px-3 py-10 text-center">
-              <p className="text-xs text-muted-foreground">No matches for &quot;{searchQuery}&quot;</p>
+            <div className="px-3 py-12 text-center">
+              <Search className="mx-auto mb-2 h-5 w-5 text-muted-foreground/30" />
+              <p className="text-xs text-muted-foreground">
+                No matches for &quot;{searchQuery}&quot;
+              </p>
             </div>
           )}
 
+          {/* Grouped conversations */}
           {groupedConversations.map((group) => (
             <div key={group.label} className="mb-1">
-              <div className="sticky top-0 z-10 bg-muted/20 backdrop-blur-sm px-3 py-2">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+              {/* Sticky date header */}
+              <div className="sticky top-0 z-10 bg-muted/10 backdrop-blur-sm px-3 py-2">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
                   {group.label}
                 </span>
               </div>
+
               <div className="space-y-0.5">
                 {group.conversations.map((conv) => {
                   const isActive = pathname === `/chat/${conv.id}`
@@ -209,7 +220,7 @@ export function ConversationSidebar() {
                   const date = conv.updated_at || conv.created_at
                   const Icon = getConversationIcon(title)
 
-                  // If renaming this conversation, show input
+                  // Rename mode
                   if (renamingId === conv.id) {
                     return (
                       <div key={conv.id} className="px-1">
@@ -219,7 +230,7 @@ export function ConversationSidebar() {
                           onChange={(e) => setRenameValue(e.target.value)}
                           onKeyDown={handleRenameKeyDown}
                           onBlur={handleFinishRename}
-                          className="h-8 text-xs"
+                          className="h-8 text-xs rounded-lg"
                         />
                       </div>
                     )
@@ -229,24 +240,25 @@ export function ConversationSidebar() {
                     <div
                       key={conv.id}
                       className={cn(
-                        'group relative flex items-center gap-2.5 rounded-lg px-2 py-2 transition-all',
+                        'group relative flex items-center gap-2.5 rounded-lg px-2 py-2 transition-all duration-150',
                         isActive
-                          ? 'bg-accent shadow-sm'
+                          ? 'bg-primary/8 ring-1 ring-primary/15 shadow-sm'
                           : 'hover:bg-accent/50'
                       )}
                     >
-                      {/* Icon */}
+                      {/* Contextual icon */}
                       <div
                         className={cn(
                           'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors',
                           isActive
                             ? 'bg-primary/15 text-primary'
-                            : 'bg-muted/80 text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary/70'
+                            : 'bg-muted/60 text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary/70'
                         )}
                       >
                         <Icon className="h-4 w-4" />
                       </div>
 
+                      {/* Title + date link */}
                       <Link
                         href={`/chat/${conv.id}`}
                         className="flex flex-1 flex-col min-w-0 gap-0.5"
@@ -259,17 +271,17 @@ export function ConversationSidebar() {
                         >
                           {title}
                         </span>
-                        <span className="text-[11px] text-muted-foreground/70">
+                        <span className="text-[11px] text-muted-foreground/60">
                           {formatRelativeDate(date)}
                         </span>
                       </Link>
 
-                      {/* Context menu button */}
+                      {/* Context menu */}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
                             className={cn(
-                              'flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-0 transition-all hover:bg-muted-foreground/10 group-hover:opacity-100',
+                              'flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-0 transition-all hover:bg-muted-foreground/10 group-hover:opacity-100 cursor-pointer',
                               isActive && 'opacity-60'
                             )}
                           >
@@ -277,7 +289,7 @@ export function ConversationSidebar() {
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-40">
-                          <DropdownMenuItem onClick={() => handleStartRename(conv.id, title)}>
+                          <DropdownMenuItem onClick={() => handleStartRename(conv.id, title)} className="cursor-pointer">
                             <Pencil className="mr-2 h-3.5 w-3.5" />
                             Rename
                           </DropdownMenuItem>
@@ -287,7 +299,7 @@ export function ConversationSidebar() {
                               setDeletingId(conv.id)
                               setDeletingTitle(title)
                             }}
-                            className="text-destructive focus:text-destructive"
+                            className="text-destructive focus:text-destructive cursor-pointer"
                           >
                             <Trash2 className="mr-2 h-3.5 w-3.5" />
                             Delete
@@ -313,10 +325,10 @@ export function ConversationSidebar() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeletingId(null)}>
+            <Button variant="outline" onClick={() => setDeletingId(null)} className="cursor-pointer">
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleConfirmDelete}>
+            <Button variant="destructive" onClick={handleConfirmDelete} className="cursor-pointer">
               Delete
             </Button>
           </DialogFooter>

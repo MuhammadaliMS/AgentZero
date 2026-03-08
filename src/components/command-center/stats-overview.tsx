@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Card, CardContent } from '@/components/ui/card'
 import { Clock, AlertTriangle, Layers, Brain } from 'lucide-react'
 
 interface Stats {
@@ -11,6 +10,45 @@ interface Stats {
   connectedIntegrations: number
   memoriesStored: number
 }
+
+const statConfig = [
+  {
+    key: 'pendingActions' as const,
+    label: 'Pending Actions',
+    icon: Clock,
+    accent: 'text-amber-600 dark:text-amber-400',
+    bg: 'bg-amber-50 dark:bg-amber-950/30',
+    ring: 'ring-amber-200/50 dark:ring-amber-800/30',
+    alertWhen: (v: number) => v > 0,
+  },
+  {
+    key: 'atRiskCommitments' as const,
+    label: 'At-Risk Items',
+    icon: AlertTriangle,
+    accent: 'text-red-600 dark:text-red-400',
+    bg: 'bg-red-50 dark:bg-red-950/30',
+    ring: 'ring-red-200/50 dark:ring-red-800/30',
+    alertWhen: (v: number) => v > 0,
+  },
+  {
+    key: 'connectedIntegrations' as const,
+    label: 'Integrations',
+    icon: Layers,
+    accent: 'text-blue-600 dark:text-blue-400',
+    bg: 'bg-blue-50 dark:bg-blue-950/30',
+    ring: 'ring-blue-200/50 dark:ring-blue-800/30',
+    alertWhen: () => false,
+  },
+  {
+    key: 'memoriesStored' as const,
+    label: 'Memories',
+    icon: Brain,
+    accent: 'text-violet-600 dark:text-violet-400',
+    bg: 'bg-violet-50 dark:bg-violet-950/30',
+    ring: 'ring-violet-200/50 dark:ring-violet-800/30',
+    alertWhen: () => false,
+  },
+]
 
 export function StatsOverview() {
   const [stats, setStats] = useState<Stats | null>(null)
@@ -34,50 +72,51 @@ export function StatsOverview() {
     loadStats()
   }, [supabase])
 
-  if (!stats) return null
-
-  const items = [
-    {
-      label: 'Pending Actions',
-      value: stats.pendingActions,
-      icon: <Clock className="h-[18px] w-[18px]" />,
-      color: stats.pendingActions > 0 ? 'text-orange-600' : 'text-green-600',
-    },
-    {
-      label: 'At-Risk Items',
-      value: stats.atRiskCommitments,
-      icon: <AlertTriangle className="h-[18px] w-[18px]" />,
-      color: stats.atRiskCommitments > 0 ? 'text-red-600' : 'text-green-600',
-    },
-    {
-      label: 'Integrations',
-      value: stats.connectedIntegrations,
-      icon: <Layers className="h-[18px] w-[18px]" />,
-      color: 'text-blue-600',
-    },
-    {
-      label: 'Memories',
-      value: stats.memoriesStored,
-      icon: <Brain className="h-[18px] w-[18px]" />,
-      color: 'text-purple-600',
-    },
-  ]
+  if (!stats) {
+    return (
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-[88px] animate-pulse rounded-xl bg-muted/40" />
+        ))}
+      </div>
+    )
+  }
 
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-      {items.map((item) => (
-        <Card key={item.label} className="shadow-sm hover:shadow-md transition-all">
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className={`shrink-0 rounded-lg bg-primary/10 p-2 text-primary ${item.color}`}>
-              {item.icon}
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {statConfig.map((cfg) => {
+        const Icon = cfg.icon
+        const value = stats[cfg.key]
+        const isAlert = cfg.alertWhen(value)
+        return (
+          <div
+            key={cfg.key}
+            className={`group relative overflow-hidden rounded-xl border border-border/50 bg-card p-4
+                       transition-all duration-200 hover:shadow-md hover:border-border cursor-default
+                       ${isAlert ? 'ring-1 ' + cfg.ring : ''}`}
+          >
+            <div className="flex items-start justify-between">
+              <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${cfg.bg}`}>
+                <Icon className={`h-4 w-4 ${cfg.accent}`} />
+              </div>
+              {isAlert && (
+                <span className="relative flex h-2 w-2">
+                  <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-40 ${
+                    cfg.key === 'atRiskCommitments' ? 'bg-red-400' : 'bg-amber-400'
+                  }`} />
+                  <span className={`relative inline-flex h-2 w-2 rounded-full ${
+                    cfg.key === 'atRiskCommitments' ? 'bg-red-500' : 'bg-amber-500'
+                  }`} />
+                </span>
+              )}
             </div>
-            <div>
-              <p className="text-2xl font-bold">{item.value}</p>
-              <p className="text-xs text-muted-foreground">{item.label}</p>
+            <div className="mt-3">
+              <p className="text-2xl font-bold tracking-tight">{value}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{cfg.label}</p>
             </div>
-          </CardContent>
-        </Card>
-      ))}
+          </div>
+        )
+      })}
     </div>
   )
 }

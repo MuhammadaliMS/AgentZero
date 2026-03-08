@@ -5,8 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { ActionCard } from './action-card'
 import { CommitmentCard } from './commitment-card'
 import { BriefCard } from './brief-card'
-import { Skeleton } from '@/components/ui/skeleton'
-import { CheckCircle } from 'lucide-react'
+import { CheckCircle, Zap, Shield, FileText } from 'lucide-react'
 import type { Database } from '@/types/database'
 
 type Action = Database['public']['Tables']['actions']['Row']
@@ -17,6 +16,46 @@ interface DailyViewData {
   pendingActions: Action[]
   atRiskCommitments: Commitment[]
   latestBrief: Brief | null
+}
+
+function SectionSkeleton() {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <div className="h-4 w-4 rounded bg-muted/60 animate-pulse" />
+        <div className="h-4 w-28 rounded bg-muted/60 animate-pulse" />
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <div key={i} className="h-32 rounded-xl bg-muted/40 animate-pulse" />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SectionHeader({
+  icon: Icon,
+  title,
+  count,
+  accent,
+}: {
+  icon: React.ElementType
+  title: string
+  count?: number
+  accent: string
+}) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <Icon className={`h-4 w-4 ${accent}`} />
+      <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+      {count !== undefined && count > 0 && (
+        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground">
+          {count}
+        </span>
+      )}
+    </div>
+  )
 }
 
 export function DailyView() {
@@ -76,28 +115,36 @@ export function DailyView() {
       })
       .eq('id', actionId)
 
-    // Refresh data
     fetchData()
   }
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-40 w-full" />
-        <Skeleton className="h-40 w-full" />
-        <Skeleton className="h-40 w-full" />
+      <div className="space-y-8">
+        <SectionSkeleton />
+        <SectionSkeleton />
+        <div className="h-40 rounded-xl bg-muted/40 animate-pulse" />
       </div>
     )
   }
 
   if (!data) return null
 
+  const isEmpty =
+    data.pendingActions.length === 0 &&
+    data.atRiskCommitments.length === 0 &&
+    !data.latestBrief
+
   return (
     <div className="space-y-8">
       {/* Latest Brief */}
       {data.latestBrief && (
         <section>
-          <h2 className="mb-3 text-lg font-semibold">Latest Brief</h2>
+          <SectionHeader
+            icon={FileText}
+            title="Latest Brief"
+            accent="text-blue-600 dark:text-blue-400"
+          />
           <BriefCard brief={data.latestBrief} />
         </section>
       )}
@@ -105,12 +152,12 @@ export function DailyView() {
       {/* Pending Actions */}
       {data.pendingActions.length > 0 && (
         <section>
-          <h2 className="mb-3 text-lg font-semibold">
-            Pending Actions
-            <span className="ml-2 text-sm font-normal text-muted-foreground">
-              ({data.pendingActions.length})
-            </span>
-          </h2>
+          <SectionHeader
+            icon={Zap}
+            title="Pending Actions"
+            count={data.pendingActions.length}
+            accent="text-amber-600 dark:text-amber-400"
+          />
           <div className="grid gap-3 md:grid-cols-2">
             {data.pendingActions.map((action) => (
               <ActionCard
@@ -126,12 +173,12 @@ export function DailyView() {
       {/* At-Risk Commitments */}
       {data.atRiskCommitments.length > 0 && (
         <section>
-          <h2 className="mb-3 text-lg font-semibold">
-            Commitments
-            <span className="ml-2 text-sm font-normal text-muted-foreground">
-              ({data.atRiskCommitments.length})
-            </span>
-          </h2>
+          <SectionHeader
+            icon={Shield}
+            title="Commitments"
+            count={data.atRiskCommitments.length}
+            accent="text-red-600 dark:text-red-400"
+          />
           <div className="grid gap-3 md:grid-cols-2">
             {data.atRiskCommitments.map((commitment) => (
               <CommitmentCard key={commitment.id} commitment={commitment} />
@@ -141,19 +188,17 @@ export function DailyView() {
       )}
 
       {/* Empty State */}
-      {data.pendingActions.length === 0 &&
-        data.atRiskCommitments.length === 0 &&
-        !data.latestBrief && (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-900 shadow-sm">
-              <CheckCircle className="h-8 w-8 text-green-600 dark:text-green-400" />
-            </div>
-            <h3 className="text-lg font-semibold">All clear</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              No pending actions or at-risk commitments. Nice work.
-            </p>
+      {isEmpty && (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 ring-1 ring-emerald-200/50 dark:ring-emerald-800/30">
+            <CheckCircle className="h-7 w-7 text-emerald-600 dark:text-emerald-400" />
           </div>
-        )}
+          <h3 className="text-base font-semibold">All clear</h3>
+          <p className="mt-1.5 max-w-xs text-sm text-muted-foreground leading-relaxed">
+            No pending actions or at-risk commitments right now. You&apos;re on track.
+          </p>
+        </div>
+      )}
     </div>
   )
 }

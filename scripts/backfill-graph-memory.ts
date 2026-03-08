@@ -33,7 +33,7 @@ const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
   ? 'https://integrate.api.nvidia.com/v1'
   : 'https://openrouter.ai/api/v1')
 const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || (NVIDIA_API_KEY
-  ? 'qwen/qwen3.5-397b-a17b'
+  ? 'moonshotai/kimi-k2.5'
   : 'x-ai/grok-4.1-fast')
 
 // Embeddings: OpenRouter (1536-dim for DB compat)

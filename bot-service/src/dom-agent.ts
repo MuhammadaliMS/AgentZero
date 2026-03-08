@@ -1,7 +1,7 @@
 /**
  * DomAgent — Agentic DOM Understanding via OpenAI Agents SDK
  *
- * Uses qwen/qwen3.5-397b-a17b via NVIDIA NIM with an agentic tool-calling loop.
+ * Uses moonshotai/kimi-k2.5 via NVIDIA NIM with an agentic tool-calling loop.
  * The agent gets READ tools to inspect the live Puppeteer page (DOM snapshots,
  * test selectors, check styles, evaluate JS) and DECISION tools to submit
  * verified results. It iterates, self-corrects, and verifies before committing.

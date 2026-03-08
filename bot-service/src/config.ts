@@ -33,7 +33,7 @@ export const config = {
     ? 'https://integrate.api.nvidia.com/v1'
     : 'https://openrouter.ai/api/v1',
   domAgentModel: process.env.DOM_AGENT_MODEL || (process.env.NVIDIA_API_KEY
-    ? 'qwen/qwen3.5-397b-a17b'
+    ? 'moonshotai/kimi-k2.5'
     : 'minimax/minimax-m2.5'),
   domAgentEnabled: process.env.DOM_AGENT_ENABLED !== 'false', // enabled by default
 

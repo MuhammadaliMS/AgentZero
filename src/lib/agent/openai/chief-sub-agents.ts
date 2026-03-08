@@ -11,7 +11,7 @@
  * Each agent gets a scoped tool subset from the shared createChiefAnalystTools().
  * All agents share a single decisions[] closure for atomic decision collection.
  *
- * Model: qwen/qwen3.5-397b-a17b via NVIDIA NIM (same as monolithic agent).
+ * Model: moonshotai/kimi-k2.5 via NVIDIA NIM (same as monolithic agent).
  */
 
 import { Agent, Runner, tool } from '@openai/agents'
@@ -61,7 +61,7 @@ export interface ReflectResult {
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
-const DEFAULT_MODEL = 'qwen/qwen3.5-397b-a17b'
+const DEFAULT_MODEL = 'moonshotai/kimi-k2.5'
 
 // Tool name lists for each sub-agent
 const READ_TOOL_NAMES = [

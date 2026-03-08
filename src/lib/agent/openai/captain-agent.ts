@@ -30,7 +30,7 @@ import { trackUtilityEventBatch, bumpEntityAccess } from '@/lib/graph/utility-tr
 // Uses OPENAI_CAPTAIN_MODEL env var, or falls back to a sensible default.
 // Priority: NVIDIA NIM → OpenRouter → direct OpenAI.
 
-const DEFAULT_CAPTAIN_MODEL = 'qwen/qwen3.5-397b-a17b'
+const DEFAULT_CAPTAIN_MODEL = 'moonshotai/kimi-k2.5'
 export const CAPTAIN_MODEL = process.env.OPENAI_CAPTAIN_MODEL || DEFAULT_CAPTAIN_MODEL
 
 // ─── NVIDIA NIM / OpenRouter / OpenAI Provider ──────────────────────────────

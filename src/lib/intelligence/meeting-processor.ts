@@ -53,7 +53,7 @@ const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
   ? 'https://integrate.api.nvidia.com/v1'
   : 'https://openrouter.ai/api/v1')
 const DEFAULT_SUMMARIZATION_MODEL = process.env.MEETING_SUMMARY_MODEL || (NVIDIA_API_KEY
-  ? 'qwen/qwen3.5-397b-a17b'
+  ? 'moonshotai/kimi-k2.5'
   : 'anthropic/claude-haiku-4.5')
 const MAX_RETRIES = 3
 

@@ -1144,7 +1144,7 @@ export function getChiefAnalystProvider(): OpenAIProvider {
   throw new Error('Chief Analyst requires NVIDIA_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.')
 }
 
-const DEFAULT_CHIEF_ANALYST_MODEL = 'qwen/qwen3.5-397b-a17b'
+const DEFAULT_CHIEF_ANALYST_MODEL = 'moonshotai/kimi-k2.5'
 
 // ─── Runner ──────────────────────────────────────────────────────────────
 

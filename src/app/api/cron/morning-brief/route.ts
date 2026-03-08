@@ -55,10 +55,21 @@ export async function GET(request: NextRequest) {
 async function runMorningBriefBackground() {
   const admin = createAdminClient()
 
-  // Get all onboarded profiles with timezone info
+  // Only send to users who connected Slack (one per org)
+  const { data: slackIntegrations } = await admin
+    .from('organization_integrations')
+    .select('org_id, connected_by, integrations!inner(key)')
+    .eq('integrations.key', 'slack')
+    .eq('is_active', true)
+
+  if (!slackIntegrations || slackIntegrations.length === 0) return
+
+  // Get profiles of Slack connectors only
+  const connectorIds = slackIntegrations.map((s: any) => s.connected_by).filter(Boolean)
   const { data: profiles } = await admin
     .from('profiles')
     .select('id, org_id, email, full_name, timezone')
+    .in('id', connectorIds)
     .not('onboarded_at', 'is', null)
 
   if (!profiles || profiles.length === 0) return

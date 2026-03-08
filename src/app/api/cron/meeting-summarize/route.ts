@@ -139,39 +139,45 @@ async function sendMeetingNotification(
 
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').trim()
 
-  // Send to all org members
-  const { data: profiles } = await admin
+  // Send only to the person who connected Slack
+  const { data: slackIntegration } = await admin
+    .from('organization_integrations')
+    .select('connected_by, integrations!inner(key)')
+    .eq('org_id', meeting.org_id)
+    .eq('integrations.key', 'slack')
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (!slackIntegration?.connected_by) return
+
+  const { data: connectedUser } = await admin
     .from('profiles')
     .select('email')
-    .eq('org_id', meeting.org_id)
-    .not('onboarded_at', 'is', null)
+    .eq('id', slackIntegration.connected_by)
+    .single()
 
-  if (!profiles) return
+  if (!connectedUser?.email) return
 
-  for (const profile of profiles) {
-    if (!profile.email) continue
+  try {
+    const userResult = await slackClient.users.lookupByEmail({ email: connectedUser.email })
+    if (!userResult.user?.id) return
 
-    try {
-      const userResult = await slackClient.users.lookupByEmail({ email: profile.email })
-      if (!userResult.user?.id) continue
+    const conversation = await slackClient.conversations.open({ users: userResult.user.id })
+    if (!conversation.channel?.id) return
 
-      const conversation = await slackClient.conversations.open({ users: userResult.user.id })
-      if (!conversation.channel?.id) continue
+    const blocks = buildAgentTextBlocks({
+      header: `🎙️ Meeting Summary — ${meeting.title} (${dateLabel})`,
+      text: messageText,
+      footerText: `Captain • Meeting Bot`,
+      appUrl: appUrl ? `${appUrl}/meetings/${meetingId}` : undefined,
+    })
 
-      const blocks = buildAgentTextBlocks({
-        header: `🎙️ Meeting Summary — ${meeting.title} (${dateLabel})`,
-        text: messageText,
-        footerText: `Captain • Meeting Bot`,
-        appUrl: appUrl ? `${appUrl}/meetings/${meetingId}` : undefined,
-      })
-
-      await slackClient.chat.postMessage({
-        channel: conversation.channel.id,
-        text: `🎙️ Meeting Summary — ${meeting.title}`,
-        blocks,
-      })
-    } catch (slackErr) {
-      console.error(`[meeting-summarize] Slack DM failed for ${profile.email}:`, slackErr)
-    }
+    await slackClient.chat.postMessage({
+      channel: conversation.channel.id,
+      text: `🎙️ Meeting Summary — ${meeting.title}`,
+      blocks,
+    })
+  } catch (slackErr) {
+    console.error(`[meeting-summarize] Slack DM failed for ${connectedUser.email}:`, slackErr)
   }
 }

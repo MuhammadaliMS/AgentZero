@@ -20,7 +20,7 @@ import puppeteer from 'puppeteer-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
 import { type Browser, type Page } from 'puppeteer'
 import { spawn, type ChildProcess } from 'child_process'
-import { mkdirSync, existsSync, writeFileSync } from 'fs'
+import { mkdirSync, existsSync, writeFileSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { config } from './config.js'
 import { DomAgent, type SpeakerPatterns } from './dom-agent.js'
@@ -182,6 +182,13 @@ export class MeetingBot {
     // This eliminates the CAPTCHA/verification challenges that happen with fresh browsers.
     const chromeProfileDir = join(config.recordingDir, 'chrome_profile')
     mkdirSync(chromeProfileDir, { recursive: true })
+
+    // Clean stale Chromium lock files from previous container runs
+    // Without this, Chrome refuses to start with "profile appears to be in use"
+    for (const lockFile of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+      const lockPath = join(chromeProfileDir, lockFile)
+      try { unlinkSync(lockPath) } catch { /* doesn't exist — fine */ }
+    }
 
     this.browser = await puppeteer.launch({
       headless: false,  // Use Xvfb virtual display — looks like real browser to Google

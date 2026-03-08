@@ -109,10 +109,10 @@ async function syncOrgMeetings(
     blocklist_patterns: (botConfig?.blocklist_patterns as string[]) ?? [],
   }
 
-  // 2. Fetch calendar events for next 24 hours
+  // 2. Fetch calendar events for the next 7 days
   const now = new Date()
   const timeMin = now.toISOString()
-  const timeMax = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString()
+  const timeMax = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString()
 
   const events = await fetchCalendarEventsWithMeetingUrls(orgId, timeMin, timeMax)
 

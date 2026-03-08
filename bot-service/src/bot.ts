@@ -260,7 +260,88 @@ export class MeetingBot {
         return false
       }
 
-      await this.sleep(5000)
+      // Wait for admission — Google Meet shows "Ask to join" when not auto-admitted.
+      // We poll for up to 120 seconds (2 min) to see if we get into the actual meeting.
+      // Signs we're admitted: meeting controls appear (mic/camera/end-call buttons in-call),
+      // or the "Asking to be let in" / "Waiting for someone to let you in" text disappears.
+      console.log(`[bot/${this.meetingId.slice(0, 8)}] Waiting for admission to Google Meet...`)
+
+      const admissionTimeout = 120_000 // 2 minutes
+      const admissionPoll = 3_000     // check every 3s
+      let waited = 0
+      let admitted = false
+
+      while (waited < admissionTimeout) {
+        await this.sleep(admissionPoll)
+        waited += admissionPoll
+
+        try {
+          const status = await this.page.evaluate(() => {
+            const bodyText = document.body.innerText.toLowerCase()
+
+            // If we see "waiting" or "asking to be let in", we're not admitted yet
+            if (bodyText.includes('asking to be let in') ||
+                bodyText.includes('waiting for someone') ||
+                bodyText.includes('someone in the meeting needs to let you in')) {
+              return 'waiting'
+            }
+
+            // If we see end-call / leave-call controls, we're in the meeting
+            const endCallBtn = document.querySelector('[aria-label*="Leave call" i]')
+              || document.querySelector('[aria-label*="End call" i]')
+              || document.querySelector('[data-tooltip*="Leave call" i]')
+            if (endCallBtn) return 'admitted'
+
+            // If we see meeting participants or chat panel, we're in
+            const inCallIndicators = document.querySelector('[data-participant-id]')
+              || document.querySelector('[aria-label*="people" i][aria-label*="call" i]')
+            if (inCallIndicators) return 'admitted'
+
+            // If we see the "you've been removed" or meeting ended text
+            if (bodyText.includes('you left the meeting') ||
+                bodyText.includes('the meeting has ended') ||
+                bodyText.includes('removed from the meeting')) {
+              return 'ended'
+            }
+
+            // After first 5 seconds, if no waiting text found, assume we got in directly
+            return 'unknown'
+          })
+
+          if (status === 'admitted') {
+            admitted = true
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Admitted to Google Meet after ${waited / 1000}s`)
+            break
+          }
+
+          if (status === 'ended') {
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Meeting ended while waiting for admission`)
+            return false
+          }
+
+          if (status === 'unknown' && waited >= 10_000) {
+            // After 10s with no "waiting" text, assume we joined directly (no admission needed)
+            admitted = true
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Appears to have joined directly (no admission gate detected)`)
+            break
+          }
+
+          if (waited % 15_000 < admissionPoll) {
+            console.log(`[bot/${this.meetingId.slice(0, 8)}] Still waiting for admission... (${waited / 1000}s)`)
+          }
+        } catch {
+          // If page evaluation fails, we may have been redirected into the meeting
+          admitted = true
+          break
+        }
+      }
+
+      if (!admitted) {
+        console.error(`[bot/${this.meetingId.slice(0, 8)}] Admission timed out after ${admissionTimeout / 1000}s — nobody let the bot in`)
+        return false
+      }
+
+      await this.sleep(2000) // Brief settle after admission
       console.log(`[bot/${this.meetingId.slice(0, 8)}] Joined Google Meet: ${this.title}`)
       return true
     } catch (err) {

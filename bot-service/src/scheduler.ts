@@ -142,10 +142,32 @@ export class MeetingScheduler {
             result.speakerTimelinePath,
             result.transcriptPath,
           )
+        } else {
+          // Bot returned 'failed' or 'no_audio' — mark the meeting so scheduler doesn't retry endlessly
+          console.warn(`[scheduler] Bot finished with status: ${result.status} — ${result.error || 'no details'}`)
+          await this.supabase
+            .from('meetings')
+            .update({
+              status: 'failed',
+              actual_end: new Date().toISOString(),
+              skip_reason: result.error || `Bot finished with status: ${result.status}`,
+            })
+            .eq('id', meeting.id)
+          await this.notifyWebhook(meeting.id, 'bot_error', {
+            error_message: result.error || `Bot status: ${result.status}`,
+          })
         }
       })
       .catch(async (err) => {
         console.error(`[scheduler] Bot error for ${meeting.title}:`, (err as Error).message)
+        await this.supabase
+          .from('meetings')
+          .update({
+            status: 'failed',
+            actual_end: new Date().toISOString(),
+            skip_reason: (err as Error).message,
+          })
+          .eq('id', meeting.id)
         await this.notifyWebhook(meeting.id, 'bot_error', {
           error_message: (err as Error).message,
         })

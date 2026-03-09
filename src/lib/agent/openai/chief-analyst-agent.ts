@@ -573,7 +573,7 @@ export function createChiefAnalystTools(orgId: string) {
 
   const branchReplan = tool({
     name: 'branch_replan',
-    description: 'Create a new plan version (replan) for an existing outcome. Use this when an outcome\'s current plan needs structural changes — new steps, removed steps, or a fundamentally different approach. You must provide at least one material_change describing a specific structural diff from the current plan.',
+    description: 'Create a new plan version (replan) for an existing outcome. Use this when an outcome\'s current plan needs structural changes — new steps, removed steps, or a fundamentally different approach. You must provide at least one material_change describing a specific structural diff from the current plan. IMPORTANT: Every step with action_type "tool_call" MUST include a valid tool_name.',
     parameters: z.object({
       outcome_id: z.string().uuid(),
       reason: z.string().max(1000),
@@ -582,7 +582,7 @@ export function createChiefAnalystTools(orgId: string) {
         step_order: z.number().int().min(1).max(50),
         action_type: z.enum(['tool_call', 'llm_reasoning', 'wait_input', 'wait_approval']),
         description: z.string().max(1000),
-        tool_name: z.string().max(100).optional(),
+        tool_name: z.string().max(100).optional().describe('REQUIRED for action_type "tool_call". Must be a valid tool name.'),
         tool_args: z.record(z.string().max(100), z.unknown()).optional(),
         risk_class: z.enum(['internal', 'external']).default('internal'),
       })).max(20).optional(),
@@ -613,7 +613,7 @@ export function createChiefAnalystTools(orgId: string) {
 
   const createOutcomeTool = tool({
     name: 'create_outcome',
-    description: 'Create a new proactive outcome with a plan of steps. Internal-only steps (tool_call, llm_reasoning) can auto-execute. Steps with external side-effects (risk_class: external) require human approval before execution. Only create outcomes when you have at least 0.6 confidence that action is needed.',
+    description: 'Create a new proactive outcome with a plan of steps. Internal-only steps (tool_call, llm_reasoning) can auto-execute. Steps with external side-effects (risk_class: external) require human approval before execution. Only create outcomes when you have at least 0.6 confidence that action is needed. IMPORTANT: Every step with action_type "tool_call" MUST include a valid tool_name (e.g. "recall_memory", "read_recent_emails", "search_emails", "get_today_events", "query_commitments", etc). Steps with action_type "llm_reasoning" do not need tool_name.',
     parameters: z.object({
       title: z.string().max(200),
       description: z.string().max(2000),
@@ -623,7 +623,7 @@ export function createChiefAnalystTools(orgId: string) {
         step_order: z.number().int().min(1).max(50),
         action_type: z.enum(['tool_call', 'llm_reasoning', 'wait_input', 'wait_approval']),
         description: z.string().max(1000),
-        tool_name: z.string().max(100).optional(),
+        tool_name: z.string().max(100).optional().describe('REQUIRED for action_type "tool_call". Must be a valid tool name like recall_memory, read_recent_emails, search_emails, get_today_events, query_commitments, etc.'),
         tool_args: z.record(z.string().max(100), z.unknown()).optional(),
         expected_output: z.string().max(500).optional(),
         risk_class: z.enum(['internal', 'external']).default('internal'),

@@ -47,7 +47,7 @@ import { reconcileOutcomeStatus } from '@/lib/agent/planner/step-executor'
 
 // Background execution
 import { executeToolDirectly } from '@/lib/agent/planner/background-executor'
-import { EXTERNAL_TOOLS } from '@/lib/agent/planner/plan-validator'
+import { EXTERNAL_TOOLS, validatePlan, getAvailableToolNames } from '@/lib/agent/planner/plan-validator'
 
 // Nudge engine (blocker DM)
 import { sendBlockerDM } from '@/lib/intelligence/nudge-engine'
@@ -1493,6 +1493,32 @@ async function phaseAct(
               tool_name?: string; tool_args?: Record<string, unknown>
               expected_output?: string; risk_class: string
             }>
+          }
+
+          // ── Pre-validate plan before creating outcome ──
+          const planForValidation = {
+            plan_summary: `Auto-created by chief loop: ${p.title}`,
+            steps: p.steps.map(s => ({
+              step_order: s.step_order,
+              description: s.description,
+              action_type: s.action_type as 'tool_call' | 'llm_reasoning' | 'wait_input' | 'wait_approval',
+              tool_name: s.tool_name ?? null,
+              tool_args: s.tool_args ?? null,
+              depends_on_step_orders: [] as number[],
+              expected_output: s.expected_output ?? null,
+              one_clear_ask: null,
+            })),
+          }
+          const validation = validatePlan(planForValidation, getAvailableToolNames())
+          if (!validation.valid) {
+            await logChiefLoopEvent(supabase, orgId, leaseId, 'plan_validation_failed', {
+              rationale: decision.rationale,
+              policyResult: 'rejected',
+              policyReason: `Plan validation failed: ${validation.errors.join(', ')}`,
+              metadata: { title: p.title, errors: validation.errors },
+            })
+            r.deferred++
+            continue
           }
 
           const hasExternal = p.steps.some(s => s.risk_class === 'external')

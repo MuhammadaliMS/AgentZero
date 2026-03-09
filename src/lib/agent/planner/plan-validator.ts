@@ -249,6 +249,9 @@ export function getAvailableToolNames(): string[] {
     // Slack tools
     'send_slack_dm', 'post_to_channel', 'list_slack_channels',
     'read_slack_channel', 'send_approval_message', 'update_slack_message',
+    'lookup_slack_user',
+    // Directory tools
+    'lookup_workspace_user',
     // Calendar tools
     'get_today_events', 'get_week_events', 'find_free_slots',
     // Vanta tools

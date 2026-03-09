@@ -144,6 +144,7 @@ export interface MeetingActionItem {
   action: string
   owner_name: string | null
   owner_email: string | null
+  owner_entity_id: string | null
   due_date: string | null
   priority: ActionItemPriority
   status: ActionItemStatus
@@ -162,6 +163,7 @@ export interface MeetingDecision {
   decision: string
   rationale: string | null
   decided_by: string | null
+  decided_by_entity_id: string | null
   stakeholders: string[]
   context_quote: string | null
   context_timestamp: number | null

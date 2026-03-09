@@ -9,7 +9,7 @@ import {
   CheckCircle2, AlertCircle, Loader2, ChevronDown,
   ChevronUp, ListChecks, Lightbulb, MessageSquare,
   Sparkles, FileText, CircleCheck, Circle, Video,
-  Hash, User2, Quote, Flag,
+  Hash, User2, Quote, Flag, Link2,
 } from 'lucide-react'
 import type { MeetingStatus, ActionItemPriority } from '@/types/meetings'
 
@@ -47,6 +47,7 @@ interface ActionItem {
   action: string
   owner_name: string | null
   owner_email: string | null
+  owner_entity_id: string | null
   due_date: string | null
   priority: ActionItemPriority
   status: string
@@ -58,6 +59,7 @@ interface Decision {
   decision: string
   rationale: string | null
   decided_by: string | null
+  decided_by_entity_id: string | null
   stakeholders: string[]
   context_quote: string | null
 }
@@ -136,8 +138,8 @@ export default function MeetingDetailPage() {
       const [mR, sR, aR, dR] = await Promise.all([
         sb.from('meetings').select('id, title, platform, scheduled_start, scheduled_end, actual_start, actual_end, duration_seconds, participants, status, summary_ready, transcript_ready, error_message').eq('id', id).single(),
         sb.from('meeting_summaries').select('tldr, executive_summary, detailed_summary, topics, model_used, cost_usd').eq('meeting_id', id).maybeSingle(),
-        sb.from('meeting_action_items').select('id, action, owner_name, owner_email, due_date, priority, status, context_quote').eq('meeting_id', id).order('priority', { ascending: true }),
-        sb.from('meeting_decisions').select('id, decision, rationale, decided_by, stakeholders, context_quote').eq('meeting_id', id),
+        sb.from('meeting_action_items').select('id, action, owner_name, owner_email, owner_entity_id, due_date, priority, status, context_quote').eq('meeting_id', id).order('priority', { ascending: true }),
+        sb.from('meeting_decisions').select('id, decision, rationale, decided_by, decided_by_entity_id, stakeholders, context_quote').eq('meeting_id', id),
       ])
       if (mR.error || !mR.data) { toast.error('Meeting not found'); router.push('/meetings'); return }
       setMeeting(mR.data as unknown as MeetingDetail)
@@ -461,7 +463,12 @@ function OverviewPane({ meeting, summary, actions, decisions, toggle, detailedOp
                   <div className="min-w-0 flex-1">
                     <p className={`text-xs leading-relaxed ${a.status === 'completed' ? 'line-through text-muted-foreground' : 'text-foreground/90'}`}>{a.action}</p>
                     <div className="flex items-center gap-1.5 mt-0.5">
-                      {a.owner_name && <span className="text-[10px] text-muted-foreground">{a.owner_name}</span>}
+                      {a.owner_name && (
+                        <span className="text-[10px] text-muted-foreground inline-flex items-center gap-0.5">
+                          {a.owner_name}
+                          {a.owner_entity_id && <Link2 className="h-2.5 w-2.5 text-primary/60" />}
+                        </span>
+                      )}
                       <span className={`text-[9px] font-medium px-1 py-0.5 rounded ${PRIORITY[a.priority].cls}`}>{a.priority}</span>
                     </div>
                   </div>
@@ -482,7 +489,12 @@ function OverviewPane({ meeting, summary, actions, decisions, toggle, detailedOp
               {decisions.slice(0, 3).map(d => (
                 <div key={d.id}>
                   <p className="text-xs font-medium text-foreground/90">{d.decision}</p>
-                  {d.decided_by && <span className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5"><User2 className="h-2.5 w-2.5" />{d.decided_by}</span>}
+                  {d.decided_by && (
+                    <span className={`text-[10px] flex items-center gap-1 mt-0.5 ${d.decided_by_entity_id ? 'text-primary/70' : 'text-muted-foreground'}`}>
+                      <User2 className="h-2.5 w-2.5" />{d.decided_by}
+                      {d.decided_by_entity_id && <Link2 className="h-2 w-2" />}
+                    </span>
+                  )}
                 </div>
               ))}
               {decisions.length > 3 && <p className="text-[11px] text-muted-foreground">+{decisions.length - 3} more</p>}
@@ -588,7 +600,13 @@ function ActionRow({ a, toggle }: { a: ActionItem; toggle: (id: string, s: strin
       <div className="flex-1 min-w-0">
         <p className={`text-sm leading-relaxed ${isDone ? 'line-through text-muted-foreground' : ''}`}>{a.action}</p>
         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-          {a.owner_name && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><User2 className="h-3 w-3" />{a.owner_name}</span>}
+          {a.owner_name && (
+            <span className={`inline-flex items-center gap-1 text-[11px] ${a.owner_entity_id ? 'text-primary/80' : 'text-muted-foreground'}`}>
+              <User2 className="h-3 w-3" />
+              {a.owner_name}
+              {a.owner_entity_id && <Link2 className="h-2.5 w-2.5" />}
+            </span>
+          )}
           {a.due_date && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><CalendarDays className="h-3 w-3" />{a.due_date}</span>}
           <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${PRIORITY[a.priority].cls}`}>{a.priority} — {PRIORITY[a.priority].label}</span>
         </div>
@@ -618,7 +636,13 @@ function DecisionsPane({ items }: { items: Decision[] }) {
                 <p className="text-sm font-medium">{d.decision}</p>
                 {d.rationale && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{d.rationale}</p>}
                 <div className="flex items-center gap-2 mt-2 flex-wrap">
-                  {d.decided_by && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><User2 className="h-3 w-3" />{d.decided_by}</span>}
+                  {d.decided_by && (
+                    <span className={`inline-flex items-center gap-1 text-[11px] ${d.decided_by_entity_id ? 'text-primary/80' : 'text-muted-foreground'}`}>
+                      <User2 className="h-3 w-3" />
+                      {d.decided_by}
+                      {d.decided_by_entity_id && <Link2 className="h-2.5 w-2.5" />}
+                    </span>
+                  )}
                   {d.stakeholders.length > 0 && <span className="text-[11px] text-muted-foreground">{d.stakeholders.join(', ')}</span>}
                 </div>
                 {d.context_quote && (

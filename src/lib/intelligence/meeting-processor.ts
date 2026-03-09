@@ -8,6 +8,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
+import { resolvePersonEntity } from '@/lib/graph/entity-resolver'
 import type { Json } from '@/types/database'
 import { randomUUID } from 'crypto'
 
@@ -274,6 +275,9 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       await supabase.from('meeting_decisions').insert(decisionRows)
     }
 
+    // 8.5. Resolve action item owners & decision makers to knowledge graph entities
+    await resolveActionItemEntities(supabase, meeting.org_id, meetingId, summaryResult, participants)
+
     // 9. Mark meeting as completed
     await supabase
       .from('meetings')
@@ -285,7 +289,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       .eq('id', meetingId)
 
     // 10. Feed into knowledge graph (fire-and-forget, like morning brief)
-    const graphContent = buildGraphExtractionContent(meeting.title, summaryResult, fullTranscript)
+    const graphContent = buildGraphExtractionContent(meeting.title, summaryResult, fullTranscript, participants)
     runExtractionPipeline({
       orgId: meeting.org_id,
       conversationId: randomUUID(),
@@ -522,7 +526,8 @@ function estimateCost(model: string, promptTokens: number, completionTokens: num
 function buildGraphExtractionContent(
   title: string,
   summary: MeetingSummaryResult,
-  transcript: string
+  transcript: string,
+  participants?: Array<{ name: string; email: string }>
 ): string {
   // Build a focused text for entity extraction — not the whole transcript
   const lines = [
@@ -533,8 +538,18 @@ function buildGraphExtractionContent(
     '',
   ]
 
+  // Include participants with emails so extraction creates proper person entities
+  if (participants && participants.length > 0) {
+    lines.push('## Participants')
+    for (const p of participants) {
+      lines.push(`- ${p.name} (email: ${p.email})`)
+    }
+    lines.push('')
+  }
+
   for (const item of summary.action_items) {
-    lines.push(`Action item: ${item.action} (owner: ${item.owner}, due: ${item.due_date || 'unset'})`)
+    const ownerEmail = matchParticipantEmail(item.owner, participants || [])
+    lines.push(`Action item: ${item.action} (owner: ${item.owner}${ownerEmail ? `, email: ${ownerEmail}` : ''}, due: ${item.due_date || 'unset'})`)
   }
 
   for (const d of summary.decisions) {
@@ -586,6 +601,73 @@ async function storeMeetingMemory(
     source: 'meeting_bot',
     event_date: scheduledStart ? scheduledStart.slice(0, 10) : null,
   })
+}
+
+/**
+ * Resolve action item owners and decision makers to knowledge graph entities.
+ * Runs synchronously during processing so entity links are available immediately.
+ */
+async function resolveActionItemEntities(
+  supabase: any,
+  orgId: string,
+  meetingId: string,
+  summary: MeetingSummaryResult,
+  participants: Array<{ name: string; email: string }>
+): Promise<void> {
+  try {
+    // 1. Resolve action item owners
+    const { data: actionItems } = await supabase
+      .from('meeting_action_items')
+      .select('id, owner_name, owner_email')
+      .eq('meeting_id', meetingId)
+      .is('owner_entity_id', null)
+
+    if (actionItems && actionItems.length > 0) {
+      let linked = 0
+      for (const item of actionItems) {
+        const entityId = await resolvePersonEntity(supabase, orgId, item.owner_name, item.owner_email)
+        if (entityId) {
+          await supabase
+            .from('meeting_action_items')
+            .update({ owner_entity_id: entityId })
+            .eq('id', item.id)
+          linked++
+        }
+      }
+      if (linked > 0) {
+        console.log(`[meeting-processor] Linked ${linked}/${actionItems.length} action items to entities`)
+      }
+    }
+
+    // 2. Resolve decision makers
+    const { data: decisions } = await supabase
+      .from('meeting_decisions')
+      .select('id, decided_by')
+      .eq('meeting_id', meetingId)
+      .is('decided_by_entity_id', null)
+
+    if (decisions && decisions.length > 0) {
+      let linked = 0
+      for (const decision of decisions) {
+        if (!decision.decided_by) continue
+        const email = matchParticipantEmail(decision.decided_by, participants)
+        const entityId = await resolvePersonEntity(supabase, orgId, decision.decided_by, email)
+        if (entityId) {
+          await supabase
+            .from('meeting_decisions')
+            .update({ decided_by_entity_id: entityId })
+            .eq('id', decision.id)
+          linked++
+        }
+      }
+      if (linked > 0) {
+        console.log(`[meeting-processor] Linked ${linked}/${decisions.length} decisions to entities`)
+      }
+    }
+  } catch (err) {
+    // Non-fatal — meeting processing should complete even if entity linking fails
+    console.error(`[meeting-processor] Entity resolution failed for ${meetingId}:`, (err as Error).message)
+  }
 }
 
 async function markFailed(

@@ -13,6 +13,7 @@ import {
   getYesterdayMetrics,
 } from '@/lib/intelligence/brief-synthesizer'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
+import { logCronRun } from '@/lib/observability/cron-logger'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -53,147 +54,158 @@ export async function GET(request: NextRequest) {
 }
 
 async function runEodWrapBackground() {
-  const admin = createAdminClient()
+  await logCronRun({ worker: 'eod-wrap' }, async () => {
+    const admin = createAdminClient()
+    let sent = 0
+    let skipped = 0
 
-  // Only send to users who connected Slack (one per org)
-  const { data: slackIntegrations } = await admin
-    .from('organization_integrations')
-    .select('org_id, connected_by, integrations!inner(key)')
-    .eq('integrations.key', 'slack')
-    .eq('is_active', true)
+    // Only send to users who connected Slack (one per org)
+    const { data: slackIntegrations } = await admin
+      .from('organization_integrations')
+      .select('org_id, connected_by, integrations!inner(key)')
+      .eq('integrations.key', 'slack')
+      .eq('is_active', true)
 
-  if (!slackIntegrations || slackIntegrations.length === 0) return
+    if (!slackIntegrations || slackIntegrations.length === 0) {
+      return { summary: 'No Slack integrations found' }
+    }
 
-  const connectorIds = slackIntegrations.map((s: any) => s.connected_by).filter(Boolean)
-  const { data: profiles } = await admin
-    .from('profiles')
-    .select('id, org_id, email, full_name, timezone')
-    .in('id', connectorIds)
-    .not('onboarded_at', 'is', null)
+    const connectorIds = slackIntegrations.map((s: any) => s.connected_by).filter(Boolean)
+    const { data: profiles } = await admin
+      .from('profiles')
+      .select('id, org_id, email, full_name, timezone')
+      .in('id', connectorIds)
+      .not('onboarded_at', 'is', null)
 
-  if (!profiles || profiles.length === 0) return
+    if (!profiles || profiles.length === 0) {
+      return { summary: 'No onboarded profiles' }
+    }
 
-  for (const profile of profiles) {
-    try {
-      // ── Timezone info ────────────────────────────────────────────────────
-      const tz = profile.timezone ?? 'UTC'
+    for (const profile of profiles) {
+      try {
+        // ── Timezone info ────────────────────────────────────────────────────
+        const tz = profile.timezone ?? 'UTC'
 
-      // ── Deduplication ─────────────────────────────────────────────────────
-      const todayLocal = getLocalDateString(tz)
-      const { data: existing } = await admin
-        .from('briefs')
-        .select('id')
-        .eq('user_id', profile.id)
-        .eq('type', 'eod')
-        .gte('sent_at', `${todayLocal}T00:00:00`)
-        .lte('sent_at', `${todayLocal}T23:59:59`)
-        .limit(1)
-        .maybeSingle()
+        // ── Deduplication ─────────────────────────────────────────────────────
+        const todayLocal = getLocalDateString(tz)
+        const { data: existing } = await admin
+          .from('briefs')
+          .select('id')
+          .eq('user_id', profile.id)
+          .eq('type', 'eod')
+          .gte('sent_at', `${todayLocal}T00:00:00`)
+          .lte('sent_at', `${todayLocal}T23:59:59`)
+          .limit(1)
+          .maybeSingle()
 
-      if (existing) continue
+        if (existing) { skipped++; continue }
 
-      // ── Slack client ───────────────────────────────────────────────────────
-      const slackClient = await getSlackClient(profile.org_id)
-      if (!slackClient) continue
+        // ── Slack client ───────────────────────────────────────────────────────
+        const slackClient = await getSlackClient(profile.org_id)
+        if (!slackClient) continue
 
-      // ── Generate EOD wrap via agent (with cross-worker synthesis) ─────────
-      const firstName = profile.full_name?.split(' ')[0] ?? 'there'
-      const now = new Date()
-      const dateLabel = now.toLocaleDateString('en-US', {
-        timeZone: tz,
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-      })
-
-      const workerViews = await gatherWorkerViews(admin, profile.org_id)
-      const yesterdayMetrics = await getYesterdayMetrics(admin, profile.id, 'eod')
-      const enrichedPrompt = buildBriefPrompt('eod', workerViews, yesterdayMetrics, firstName, dateLabel)
-      const briefMetrics = extractMetrics(workerViews)
-
-      let fullResponse = ''
-      const agentStream = runCaptainWithSDK({
-        orgId: profile.org_id,
-        userId: profile.id,
-        message: enrichedPrompt,
-        conversationId: randomUUID(),
-      })
-
-      for await (const event of agentStream) {
-        if (event.type === 'text' && event.content) {
-          fullResponse += event.content
-        }
-      }
-
-      if (!fullResponse) continue
-
-      // ── Store in DB ─────────────────────────────────────────────────────────
-      const { data: brief } = await admin
-        .from('briefs')
-        .insert({
-          org_id: profile.org_id,
-          user_id: profile.id,
-          type: 'eod',
-          title: `EOD Wrap — ${dateLabel}`,
-          content: { text: fullResponse },
-          status: 'sent',
-          sent_at: new Date().toISOString(),
-          sent_via: 'slack',
-          metrics: briefMetrics as unknown as Json,
+        // ── Generate EOD wrap via agent (with cross-worker synthesis) ─────────
+        const firstName = profile.full_name?.split(' ')[0] ?? 'there'
+        const now = new Date()
+        const dateLabel = now.toLocaleDateString('en-US', {
+          timeZone: tz,
+          weekday: 'long',
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
         })
-        .select('id')
-        .single()
 
-      // ── Send via Slack DM ──────────────────────────────────────────────────
-      if (profile.email) {
-        try {
-          const userResult = await slackClient.users.lookupByEmail({ email: profile.email })
-          if (userResult.user?.id) {
-            const conversation = await slackClient.conversations.open({ users: userResult.user.id })
-            if (conversation.channel?.id) {
-              const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').trim()
-              const blocks = buildAgentTextBlocks({
-                header: `🌙 EOD Wrap — ${dateLabel}`,
-                text: fullResponse,
-                footerText: `Captain • Sent at ${now.toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' })} ${tz}`,
-                appUrl: appUrl ? `${appUrl}/chat` : undefined,
-              })
+        const workerViews = await gatherWorkerViews(admin, profile.org_id)
+        const yesterdayMetrics = await getYesterdayMetrics(admin, profile.id, 'eod')
+        const enrichedPrompt = buildBriefPrompt('eod', workerViews, yesterdayMetrics, firstName, dateLabel)
+        const briefMetrics = extractMetrics(workerViews)
 
-              const msgResult = await slackClient.chat.postMessage({
-                channel: conversation.channel.id,
-                text: `🌙 EOD Wrap — ${dateLabel}`,
-                blocks,
-              })
+        let fullResponse = ''
+        const agentStream = runCaptainWithSDK({
+          orgId: profile.org_id,
+          userId: profile.id,
+          message: enrichedPrompt,
+          conversationId: randomUUID(),
+        })
 
-              if (brief?.id && msgResult.ts) {
-                await admin
-                  .from('briefs')
-                  .update({ slack_message_ts: msgResult.ts })
-                  .eq('id', brief.id)
+        for await (const event of agentStream) {
+          if (event.type === 'text' && event.content) {
+            fullResponse += event.content
+          }
+        }
+
+        if (!fullResponse) continue
+
+        // ── Store in DB ─────────────────────────────────────────────────────────
+        const { data: brief } = await admin
+          .from('briefs')
+          .insert({
+            org_id: profile.org_id,
+            user_id: profile.id,
+            type: 'eod',
+            title: `EOD Wrap — ${dateLabel}`,
+            content: { text: fullResponse },
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+            sent_via: 'slack',
+            metrics: briefMetrics as unknown as Json,
+          })
+          .select('id')
+          .single()
+
+        // ── Send via Slack DM ──────────────────────────────────────────────────
+        if (profile.email) {
+          try {
+            const userResult = await slackClient.users.lookupByEmail({ email: profile.email })
+            if (userResult.user?.id) {
+              const conversation = await slackClient.conversations.open({ users: userResult.user.id })
+              if (conversation.channel?.id) {
+                const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').trim()
+                const blocks = buildAgentTextBlocks({
+                  header: `🌙 EOD Wrap — ${dateLabel}`,
+                  text: fullResponse,
+                  footerText: `Captain • Sent at ${now.toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' })} ${tz}`,
+                  appUrl: appUrl ? `${appUrl}/chat` : undefined,
+                })
+
+                const msgResult = await slackClient.chat.postMessage({
+                  channel: conversation.channel.id,
+                  text: `🌙 EOD Wrap — ${dateLabel}`,
+                  blocks,
+                })
+
+                if (brief?.id && msgResult.ts) {
+                  await admin
+                    .from('briefs')
+                    .update({ slack_message_ts: msgResult.ts })
+                    .eq('id', brief.id)
+                }
               }
             }
+          } catch (slackErr) {
+            console.error(`[eod-wrap] Slack DM failed for ${profile.email}:`, slackErr)
           }
-        } catch (slackErr) {
-          console.error(`[eod-wrap] Slack DM failed for ${profile.email}:`, slackErr)
         }
-      }
 
-      // ── Extract entities from wrap for knowledge graph ──────────────────────
-      try {
-        await runExtractionPipeline({
-          orgId: profile.org_id,
-          conversationId: randomUUID(),
-          messageContent: fullResponse,
-          role: 'assistant',
-        })
-      } catch (extractErr) {
-        console.error(`[eod-wrap] Extraction failed for ${profile.id}:`, extractErr)
-      }
+        // ── Extract entities from wrap for knowledge graph ──────────────────────
+        try {
+          await runExtractionPipeline({
+            orgId: profile.org_id,
+            conversationId: randomUUID(),
+            messageContent: fullResponse,
+            role: 'assistant',
+          })
+        } catch (extractErr) {
+          console.error(`[eod-wrap] Extraction failed for ${profile.id}:`, extractErr)
+        }
 
-      console.log(`[eod-wrap] Completed for ${profile.id}`)
-    } catch (err) {
-      console.error(`[eod-wrap] Error for user ${profile.id}: ${(err as Error).message}`)
+        sent++
+        console.log(`[eod-wrap] Completed for ${profile.id}`)
+      } catch (err) {
+        console.error(`[eod-wrap] Error for user ${profile.id}: ${(err as Error).message}`)
+      }
     }
-  }
+
+    return { summary: `Sent ${sent} EOD wraps, skipped ${skipped} (already sent)` }
+  })
 }

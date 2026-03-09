@@ -6,6 +6,7 @@ import { recordWeeklyMeasurement, evaluateRolloutAdvancement } from '@/lib/agent
 import { runMemoryCurator } from '@/lib/graph/strategic-memory'
 import { runCompression } from '@/lib/graph/compression-engine'
 import { runEntityDedup } from '@/lib/graph/entity-dedup'
+import { logCronRun } from '@/lib/observability/cron-logger'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -93,6 +94,21 @@ export async function GET(request: Request) {
     }
   }
 
-  console.log(`[WeeklyTuning] Processed ${results.length} orgs`)
+  // Log to worker_executions
+  const okCount = results.filter(r => r.status === 'ok').length
+  const errCount = results.filter(r => r.status === 'error').length
+  try {
+    await logCronRun({ worker: 'weekly-tuning' }, async () => ({
+      summary: `Tuned ${okCount}/${results.length} orgs (${errCount} errors)`,
+      metrics: {
+        orgs: results.length,
+        ok: okCount,
+        errors: errCount,
+        details: results.filter(r => r.status === 'ok').map(r => r.details),
+      },
+    }))
+  } catch { /* logging should never break the response */ }
+
+  console.log(`[weekly-tuning] Processed ${results.length} orgs`)
   return NextResponse.json({ results })
 }

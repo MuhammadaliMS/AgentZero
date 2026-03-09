@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { AIStatsBar } from './ai-stats-bar'
 import { ActiveOutcomes, type OutcomeWithRuns } from './active-outcomes'
 import { ActivityFeed, type ChiefLoopEntry, type DecisionEntry, type TriageEntry } from './activity-feed'
+import { CronMonitor, type CronRunEntry } from './cron-monitor'
 
 interface AIStats {
   activeOutcomes: number
@@ -20,6 +21,7 @@ export function AIActivityView() {
   const [chiefLoops, setChiefLoops] = useState<ChiefLoopEntry[]>([])
   const [decisions, setDecisions] = useState<DecisionEntry[]>([])
   const [triageEvents, setTriageEvents] = useState<TriageEntry[]>([])
+  const [cronRuns, setCronRuns] = useState<CronRunEntry[]>([])
   const [loading, setLoading] = useState(true)
 
   const loadData = useCallback(async () => {
@@ -41,6 +43,7 @@ export function AIActivityView() {
         chiefLoopsRes,
         decisionsRes,
         triageRes,
+        cronRunsRes,
       ] = await Promise.all([
         // Full outcomes with runs and steps (last 7 days, non-cancelled)
         supabase
@@ -103,6 +106,15 @@ export function AIActivityView() {
           .gte('created_at', todayISO)
           .order('created_at', { ascending: false })
           .limit(50),
+
+        // Cron runs (today) from worker_executions
+        supabase
+          .from('worker_executions')
+          .select('id, worker, trigger, status, created_at, completed_at, duration_ms, output_summary, error, cost_usd')
+          .eq('trigger', 'cron')
+          .gte('created_at', todayISO)
+          .order('created_at', { ascending: false })
+          .limit(200),
       ])
 
       // Count active outcomes
@@ -120,6 +132,7 @@ export function AIActivityView() {
       setChiefLoops((chiefLoopsRes.data || []) as ChiefLoopEntry[])
       setDecisions((decisionsRes.data || []) as DecisionEntry[])
       setTriageEvents((triageRes.data || []) as TriageEntry[])
+      setCronRuns((cronRunsRes.data || []) as CronRunEntry[])
     } catch (e) {
       console.error('Failed to load AI activity data:', e)
     } finally {
@@ -152,6 +165,9 @@ export function AIActivityView() {
     <div className="space-y-8">
       <AIStatsBar stats={stats} />
       <ActiveOutcomes outcomes={outcomes} />
+      <div className="border-t border-border/40 pt-6">
+        <CronMonitor runs={cronRuns} />
+      </div>
       <div className="border-t border-border/40 pt-6">
         <ActivityFeed
           chiefLoops={chiefLoops}

@@ -3,6 +3,7 @@ import { waitUntil } from '@vercel/functions'
 import { timingSafeEqual } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { TokenManager } from '@/lib/integrations/token-manager'
+import { logCronRun } from '@/lib/observability/cron-logger'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -63,27 +64,40 @@ interface BotConfig {
 // ─── Background Runner ───────────────────────────────────────────────────
 
 async function runMeetingSyncBackground() {
-  const admin = createAdminClient() as any // meeting tables not in generated types yet
+  await logCronRun({ worker: 'meeting-sync' }, async () => {
+    const admin = createAdminClient() as any // meeting tables not in generated types yet
 
-  // Get all orgs with connected calendar
-  const { data: orgs } = await admin
-    .from('organization_integrations')
-    .select('org_id, integration:integrations!inner(key)')
-    .eq('is_active', true)
-    .in('integrations.key', ['google_calendar', 'gmail'])
+    // Get all orgs with connected calendar
+    const { data: orgs } = await admin
+      .from('organization_integrations')
+      .select('org_id, integration:integrations!inner(key)')
+      .eq('is_active', true)
+      .in('integrations.key', ['google_calendar', 'gmail'])
 
-  if (!orgs || orgs.length === 0) return
-
-  // Dedup org_ids (might have both google_calendar and gmail)
-  const orgIds = [...new Set(orgs.map((o: any) => o.org_id as string))]
-
-  for (const orgId of orgIds) {
-    try {
-      await syncOrgMeetings(admin, orgId as string)
-    } catch (err) {
-      console.error(`[meeting-sync] Failed for org ${orgId}:`, (err as Error).message)
+    if (!orgs || orgs.length === 0) {
+      return { summary: 'No orgs with connected calendars' }
     }
-  }
+
+    // Dedup org_ids (might have both google_calendar and gmail)
+    const orgIds = [...new Set(orgs.map((o: any) => o.org_id as string))]
+    let synced = 0
+    let failed = 0
+
+    for (const orgId of orgIds) {
+      try {
+        await syncOrgMeetings(admin, orgId as string)
+        synced++
+      } catch (err) {
+        console.error(`[meeting-sync] Failed for org ${orgId}:`, (err as Error).message)
+        failed++
+      }
+    }
+
+    return {
+      summary: `Synced ${synced}/${orgIds.length} orgs (${failed} failed)`,
+      metrics: { orgs: orgIds.length, synced, failed },
+    }
+  })
 }
 
 async function syncOrgMeetings(

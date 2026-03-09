@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSlackClient } from '@/lib/slack/client'
 import { runSmartNudge, buildBatchSlackMessage } from '@/lib/intelligence/nudge-engine'
+import { logCronRun } from '@/lib/observability/cron-logger'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -63,6 +64,7 @@ export async function GET(request: NextRequest) {
   let totalNudgesSent = 0
   let totalBatches = 0
   const errors: string[] = []
+  const startMs = Date.now()
 
   for (const org of orgs) {
     try {
@@ -139,6 +141,15 @@ export async function GET(request: NextRequest) {
       errors.push(msg)
     }
   }
+
+  // Log to worker_executions
+  const durationMs = Date.now() - startMs
+  try {
+    await logCronRun({ worker: 'nudge' }, async () => ({
+      summary: `Mode: ${mode}, sent ${totalNudgesSent} nudges in ${totalBatches} batches (${errors.length} errors)`,
+      metrics: { mode, totalNudgesSent, totalBatches, errors: errors.length, durationMs },
+    }))
+  } catch { /* logging should never break the response */ }
 
   return NextResponse.json({
     ok: true,

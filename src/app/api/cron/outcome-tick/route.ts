@@ -16,6 +16,7 @@ import { executeToolDirectly } from '@/lib/agent/planner/background-executor'
 import { getNextExecutableSteps, updateStep } from '@/lib/agent/runtime/outcome-runtime'
 import { reconcileOutcomeStatus } from '@/lib/agent/planner/step-executor'
 import { EXTERNAL_TOOLS } from '@/lib/agent/planner/plan-validator'
+import { logCronRun } from '@/lib/observability/cron-logger'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -144,6 +145,16 @@ export async function GET(request: Request) {
 
     results.push({ orgId, stepsExecuted, errors })
   }
+
+  // Log to worker_executions
+  const totalSteps = results.reduce((s, r) => s + r.stepsExecuted, 0)
+  const totalErrors = results.reduce((s, r) => s + r.errors, 0)
+  try {
+    await logCronRun({ worker: 'outcome-tick' }, async () => ({
+      summary: `Executed ${totalSteps} steps across ${results.length} orgs (${totalErrors} errors)`,
+      metrics: { totalSteps, totalErrors, orgs: results.length },
+    }))
+  } catch { /* logging should never break the response */ }
 
   return NextResponse.json({
     ok: true,

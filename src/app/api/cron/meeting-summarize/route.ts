@@ -3,6 +3,7 @@ import { waitUntil } from '@vercel/functions'
 import { timingSafeEqual } from 'crypto'
 import { processAllPendingMeetings } from '@/lib/intelligence/meeting-processor'
 import { sendMeetingNotification } from '@/lib/intelligence/meeting-notification'
+import { logCronRun } from '@/lib/observability/cron-logger'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -36,25 +37,27 @@ export async function GET(request: NextRequest) {
 }
 
 async function runMeetingSummarizeBackground() {
-  const startTime = Date.now()
-
-  try {
+  await logCronRun({ worker: 'meeting-summarize' }, async () => {
     // 1. Process all pending meetings
     const { processed, succeeded, failed, results } = await processAllPendingMeetings()
 
-    if (processed === 0) return
+    if (processed === 0) {
+      return { summary: 'No pending meetings to process' }
+    }
 
     console.log(
       `[meeting-summarize] Processed ${processed} meetings: ` +
-      `${succeeded} succeeded, ${failed} failed (${Date.now() - startTime}ms)`
+      `${succeeded} succeeded, ${failed} failed`
     )
 
     // 2. Send Slack notifications for completed meetings
+    let notified = 0
     for (const result of results) {
       if (result.status !== 'completed') continue
 
       try {
         await sendMeetingNotification(result.meetingId)
+        notified++
       } catch (err) {
         console.error(
           `[meeting-summarize] Notification failed for ${result.meetingId}:`,
@@ -62,8 +65,11 @@ async function runMeetingSummarizeBackground() {
         )
       }
     }
-  } catch (err) {
-    console.error('[meeting-summarize] Background run failed:', (err as Error).message)
-  }
+
+    return {
+      summary: `Processed ${processed} meetings: ${succeeded} succeeded, ${failed} failed, ${notified} notified`,
+      metrics: { processed, succeeded, failed, notified },
+    }
+  })
 }
 

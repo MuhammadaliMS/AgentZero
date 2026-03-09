@@ -12,8 +12,9 @@ export const dynamic = 'force-dynamic'
 /**
  * Cron: Meeting Summarize
  *
- * Polls for meetings in 'processing' / 'transcribing' status and runs the
- * AI summarization pipeline. Same pattern as morning-brief:
+ * Polls for meetings in 'processing' / 'transcribing' status (and 'joining'
+ * with transcript_ready=true as a safety net) and runs the AI summarization
+ * pipeline. Same pattern as morning-brief:
  * responds immediately, heavy work runs via waitUntil.
  *
  * Schedule: Every 2 minutes (or triggered via webhook for immediate processing).

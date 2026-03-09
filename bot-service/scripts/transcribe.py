@@ -401,8 +401,10 @@ def notify_webhook(meeting_id: str, event: str, **kwargs):
 def _get_fallback_speaker(participants: list[str] | None) -> str:
     """Determine the fallback speaker name from the participant list.
 
-    If there's exactly 1 participant → use their name.
-    If multiple → join them (better than 'Unknown').
+    If there's exactly 1 participant → use their name (we know who's talking).
+    If multiple → return 'Unknown' because we can't distinguish speakers
+      without a timeline. Joining names like "Alice, Bob" creates a single
+      fake speaker which breaks downstream processing and UI display.
     If none → 'Unknown'.
     """
     if not participants:
@@ -411,8 +413,7 @@ def _get_fallback_speaker(participants: list[str] | None) -> str:
     names = [n.strip() for n in participants if n.strip() and n.strip().lower() not in ("captain", "zerowing", "meeting bot", "bot")]
     if len(names) == 1:
         return names[0]
-    elif len(names) > 1:
-        return ", ".join(names)  # "Alice, Bob" — at least shows who was there
+    # Multiple participants but no speaker timeline — we can't tell who said what
     return "Unknown"
 
 

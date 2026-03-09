@@ -252,18 +252,42 @@ export class MeetingScheduler {
           // Do NOT update meeting status here to avoid race condition with webhook.
           console.log(`[scheduler] Transcription process exited successfully for ${meetingId}`)
         } else {
-          // Transcription script failed — notify webhook so meeting gets marked as failed
+          // Transcription script failed — but check if segments were already written
+          // (the script may have uploaded segments then crashed during cleanup/webhook)
           console.error(`[scheduler] Transcription failed with code ${code} for ${meetingId}`)
-          await this.supabase
-            .from('meetings')
-            .update({
-              status: 'failed',
+
+          const { count } = await this.supabase
+            .from('transcript_segments')
+            .select('id', { count: 'exact', head: true })
+            .eq('meeting_id', meetingId)
+
+          if (count && count > 0) {
+            // Segments exist despite error — mark for processing so safety net picks it up
+            console.log(`[scheduler] Found ${count} segments despite error — marking transcript_ready for ${meetingId}`)
+            await this.supabase
+              .from('meetings')
+              .update({
+                status: 'processing',
+                transcript_ready: true,
+                error_message: `Transcription exited with code ${code} but ${count} segments written`,
+              })
+              .eq('id', meetingId)
+            await this.notifyWebhook(meetingId, 'transcription_complete', {
+              segment_count: count,
+            })
+          } else {
+            // No segments — truly failed
+            await this.supabase
+              .from('meetings')
+              .update({
+                status: 'failed',
+                error_message: `Transcription process exited with code ${code}`,
+              })
+              .eq('id', meetingId)
+            await this.notifyWebhook(meetingId, 'bot_error', {
               error_message: `Transcription process exited with code ${code}`,
             })
-            .eq('id', meetingId)
-          await this.notifyWebhook(meetingId, 'bot_error', {
-            error_message: `Transcription process exited with code ${code}`,
-          })
+          }
         }
         resolve()
       })

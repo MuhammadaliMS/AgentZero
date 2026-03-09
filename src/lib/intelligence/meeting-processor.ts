@@ -620,10 +620,19 @@ export async function processAllPendingMeetings(): Promise<{
 }> {
   const supabase = createAdminClient() as any // meeting tables not in generated types yet
 
+  // Pick up meetings that need summarization:
+  // 1. processing/transcribing — normal pipeline path
+  // 2. joining + transcript_ready — bot wrote segments but status never advanced
+  // 3. failed + transcript_ready + NOT summary_ready — transcription error but
+  //    segments exist and summary was never generated
   const { data: pendingMeetings } = await supabase
     .from('meetings')
-    .select('id')
-    .in('status', ['processing', 'transcribing'])
+    .select('id, status, transcript_ready, summary_ready')
+    .or(
+      'status.in.(processing,transcribing),' +
+      'and(status.eq.joining,transcript_ready.eq.true),' +
+      'and(status.eq.failed,transcript_ready.eq.true,summary_ready.eq.false)'
+    )
     .lt('retry_count', MAX_RETRIES)
     .order('scheduled_start', { ascending: true })
     .limit(10) // Process max 10 per cron run

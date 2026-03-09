@@ -98,7 +98,7 @@ const MAX_NEW_OUTCOMES_PER_HOUR = 3
 const MAX_STEP_EXECUTIONS_PER_HOUR = 10
 const REPLAN_COOLDOWN_MS = 4 * 60 * 60 * 1000 // 4 hours
 const LEASE_DURATION_MINUTES = 55
-const AGENT_TIMEOUT_MS = 180_000 // 3 minutes
+const AGENT_TIMEOUT_MS = 300_000 // 5 minutes
 
 // ─── Working Memory Types (Feature 5) ───────────────────────────────────
 

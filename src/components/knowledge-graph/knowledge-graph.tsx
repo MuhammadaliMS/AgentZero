@@ -106,6 +106,25 @@ export function KnowledgeGraph() {
     return () => observer.disconnect()
   }, [])
 
+  // Configure d3 forces for better spread across the full canvas
+  const [graphMounted, setGraphMounted] = useState(false)
+  useEffect(() => {
+    if (loading || graphMounted) return
+    // Wait a tick for the graph ref to be available
+    const timer = setTimeout(() => {
+      const fg = graphRef.current
+      if (!fg) return
+      // Stronger charge repulsion to spread nodes across entire canvas
+      fg.d3Force('charge')?.strength(-200)
+      // Increase link distance so connected nodes don't cluster too tightly
+      fg.d3Force('link')?.distance(80)
+      // Re-heat the simulation so the new forces take effect
+      fg.d3ReheatSimulation()
+      setGraphMounted(true)
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [loading, graphMounted])
+
   // Entity lookup map
   const entityMap = useMemo(() => {
     const map = new Map<string, EntityNode>()
@@ -215,7 +234,7 @@ export function KnowledgeGraph() {
 
   const handleResetZoom = useCallback(() => {
     if (graphRef.current) {
-      graphRef.current.zoomToFit(400, 40)
+      graphRef.current.zoomToFit(400, 30)
     }
   }, [])
 
@@ -402,14 +421,16 @@ export function KnowledgeGraph() {
         enableNodeDrag={true}
         enableZoomInteraction={true}
         enablePanInteraction={true}
-        cooldownTicks={100}
+        cooldownTicks={200}
+        warmupTicks={50}
         onEngineStop={() => {
+          // Zoom to fit all nodes with minimal padding so graph fills the screen
           if (graphRef.current) {
-            graphRef.current.zoomToFit(400, 60)
+            graphRef.current.zoomToFit(500, 30)
           }
         }}
-        d3AlphaDecay={0.02}
-        d3VelocityDecay={0.3}
+        d3AlphaDecay={0.015}
+        d3VelocityDecay={0.25}
         linkDirectionalArrowLength={3}
         linkDirectionalArrowRelPos={1}
         backgroundColor="rgba(0,0,0,0)"

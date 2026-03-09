@@ -319,16 +319,26 @@ export async function runChiefLoopForOrg(
     console.error(`[ChiefLoop] Event log failed for org ${orgId}:`, error)
   }
 
-  // Complete worker execution
+  // Complete worker execution — surface phase errors for observability
   try {
     if (executionId) {
-      console.log(`[ChiefLoop] org=${orgId}: stepCollector has ${stepCollector.length} agent activity steps`)
+      // Collect all phase errors for visibility
+      const phaseErrors = Object.entries(result.phases)
+        .filter(([, v]) => v.error)
+        .map(([k, v]) => `${k}: ${v.error}`)
+      const hasErrors = phaseErrors.length > 0
+      const phaseTiming = Object.entries(result.phases)
+        .map(([k, v]) => `${k}=${v.durationMs}ms`)
+        .join(' ')
+
+      console.log(`[ChiefLoop] org=${orgId}: stepCollector has ${stepCollector.length} agent activity steps, phases: ${phaseTiming}${hasErrors ? `, ERRORS: ${phaseErrors.join('; ')}` : ''}`)
       await completeWorkerExecution(executionId, {
-        status: 'completed',
-        output_summary: `signals=${result.signalsGathered} replans=${result.replans} outcomes=${result.newOutcomes} outcome_steps=${result.stepsExecuted} blockers=${result.blockersEscalated} graph=${result.graphUpdates} deferred=${result.deferredItems} agent_steps=${stepCollector.length}`,
+        status: hasErrors ? 'failed' : 'completed',
+        output_summary: `signals=${result.signalsGathered} replans=${result.replans} outcomes=${result.newOutcomes} outcome_steps=${result.stepsExecuted} blockers=${result.blockersEscalated} graph=${result.graphUpdates} deferred=${result.deferredItems} agent_steps=${stepCollector.length} phases=[${phaseTiming}]`,
         duration_ms: result.durationMs,
         cost_usd: result.costUsd,
         steps: stepCollector.length > 0 ? stepCollector.toJSON() : undefined,
+        error: hasErrors ? phaseErrors.join('; ') : undefined,
       })
     }
   } catch (error) {

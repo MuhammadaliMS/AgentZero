@@ -1149,9 +1149,41 @@ ${o.steps.map(s => `  - [${s.status}] Step ${s.stepOrder}: ${s.description}${s.o
 // ─── NVIDIA NIM / OpenRouter Provider ────────────────────────────────────
 
 export function getChiefAnalystProvider(): OpenAIProvider {
-  // Priority 1: NVIDIA NIM
+  const model = process.env.CHIEF_ANALYST_MODEL || DEFAULT_CHIEF_ANALYST_MODEL
+
+  // Model format detection: "org/model" patterns (e.g. moonshotai/kimi-k2.5) are
+  // OpenRouter model identifiers. NVIDIA NIM uses different naming conventions.
+  // Only route to NVIDIA NIM for native NVIDIA models or explicit overrides.
+  const isOpenRouterModel = model.includes('/') && !model.startsWith('nvidia/')
+
+  // Priority 1: NVIDIA NIM (only for NVIDIA-compatible models)
+  if (!isOpenRouterModel) {
+    const nvidiaKey = process.env.NVIDIA_API_KEY
+    if (nvidiaKey) {
+      console.log(`[ChiefAnalyst] Using NVIDIA NIM provider for model: ${model}`)
+      return new OpenAIProvider({
+        apiKey: nvidiaKey,
+        baseURL: 'https://integrate.api.nvidia.com/v1',
+        useResponses: false,
+      })
+    }
+  }
+
+  // Priority 2: OpenRouter (works with org/model format models)
+  const openRouterKey = process.env.OPENROUTER_API_KEY
+  if (openRouterKey) {
+    console.log(`[ChiefAnalyst] Using OpenRouter provider for model: ${model}`)
+    return new OpenAIProvider({
+      apiKey: openRouterKey,
+      baseURL: 'https://openrouter.ai/api/v1',
+      useResponses: false,
+    })
+  }
+
+  // Priority 3: NVIDIA NIM as fallback (even for non-native models — may fail but let it try)
   const nvidiaKey = process.env.NVIDIA_API_KEY
   if (nvidiaKey) {
+    console.log(`[ChiefAnalyst] Using NVIDIA NIM provider as fallback for model: ${model}`)
     return new OpenAIProvider({
       apiKey: nvidiaKey,
       baseURL: 'https://integrate.api.nvidia.com/v1',
@@ -1159,22 +1191,16 @@ export function getChiefAnalystProvider(): OpenAIProvider {
     })
   }
 
-  // Priority 2: OpenRouter
-  const openRouterKey = process.env.OPENROUTER_API_KEY
-  if (openRouterKey) {
-    return new OpenAIProvider({
-      apiKey: openRouterKey,
-      baseURL: 'https://openrouter.ai/api/v1',
-      useResponses: false,
-    })
-  }
+  // Priority 4: OpenAI
   const openaiKey = process.env.OPENAI_API_KEY
   if (openaiKey) {
+    console.log(`[ChiefAnalyst] Using OpenAI provider for model: ${model}`)
     return new OpenAIProvider({
       apiKey: openaiKey,
       useResponses: false,
     })
   }
+
   throw new Error('Chief Analyst requires NVIDIA_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.')
 }
 

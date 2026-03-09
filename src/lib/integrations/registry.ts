@@ -3,6 +3,7 @@ import type { BaseAuthService } from './base-auth'
 // Google — split by product so each only requests the scopes it needs
 import { GmailAuthService } from './providers/gmail'
 import { GoogleCalendarAuthService } from './providers/google-calendar'
+import { GoogleDirectoryAuthService } from './providers/google-directory'
 
 // Microsoft — split by product for the same reason
 import { OutlookAuthService } from './providers/outlook'
@@ -38,6 +39,8 @@ const PROVIDER_MAP: Record<string, ProviderConstructor> = {
   gmail: GmailAuthService,
   // Scopes: calendar.readonly, email, profile
   google_calendar: GoogleCalendarAuthService,
+  // Scopes: directory.readonly, email, profile
+  google_directory: GoogleDirectoryAuthService,
 
   // Microsoft 365
   // Scopes: Mail.Read, Mail.Send, User.Read, offline_access

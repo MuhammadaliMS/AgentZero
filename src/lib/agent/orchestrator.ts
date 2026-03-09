@@ -46,6 +46,7 @@ import { createMemoryTools } from './tools/memory-tools'
 import { createSlackTools } from './tools/slack-tools'
 import { createEmailTools } from './tools/email-tools'
 import { createCalendarTools } from './tools/calendar-tools'
+import { createDirectoryTools } from './tools/directory-tools'
 import { createVantaTools } from './tools/vanta-tools'
 import { createIntegrationTools } from './tools/integration-tools'
 import { createOutcomeTools } from './tools/outcome-tools'
@@ -1074,6 +1075,11 @@ function buildMcpServers(
       createSdkMcpServer({
         name: 'calendar-tools',
         tools: createCalendarTools(orgId, userTimezone),
+      }),
+    directory: () =>
+      createSdkMcpServer({
+        name: 'directory-tools',
+        tools: createDirectoryTools(orgId),
       }),
     vanta: () =>
       createSdkMcpServer({

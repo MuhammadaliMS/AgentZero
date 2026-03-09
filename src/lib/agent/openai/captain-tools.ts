@@ -1493,6 +1493,137 @@ export function createCaptainTools(params: CaptainToolParams) {
     }),
   })
 
+  const lookupSlackUser = tool({
+    name: 'lookup_slack_user',
+    description: 'Look up a Slack workspace member by name, display name, or email. Use this to find someone\'s email address before sending a DM. Returns name, email, user ID, title, and timezone for up to 10 matches.',
+    parameters: z.object({
+      query: z.string().describe('Name or partial name to search for (e.g. "Devanand", "Sarah Chen")'),
+    }),
+    execute: async (args) => wrappedExecute('lookup_slack_user', args as Record<string, unknown>, params, async () => {
+      const client = await getSlackUserClient()
+      if (!client) return 'Slack not connected.'
+
+      try {
+        const query = (args.query ?? '').toLowerCase().trim()
+
+        // Fetch workspace members (paginate if needed, up to 600)
+        const allMembers: Array<{
+          id: string; name: string; real_name: string
+          display_name: string; email: string; title: string; tz: string
+        }> = []
+
+        let cursor: string | undefined
+        let pages = 0
+        do {
+          const result = await client.users.list({ limit: 200, ...(cursor ? { cursor } : {}) })
+          for (const member of result.members || []) {
+            if (member.deleted || member.is_bot || member.id === 'USLACKBOT') continue
+            allMembers.push({
+              id: member.id || '',
+              name: member.name || '',
+              real_name: member.real_name || member.profile?.real_name || '',
+              display_name: member.profile?.display_name || '',
+              email: member.profile?.email || '',
+              title: member.profile?.title || '',
+              tz: member.tz || '',
+            })
+          }
+          cursor = result.response_metadata?.next_cursor || undefined
+          pages++
+        } while (cursor && pages < 3)
+
+        const matches = allMembers
+          .filter(m => {
+            const fields = [m.real_name, m.display_name, m.name, m.email].map(f => f.toLowerCase())
+            return fields.some(f => f.includes(query))
+          })
+          .slice(0, 10)
+          .map(m => ({
+            user_id: m.id,
+            name: m.real_name || m.name,
+            display_name: m.display_name || undefined,
+            email: m.email || undefined,
+            title: m.title || undefined,
+            timezone: m.tz || undefined,
+          }))
+
+        if (matches.length === 0) {
+          return `No Slack users found matching "${args.query}". Try a different name or spelling.`
+        }
+        return JSON.stringify({ matches, total_workspace_members: allMembers.length }, null, 2)
+      } catch (e) {
+        return handleSlackError(e)
+      }
+    }),
+  })
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // DIRECTORY TOOLS (1)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  const lookupWorkspaceUser = tool({
+    name: 'lookup_workspace_user',
+    description: 'Search your Google Workspace organization directory for people by name. Returns email, title, department, and photo URL. Use this to find someone\'s email before sending a Slack DM or email.',
+    parameters: z.object({
+      query: z.string().describe('Person name to search for (e.g. "Devanand", "Sarah Chen")'),
+    }),
+    execute: async (args) => wrappedExecute('lookup_workspace_user', args as Record<string, unknown>, params, async () => {
+      // Try google_directory first, then fall back to google_calendar and gmail tokens
+      let tokens = await TokenManager.getTokens(orgId, 'google_directory')
+      if (!tokens) tokens = await TokenManager.getTokens(orgId, 'google_calendar')
+      if (!tokens) tokens = await TokenManager.getTokens(orgId, 'gmail')
+
+      if (!tokens) {
+        return '__INTEGRATION_REQUIRED__:google_directory:Google Workspace Directory — A connection prompt has been shown in the UI.'
+      }
+
+      try {
+        const searchParams = new URLSearchParams({
+          query: args.query ?? '',
+          readMask: 'names,emailAddresses,organizations,photos',
+          sources: 'DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE',
+          pageSize: '10',
+        })
+
+        const response = await fetch(
+          `https://people.googleapis.com/v1/people:searchDirectoryPeople?${searchParams}`,
+          { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+        )
+
+        if (!response.ok) {
+          const errText = await response.text()
+          if (response.status === 401 || response.status === 403) {
+            return '__INTEGRATION_REQUIRED__:google_directory:Google Workspace Directory — A connection prompt has been shown in the UI.'
+          }
+          return `Google Directory error (${response.status}): ${errText.slice(0, 200)}`
+        }
+
+        const data = await response.json()
+        const people = (data.people || []) as Array<{
+          names?: Array<{ displayName?: string; givenName?: string; familyName?: string }>
+          emailAddresses?: Array<{ value?: string }>
+          organizations?: Array<{ title?: string; department?: string; name?: string }>
+          photos?: Array<{ url?: string }>
+        }>
+
+        if (people.length === 0) {
+          return `No people found in workspace directory matching "${args.query}".`
+        }
+
+        const matches = people.map(person => ({
+          name: person.names?.[0]?.displayName || 'Unknown',
+          email: person.emailAddresses?.[0]?.value || undefined,
+          title: person.organizations?.[0]?.title || undefined,
+          department: person.organizations?.[0]?.department || undefined,
+        }))
+
+        return JSON.stringify({ matches, total: matches.length }, null, 2)
+      } catch (e) {
+        return `Google Directory error: ${(e as Error).message}`
+      }
+    }),
+  })
+
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // CALENDAR TOOLS (3)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2438,6 +2569,9 @@ export function createCaptainTools(params: CaptainToolParams) {
     read_slack_dms: readSlackDms,
     get_slack_mentions: getSlackMentions,
     search_slack: searchSlack,
+    lookup_slack_user: lookupSlackUser,
+    // Directory (1)
+    lookup_workspace_user: lookupWorkspaceUser,
     // Calendar (4)
     get_today_events: getTodayEvents,
     get_week_events: getWeekEvents,
@@ -2478,7 +2612,7 @@ export function createCaptainTools(params: CaptainToolParams) {
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // Return all 41 tools as array (with patched schemas for OpenAI API compat)
+  // Return all 43 tools as array (with patched schemas for OpenAI API compat)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   return patchToolSchemas(Object.values(toolMap))

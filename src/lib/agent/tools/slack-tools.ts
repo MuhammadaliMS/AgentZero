@@ -539,6 +539,88 @@ export function createSlackTools(orgId: string) {
     { annotations: { title: 'Get Slack Mentions', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
   )
 
+  const lookupSlackUser = tool(
+    'lookup_slack_user',
+    'Look up a Slack workspace member by name, display name, or email. Use this to find someone\'s email address before sending a DM. Returns name, email, user ID, title, and timezone for up to 10 matches.',
+    {
+      query: z.string().describe('Name or partial name to search for (e.g. "Devanand", "Sarah Chen")'),
+    },
+    async (args) => {
+      const client = await getSlackUserClient()
+      if (!client) return buildIntegrationRequiredResult('slack', 'Slack')
+
+      try {
+        const query = args.query.toLowerCase().trim()
+
+        // Fetch workspace members (paginate if needed, up to 500)
+        const allMembers: Array<{
+          id: string
+          name: string
+          real_name: string
+          display_name: string
+          email: string
+          title: string
+          tz: string
+          deleted: boolean
+          is_bot: boolean
+        }> = []
+
+        let cursor: string | undefined
+        let pages = 0
+        do {
+          const result = await client.users.list({
+            limit: 200,
+            ...(cursor ? { cursor } : {}),
+          })
+
+          for (const member of result.members || []) {
+            if (member.deleted || member.is_bot || member.id === 'USLACKBOT') continue
+            allMembers.push({
+              id: member.id || '',
+              name: member.name || '',
+              real_name: member.real_name || member.profile?.real_name || '',
+              display_name: member.profile?.display_name || '',
+              email: member.profile?.email || '',
+              title: member.profile?.title || '',
+              tz: member.tz || '',
+              deleted: !!member.deleted,
+              is_bot: !!member.is_bot,
+            })
+          }
+
+          cursor = result.response_metadata?.next_cursor || undefined
+          pages++
+        } while (cursor && pages < 3) // Safety: max 3 pages = 600 members
+
+        // Fuzzy match against name, display_name, real_name, and email
+        const matches = allMembers
+          .filter(m => {
+            const fields = [m.real_name, m.display_name, m.name, m.email].map(f => f.toLowerCase())
+            // Check if query appears in any field
+            return fields.some(f => f.includes(query))
+          })
+          .slice(0, 10)
+          .map(m => ({
+            user_id: m.id,
+            name: m.real_name || m.name,
+            display_name: m.display_name || undefined,
+            email: m.email || undefined,
+            title: m.title || undefined,
+            timezone: m.tz || undefined,
+          }))
+
+        if (matches.length === 0) {
+          return { content: [{ type: 'text' as const, text: `No Slack users found matching "${args.query}". Try a different name or spelling.` }] }
+        }
+
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ matches, total_workspace_members: allMembers.length }, null, 2) }] }
+      } catch (e) {
+        return handleSlackError(e)
+      }
+    },
+    { annotations: { title: 'Look Up Slack User', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
+  )
+
   const searchSlack = tool(
     'search_slack',
     'Search Slack messages across ALL channels (including external/Slack Connect channels). Use this to find messages from a specific person, about a topic, or in a specific channel. Uses the user token so it sees everything the user sees. Supports Slack search modifiers: from:@user, in:#channel, has:link, before:YYYY-MM-DD, after:YYYY-MM-DD, etc.',
@@ -588,6 +670,7 @@ export function createSlackTools(orgId: string) {
     readSlackDms,
     getSlackMentions,
     searchSlack,
+    lookupSlackUser,
     // Write tools
     sendSlackDm,
     postToChannel,

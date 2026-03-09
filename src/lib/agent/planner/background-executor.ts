@@ -400,9 +400,17 @@ export async function callToolFunction(
 
     // Slack tools (read-only ones safe for background)
     case 'list_slack_channels':
-    case 'read_slack_channel': {
+    case 'read_slack_channel':
+    case 'lookup_slack_user': {
       const { createSlackTools } = await import('../tools/slack-tools')
       const tools = createSlackTools(orgId)
+      return invokeSdkTool(tools as any, toolName, toolArgs)
+    }
+
+    // Directory tools (read-only, safe for background)
+    case 'lookup_workspace_user': {
+      const { createDirectoryTools } = await import('../tools/directory-tools')
+      const tools = createDirectoryTools(orgId)
       return invokeSdkTool(tools as any, toolName, toolArgs)
     }
 

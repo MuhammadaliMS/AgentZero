@@ -27,6 +27,7 @@ const TOOL_TO_INTEGRATIONS: Record<string, IntegrationInfo[]> = {
   read_slack_dms: [{ key: 'slack', name: 'Slack' }],
   get_slack_mentions: [{ key: 'slack', name: 'Slack' }],
   search_slack: [{ key: 'slack', name: 'Slack' }],
+  lookup_slack_user: [{ key: 'slack', name: 'Slack' }],
   // Slack tools — write
   send_slack_dm: [{ key: 'slack', name: 'Slack' }],
   post_to_channel: [{ key: 'slack', name: 'Slack' }],
@@ -38,6 +39,9 @@ const TOOL_TO_INTEGRATIONS: Record<string, IntegrationInfo[]> = {
   get_week_events: [{ key: 'google_calendar', name: 'Google Calendar' }, { key: 'microsoft_calendar', name: 'Microsoft Calendar' }],
   find_free_slots: [{ key: 'google_calendar', name: 'Google Calendar' }, { key: 'microsoft_calendar', name: 'Microsoft Calendar' }],
   create_calendar_event: [{ key: 'google_calendar', name: 'Google Calendar' }, { key: 'microsoft_calendar', name: 'Microsoft Calendar' }],
+
+  // Directory tools → Google Workspace Directory (falls back to google_calendar/gmail tokens)
+  lookup_workspace_user: [{ key: 'google_directory', name: 'Google Workspace Directory' }, { key: 'google_calendar', name: 'Google Calendar' }, { key: 'gmail', name: 'Gmail' }],
 
   // Compliance tools → Vanta
   get_compliance_overview: [{ key: 'vanta', name: 'Vanta' }],
@@ -132,6 +136,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   read_slack_dms: 'Reading Slack DMs',
   get_slack_mentions: 'Checking Slack Mentions',
   search_slack: 'Searching Slack',
+  lookup_slack_user: 'Looking Up Slack User',
   // Slack — write
   send_slack_dm: 'Sending Slack Message',
   post_to_channel: 'Posting to Channel',
@@ -143,6 +148,9 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   get_week_events: 'Checking Weekly Calendar',
   find_free_slots: 'Finding Available Slots',
   create_calendar_event: 'Creating Calendar Event',
+
+  // Directory
+  lookup_workspace_user: 'Looking Up Workspace User',
 
   // Compliance
   get_compliance_overview: 'Checking Compliance Posture',
@@ -350,6 +358,7 @@ export type ToolIconCategory =
   | 'slack'
   | 'calendar'
   | 'compliance'
+  | 'directory'
   | 'memory'
   | 'database'
   | 'integration'
@@ -368,6 +377,7 @@ const TOOL_ICON_CATEGORIES: Record<string, ToolIconCategory> = {
   read_slack_dms: 'slack',
   get_slack_mentions: 'slack',
   search_slack: 'slack',
+  lookup_slack_user: 'slack',
   send_slack_dm: 'slack',
   post_to_channel: 'slack',
   send_approval_message: 'slack',
@@ -376,6 +386,7 @@ const TOOL_ICON_CATEGORIES: Record<string, ToolIconCategory> = {
   get_week_events: 'calendar',
   find_free_slots: 'calendar',
   create_calendar_event: 'calendar',
+  lookup_workspace_user: 'directory',
   get_compliance_overview: 'compliance',
   list_failing_controls: 'compliance',
   get_audit_status: 'compliance',

@@ -182,6 +182,40 @@ function sanitizeErrorForLLM(err: unknown, service: string): string {
   return `${service} error: ${cleaned}`
 }
 
+// ─── Step Collector Tool Wrapping ────────────────────────────────────────
+
+import type { StepCollector } from '@/lib/observability/cron-logger'
+
+/**
+ * Wraps an array of OpenAI Agents SDK tools to record each invocation
+ * into a StepCollector for per-step observability.
+ *
+ * Uses `any` for the tool type because the union of FunctionTool generics
+ * makes it impossible to access `.execute` in a type-safe way. The runtime
+ * shape is guaranteed by the OpenAI Agents SDK.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function wrapToolsWithStepCollector<T extends any[]>(
+  tools: T,
+  collector: StepCollector
+): T {
+  return tools.map((t: any) => ({
+    ...t,
+    execute: async (args: any) => {
+      collector.toolCall(t.name, args as Record<string, unknown>)
+      const start = Date.now()
+      try {
+        const result = await t.execute(args)
+        collector.toolResult(t.name, 'ok', Date.now() - start, String(result).slice(0, 300))
+        return result
+      } catch (err) {
+        collector.toolResult(t.name, 'error', Date.now() - start, undefined, String(err).slice(0, 300))
+        throw err
+      }
+    },
+  })) as T
+}
+
 // ─── Tool Definitions ────────────────────────────────────────────────────
 
 export function createChiefAnalystTools(orgId: string) {

@@ -3,7 +3,7 @@ import { waitUntil } from '@vercel/functions'
 import { timingSafeEqual } from 'crypto'
 import { processAllPendingMeetings } from '@/lib/intelligence/meeting-processor'
 import { sendMeetingNotification } from '@/lib/intelligence/meeting-notification'
-import { logCronRun } from '@/lib/observability/cron-logger'
+import { logCronRun, type ExecutionStep } from '@/lib/observability/cron-logger'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -50,6 +50,17 @@ async function runMeetingSummarizeBackground() {
       `${succeeded} succeeded, ${failed} failed`
     )
 
+    // Build execution steps from processing results
+    const steps: ExecutionStep[] = results.map((r) => ({
+      ts: new Date().toISOString(),
+      type: 'llm_call' as const,
+      name: 'meeting-summarize',
+      status: r.status === 'completed' ? ('ok' as const) : ('error' as const),
+      duration_ms: r.durationMs,
+      output: r.summary?.tldr?.slice(0, 300),
+      error: r.error?.slice(0, 300),
+    }))
+
     // 2. Send Slack notifications for completed meetings
     let notified = 0
     for (const result of results) {
@@ -69,6 +80,7 @@ async function runMeetingSummarizeBackground() {
     return {
       summary: `Processed ${processed} meetings: ${succeeded} succeeded, ${failed} failed, ${notified} notified`,
       metrics: { processed, succeeded, failed, notified },
+      steps,
     }
   })
 }

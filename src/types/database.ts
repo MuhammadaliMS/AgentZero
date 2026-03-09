@@ -2997,6 +2997,7 @@ export type Database = {
           org_id: string
           output_summary: string | null
           status: string
+          steps: Json | null
           tokens_used: Json | null
           trigger: string | null
           worker: string
@@ -3015,6 +3016,7 @@ export type Database = {
           org_id: string
           output_summary?: string | null
           status?: string
+          steps?: Json | null
           tokens_used?: Json | null
           trigger?: string | null
           worker: string
@@ -3033,6 +3035,7 @@ export type Database = {
           org_id?: string
           output_summary?: string | null
           status?: string
+          steps?: Json | null
           tokens_used?: Json | null
           trigger?: string | null
           worker?: string

@@ -13,7 +13,7 @@ import {
   getYesterdayMetrics,
 } from '@/lib/intelligence/brief-synthesizer'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
-import { logCronRun } from '@/lib/observability/cron-logger'
+import { logCronRun, type ExecutionStep } from '@/lib/observability/cron-logger'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -58,6 +58,7 @@ async function runEodWrapBackground() {
     const admin = createAdminClient()
     let sent = 0
     let skipped = 0
+    const allSteps: ExecutionStep[] = []
 
     // Only send to users who connected Slack (one per org)
     const { data: slackIntegrations } = await admin
@@ -121,6 +122,7 @@ async function runEodWrapBackground() {
         const briefMetrics = extractMetrics(workerViews)
 
         let fullResponse = ''
+        const agentSteps: ExecutionStep[] = []
         const agentStream = runCaptainWithSDK({
           orgId: profile.org_id,
           userId: profile.id,
@@ -132,7 +134,28 @@ async function runEodWrapBackground() {
           if (event.type === 'text' && event.content) {
             fullResponse += event.content
           }
+          if (event.type === 'tool_use' && event.toolName) {
+            agentSteps.push({
+              ts: new Date().toISOString(),
+              type: 'tool_call',
+              name: event.toolDisplayName || event.toolName,
+              input: event.toolInput ? JSON.stringify(event.toolInput).slice(0, 200) : undefined,
+            })
+          }
+          if (event.type === 'tool_result' && event.toolName) {
+            agentSteps.push({
+              ts: new Date().toISOString(),
+              type: 'tool_result',
+              name: event.toolName,
+              status: 'ok',
+              duration_ms: (event as any).durationMs,
+              output: typeof event.content === 'string' ? event.content.slice(0, 300) : undefined,
+            })
+          }
         }
+
+        // Collect steps from this profile's agent run
+        allSteps.push(...agentSteps)
 
         if (!fullResponse) continue
 
@@ -206,6 +229,6 @@ async function runEodWrapBackground() {
       }
     }
 
-    return { summary: `Sent ${sent} EOD wraps, skipped ${skipped} (already sent)` }
+    return { summary: `Sent ${sent} EOD wraps, skipped ${skipped} (already sent)`, steps: allSteps }
   })
 }

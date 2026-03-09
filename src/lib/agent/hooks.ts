@@ -1,5 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { formatToolDisplayName } from './tool-metadata'
+import type { Json } from '@/types/database'
+import type { ExecutionStep } from '@/lib/observability/cron-logger'
 
 // Minimal event shape for SSE emission — avoids circular dependency with orchestrator.ts.
 // The full StreamEvent type is defined in orchestrator.ts; this subset covers what hooks need.
@@ -70,6 +72,7 @@ export async function completeWorkerExecution(
     tokens_used?: { input: number; output: number }
     cost_usd?: number
     error?: string
+    steps?: ExecutionStep[]
   }
 ) {
   const supabase = getSupabase()
@@ -83,6 +86,9 @@ export async function completeWorkerExecution(
       cost_usd: update.cost_usd || null,
       error: update.error || null,
       completed_at: new Date().toISOString(),
+      steps: update.steps?.length
+        ? (update.steps as unknown as Json)
+        : null,
     })
     .eq('id', executionId)
 

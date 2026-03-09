@@ -13,7 +13,7 @@ import {
   getYesterdayMetrics,
 } from '@/lib/intelligence/brief-synthesizer'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
-import { logCronRun } from '@/lib/observability/cron-logger'
+import { logCronRun, type ExecutionStep } from '@/lib/observability/cron-logger'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -58,6 +58,7 @@ async function runMorningBriefBackground() {
     const admin = createAdminClient()
     let sent = 0
     let skipped = 0
+    const allSteps: ExecutionStep[] = []
 
     // Only send to users who connected Slack (one per org)
     const { data: slackIntegrations } = await admin
@@ -122,6 +123,7 @@ async function runMorningBriefBackground() {
         const briefMetrics = extractMetrics(workerViews)
 
         let fullResponse = ''
+        const agentSteps: ExecutionStep[] = []
         try {
           const agentStream = runCaptainWithSDK({
             orgId: profile.org_id,
@@ -134,6 +136,24 @@ async function runMorningBriefBackground() {
             if (event.type === 'text' && event.content) {
               fullResponse += event.content
             }
+            if (event.type === 'tool_use' && event.toolName) {
+              agentSteps.push({
+                ts: new Date().toISOString(),
+                type: 'tool_call',
+                name: event.toolDisplayName || event.toolName,
+                input: event.toolInput ? JSON.stringify(event.toolInput).slice(0, 200) : undefined,
+              })
+            }
+            if (event.type === 'tool_result' && event.toolName) {
+              agentSteps.push({
+                ts: new Date().toISOString(),
+                type: 'tool_result',
+                name: event.toolName,
+                status: 'ok',
+                duration_ms: (event as any).durationMs,
+                output: typeof event.content === 'string' ? event.content.slice(0, 300) : undefined,
+              })
+            }
             if (event.type === 'error' && event.content) {
               console.error(`[morning-brief] Captain error event for ${profile.id}: ${event.content}`)
             }
@@ -141,6 +161,9 @@ async function runMorningBriefBackground() {
         } catch (agentErr) {
           console.error(`[morning-brief] Captain threw for ${profile.id}:`, agentErr)
         }
+
+        // Collect steps from this profile's agent run
+        allSteps.push(...agentSteps)
 
         if (!fullResponse) continue
 
@@ -214,6 +237,6 @@ async function runMorningBriefBackground() {
       }
     }
 
-    return { summary: `Sent ${sent} morning briefs, skipped ${skipped} (already sent)` }
+    return { summary: `Sent ${sent} morning briefs, skipped ${skipped} (already sent)`, steps: allSteps }
   })
 }

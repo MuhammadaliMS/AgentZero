@@ -110,7 +110,7 @@ export function AIActivityView() {
         // Cron runs (today) from worker_executions
         supabase
           .from('worker_executions')
-          .select('id, worker, trigger, status, created_at, completed_at, duration_ms, output_summary, error, cost_usd')
+          .select('id, worker, trigger, status, created_at, completed_at, duration_ms, output_summary, error, cost_usd, steps')
           .eq('trigger', 'cron')
           .gte('created_at', todayISO)
           .order('created_at', { ascending: false })

@@ -4,9 +4,23 @@ import { useState } from 'react'
 import {
   RefreshCw, Sun, Moon, MessageSquare, Calendar, CalendarSync,
   Bell, Cog, GraduationCap, CheckCircle2, XCircle, Loader2, Clock,
-  ChevronDown, ChevronRight, Timer, AlertTriangle
+  ChevronDown, ChevronRight, Timer, AlertTriangle, Wrench, Bot, BrainCircuit,
+  Layers
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+
+/** Per-step activity shape (matches ExecutionStep from cron-logger) */
+export interface StepEntry {
+  ts: string
+  type: 'tool_call' | 'tool_result' | 'sub_agent_start' | 'sub_agent_end' | 'llm_call'
+  name: string
+  status?: 'ok' | 'error'
+  duration_ms?: number
+  input?: string
+  output?: string
+  error?: string
+  tokens?: { in: number; out: number }
+}
 
 export interface CronRunEntry {
   id: string
@@ -19,6 +33,7 @@ export interface CronRunEntry {
   output_summary: string | null
   error: string | null
   cost_usd: number | null
+  steps: StepEntry[] | null
 }
 
 /** Maps worker names to display metadata */
@@ -104,7 +119,35 @@ function StatusIcon({ status }: { status: string }) {
   }
 }
 
-function formatDuration(ms: number | null): string {
+function StepIcon({ type }: { type: StepEntry['type'] }) {
+  switch (type) {
+    case 'tool_call':
+      return <Wrench className="h-3 w-3 text-blue-500 shrink-0" />
+    case 'tool_result':
+      return <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" />
+    case 'sub_agent_start':
+      return <Bot className="h-3 w-3 text-violet-500 shrink-0" />
+    case 'sub_agent_end':
+      return <Bot className="h-3 w-3 text-violet-400 shrink-0" />
+    case 'llm_call':
+      return <BrainCircuit className="h-3 w-3 text-amber-500 shrink-0" />
+    default:
+      return <Cog className="h-3 w-3 text-muted-foreground shrink-0" />
+  }
+}
+
+function stepLabel(type: StepEntry['type']): string {
+  switch (type) {
+    case 'tool_call': return 'Tool Call'
+    case 'tool_result': return 'Tool Result'
+    case 'sub_agent_start': return 'Agent Start'
+    case 'sub_agent_end': return 'Agent Done'
+    case 'llm_call': return 'LLM Call'
+    default: return type
+  }
+}
+
+function formatDuration(ms: number | null | undefined): string {
   if (ms == null) return '—'
   if (ms < 1000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
@@ -113,6 +156,10 @@ function formatDuration(ms: number | null): string {
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
+function formatStepTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 function timeAgo(iso: string): string {
@@ -125,8 +172,76 @@ function timeAgo(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`
 }
 
+/** Renders a mini-timeline of execution steps for a single run */
+function StepTimeline({ steps }: { steps: StepEntry[] }) {
+  const [showAll, setShowAll] = useState(false)
+  const displayed = showAll ? steps : steps.slice(0, 10)
+
+  return (
+    <div className="mt-2 ml-2 border-l-2 border-border/40 pl-3 space-y-1">
+      {displayed.map((step, i) => (
+        <div key={i} className="flex items-start gap-1.5 py-0.5">
+          <StepIcon type={step.type} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[9px] font-medium text-muted-foreground uppercase tracking-wider">
+                {stepLabel(step.type)}
+              </span>
+              <span className="text-[10px] font-mono text-foreground/80 truncate max-w-[180px]">
+                {step.name}
+              </span>
+              {step.status && (
+                <span className={`text-[9px] font-medium ${step.status === 'ok' ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {step.status === 'ok' ? '✓' : '✗'}
+                </span>
+              )}
+              {step.duration_ms != null && (
+                <span className="text-[9px] text-muted-foreground">
+                  {formatDuration(step.duration_ms)}
+                </span>
+              )}
+              {step.tokens && (
+                <span className="text-[9px] text-muted-foreground">
+                  {step.tokens.in + step.tokens.out} tok
+                </span>
+              )}
+              <span className="text-[9px] text-muted-foreground/50 font-mono">
+                {formatStepTime(step.ts)}
+              </span>
+            </div>
+            {step.input && step.type === 'tool_call' && (
+              <p className="text-[9px] text-muted-foreground/70 mt-0.5 line-clamp-1 font-mono">
+                {step.input}
+              </p>
+            )}
+            {step.output && step.type === 'tool_result' && (
+              <p className="text-[9px] text-muted-foreground/70 mt-0.5 line-clamp-1">
+                {step.output}
+              </p>
+            )}
+            {step.error && (
+              <p className="text-[9px] text-red-400 mt-0.5 line-clamp-1">
+                {step.error}
+              </p>
+            )}
+          </div>
+        </div>
+      ))}
+      {steps.length > 10 && !showAll && (
+        <button
+          onClick={() => setShowAll(true)}
+          className="text-[10px] text-blue-500 hover:text-blue-400 ml-4 cursor-pointer"
+        >
+          Show {steps.length - 10} more steps...
+        </button>
+      )}
+    </div>
+  )
+}
+
 function CronWorkerRow({ worker, runs }: { worker: string; runs: CronRunEntry[] }) {
   const [expanded, setExpanded] = useState(false)
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null)
   const config = CRON_CONFIG[worker] || {
     label: worker,
     icon: Cog,
@@ -216,38 +331,67 @@ function CronWorkerRow({ worker, runs }: { worker: string; runs: CronRunEntry[] 
           {runs.length === 0 ? (
             <p className="text-xs text-muted-foreground italic text-center py-2">No runs today</p>
           ) : (
-            runs.slice(0, 20).map((run) => (
-              <div key={run.id} className="flex items-start gap-2 py-1.5">
-                <StatusIcon status={run.status} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-muted-foreground font-mono">
-                      {formatTime(run.created_at)}
-                    </span>
-                    {run.duration_ms != null && (
-                      <span className="text-[10px] text-muted-foreground">
-                        {formatDuration(run.duration_ms)}
-                      </span>
-                    )}
-                    {run.cost_usd != null && run.cost_usd > 0 && (
-                      <span className="text-[10px] text-muted-foreground">
-                        ${run.cost_usd.toFixed(4)}
-                      </span>
-                    )}
+            runs.slice(0, 20).map((run) => {
+              const stepCount = run.steps?.length ?? 0
+              const isRunExpanded = expandedRunId === run.id
+
+              return (
+                <div key={run.id} className="py-1.5">
+                  <div className="flex items-start gap-2">
+                    <StatusIcon status={run.status} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {formatTime(run.created_at)}
+                        </span>
+                        {run.duration_ms != null && (
+                          <span className="text-[10px] text-muted-foreground">
+                            {formatDuration(run.duration_ms)}
+                          </span>
+                        )}
+                        {run.cost_usd != null && run.cost_usd > 0 && (
+                          <span className="text-[10px] text-muted-foreground">
+                            ${run.cost_usd.toFixed(4)}
+                          </span>
+                        )}
+                        {stepCount > 0 && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setExpandedRunId(isRunExpanded ? null : run.id)
+                            }}
+                            className="flex items-center gap-0.5 text-[10px] text-blue-500 hover:text-blue-400 cursor-pointer"
+                          >
+                            <Layers className="h-2.5 w-2.5" />
+                            {stepCount} steps
+                            {isRunExpanded ? (
+                              <ChevronDown className="h-2.5 w-2.5" />
+                            ) : (
+                              <ChevronRight className="h-2.5 w-2.5" />
+                            )}
+                          </button>
+                        )}
+                      </div>
+                      {run.output_summary && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2">
+                          {run.output_summary}
+                        </p>
+                      )}
+                      {run.error && (
+                        <p className="text-[10px] text-red-500 mt-0.5 line-clamp-2">
+                          {run.error}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  {run.output_summary && (
-                    <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2">
-                      {run.output_summary}
-                    </p>
-                  )}
-                  {run.error && (
-                    <p className="text-[10px] text-red-500 mt-0.5 line-clamp-2">
-                      {run.error}
-                    </p>
+
+                  {/* Step timeline */}
+                  {isRunExpanded && run.steps && run.steps.length > 0 && (
+                    <StepTimeline steps={run.steps} />
                   )}
                 </div>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       )}

@@ -55,6 +55,9 @@ import { sendBlockerDM } from '@/lib/intelligence/nudge-engine'
 // Worker execution logging
 import { logWorkerExecution, completeWorkerExecution } from '@/lib/agent/hooks'
 
+// Step-level observability for cron agent runs
+import { StepCollector } from '@/lib/observability/cron-logger'
+
 // Integration access
 import { TokenManager } from '@/lib/integrations/token-manager'
 import { WebClient } from '@slack/web-api'
@@ -199,6 +202,9 @@ export async function runChiefLoopForOrg(
     status: 'running',
   })
 
+  // Step-level activity collector for agent observability
+  const stepCollector = new StepCollector()
+
   // Hoist for carry-forward generation in closeout and reflect phase
   let gatherResult: GatherResult | null = null
   let thinkDecisions: ChiefDecision[] = []
@@ -226,7 +232,7 @@ export async function runChiefLoopForOrg(
     // ═════════════════════════════════════════════════════════════════════
     // Phase C: THINK — LLM agent analyzes everything
     // ═════════════════════════════════════════════════════════════════════
-    const thinkResult = await phaseThink(supabase, orgId, now, gatherResult, previousCarryForward)
+    const thinkResult = await phaseThink(supabase, orgId, now, gatherResult, previousCarryForward, stepCollector)
     result.phases.think = { durationMs: thinkResult.durationMs }
     if (thinkResult.error) result.phases.think.error = thinkResult.error
     result.costUsd += thinkResult.costUsd
@@ -250,7 +256,7 @@ export async function runChiefLoopForOrg(
     // ═════════════════════════════════════════════════════════════════════
     if (thinkDecisions.length > 0 && gatherResult) {
       const reflectResult = await phaseReflect(
-        supabase, orgId, thinkDecisions, gatherResult, previousCarryForward
+        supabase, orgId, thinkDecisions, gatherResult, previousCarryForward, stepCollector
       ).catch(e => {
         console.error('[ChiefLoop] reflect error:', e)
         return { durationMs: 0, memoriesStored: 0, error: (e as Error).message } as ReflectResult
@@ -321,6 +327,7 @@ export async function runChiefLoopForOrg(
         output_summary: `signals=${result.signalsGathered} replans=${result.replans} outcomes=${result.newOutcomes} steps=${result.stepsExecuted} blockers=${result.blockersEscalated} graph=${result.graphUpdates} deferred=${result.deferredItems}`,
         duration_ms: result.durationMs,
         cost_usd: result.costUsd,
+        steps: stepCollector.length > 0 ? stepCollector.toJSON() : undefined,
       })
     }
   } catch (error) {
@@ -1118,7 +1125,8 @@ async function phaseThink(
   orgId: string,
   now: Date,
   gather: GatherResult,
-  previousCarryForward?: string | null
+  previousCarryForward?: string | null,
+  collector?: StepCollector
 ): Promise<ThinkResult> {
   const startTime = Date.now()
   const r: ThinkResult = { durationMs: 0, decisions: [], costUsd: 0 }
@@ -1169,7 +1177,7 @@ async function phaseThink(
     try {
       const { runSubAgents } = await import('@/lib/agent/openai/chief-sub-agents')
       agentResult = await Promise.race([
-        runSubAgents(input),
+        runSubAgents(input, collector),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error(`Sub-agents timed out after ${AGENT_TIMEOUT_MS / 1000}s`)), AGENT_TIMEOUT_MS)
         ),
@@ -2435,7 +2443,8 @@ async function phaseReflect(
   orgId: string,
   decisions: ChiefDecision[],
   gatherResult: GatherResult,
-  previousCarryForward: string | null
+  previousCarryForward: string | null,
+  collector?: StepCollector
 ): Promise<ReflectResult> {
   const startTime = Date.now()
 
@@ -2455,7 +2464,7 @@ async function phaseReflect(
     }
 
     const reflectResult = await Promise.race([
-      runReflectionAgent(orgId, reflectInput),
+      runReflectionAgent(orgId, reflectInput, collector),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Reflection timed out (30s)')), 30_000)
       ),

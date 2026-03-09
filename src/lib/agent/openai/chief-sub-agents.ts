@@ -20,9 +20,11 @@ import { z } from 'zod'
 import {
   createChiefAnalystTools,
   getChiefAnalystProvider,
+  wrapToolsWithStepCollector,
   type ChiefAnalystInput,
   type ChiefDecision,
 } from './chief-analyst-agent'
+import type { StepCollector } from '@/lib/observability/cron-logger'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -551,7 +553,7 @@ function buildReflectionPrompt(input: ReflectInput): string {
 
 // ─── Main Orchestrator ────────────────────────────────────────────────────
 
-export async function runSubAgents(input: ChiefAnalystInput): Promise<SubAgentResult> {
+export async function runSubAgents(input: ChiefAnalystInput, collector?: StepCollector): Promise<SubAgentResult> {
   const startTime = Date.now()
   const model = process.env.CHIEF_ANALYST_MODEL || DEFAULT_MODEL
   const provider = getChiefAnalystProvider()
@@ -593,7 +595,9 @@ export async function runSubAgents(input: ChiefAnalystInput): Promise<SubAgentRe
     },
   })
 
-  const triageTools = [...pickTools(allTools, TRIAGE_TOOL_NAMES), classifySignalTool]
+  // Wrap tools with step collector if provided
+  const rawTriageTools = [...pickTools(allTools, TRIAGE_TOOL_NAMES), classifySignalTool]
+  const triageTools = collector ? wrapToolsWithStepCollector(rawTriageTools, collector) : rawTriageTools
   const triageAgent = new Agent({
     name: 'Triage Specialist',
     instructions: buildTriagePrompt(input),
@@ -602,6 +606,8 @@ export async function runSubAgents(input: ChiefAnalystInput): Promise<SubAgentRe
   })
 
   console.log('[SubAgents:triage] Starting triage...')
+  collector?.subAgentStart('Triage Specialist')
+  const triageStart = Date.now()
   const triageResult = await Promise.race([
     runner.run(triageAgent, 'Classify all incoming signals. Use classify_signal for each one. Dismiss noise and defer non-urgent items.', { maxTurns: 10 }),
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Triage timed out (30s)')), 30_000)),
@@ -611,6 +617,7 @@ export async function runSubAgents(input: ChiefAnalystInput): Promise<SubAgentRe
   totalInputTokens += triageUsage.input
   totalOutputTokens += triageUsage.output
   totalTurns += extractTurns(triageResult)
+  collector?.subAgentEnd('Triage Specialist', Date.now() - triageStart, 'ok', { in: triageUsage.input, out: triageUsage.output })
 
   console.log(`[SubAgents:triage] Done: ${classifications.length} classifications, ${decisions.length} decisions (dismiss/defer)`)
 
@@ -636,8 +643,11 @@ export async function runSubAgents(input: ChiefAnalystInput): Promise<SubAgentRe
 
   if (needsAnalysis.length > 0) {
     console.log(`[SubAgents:analysis] Starting analysis for ${needsAnalysis.length} signals...`)
+    collector?.subAgentStart('Analysis Specialist')
+    const analysisStart = Date.now()
     try {
-      const analysisTools = pickTools(allTools, ANALYSIS_TOOL_NAMES)
+      const rawAnalysisTools = pickTools(allTools, ANALYSIS_TOOL_NAMES)
+      const analysisTools = collector ? wrapToolsWithStepCollector(rawAnalysisTools, collector) : rawAnalysisTools
       const analysisAgent = new Agent({
         name: 'Analysis Specialist',
         instructions: buildAnalysisPrompt(input, needsAnalysis),
@@ -654,9 +664,11 @@ export async function runSubAgents(input: ChiefAnalystInput): Promise<SubAgentRe
       totalInputTokens += analysisUsage.input
       totalOutputTokens += analysisUsage.output
       totalTurns += extractTurns(analysisResult)
+      collector?.subAgentEnd('Analysis Specialist', Date.now() - analysisStart, 'ok', { in: analysisUsage.input, out: analysisUsage.output })
 
       console.log(`[SubAgents:analysis] Done: ${decisions.length} total decisions`)
     } catch (err) {
+      collector?.subAgentEnd('Analysis Specialist', Date.now() - analysisStart, 'error')
       console.error('[SubAgents:analysis] Error:', err)
     }
   }
@@ -665,8 +677,11 @@ export async function runSubAgents(input: ChiefAnalystInput): Promise<SubAgentRe
 
   if (needsAction.length > 0) {
     console.log(`[SubAgents:execution] Starting execution planning for ${needsAction.length} signals...`)
+    collector?.subAgentStart('Execution Planner')
+    const execStart = Date.now()
     try {
-      const executionTools = pickTools(allTools, EXECUTION_TOOL_NAMES)
+      const rawExecutionTools = pickTools(allTools, EXECUTION_TOOL_NAMES)
+      const executionTools = collector ? wrapToolsWithStepCollector(rawExecutionTools, collector) : rawExecutionTools
       const executionAgent = new Agent({
         name: 'Execution Planner',
         instructions: buildExecutionPrompt(input, needsAction),
@@ -683,9 +698,11 @@ export async function runSubAgents(input: ChiefAnalystInput): Promise<SubAgentRe
       totalInputTokens += executionUsage.input
       totalOutputTokens += executionUsage.output
       totalTurns += extractTurns(executionResult)
+      collector?.subAgentEnd('Execution Planner', Date.now() - execStart, 'ok', { in: executionUsage.input, out: executionUsage.output })
 
       console.log(`[SubAgents:execution] Done: ${decisions.length} total decisions`)
     } catch (err) {
+      collector?.subAgentEnd('Execution Planner', Date.now() - execStart, 'error')
       console.error('[SubAgents:execution] Error:', err)
     }
   }
@@ -694,8 +711,11 @@ export async function runSubAgents(input: ChiefAnalystInput): Promise<SubAgentRe
 
   if (needsGraph.length > 0) {
     console.log(`[SubAgents:graph] Starting graph curation for ${needsGraph.length} signals...`)
+    collector?.subAgentStart('Graph Curator')
+    const graphStart = Date.now()
     try {
-      const graphTools = pickTools(allTools, GRAPH_TOOL_NAMES)
+      const rawGraphTools = pickTools(allTools, GRAPH_TOOL_NAMES)
+      const graphTools = collector ? wrapToolsWithStepCollector(rawGraphTools, collector) : rawGraphTools
       const graphAgent = new Agent({
         name: 'Graph Curator',
         instructions: buildGraphPrompt(input, needsGraph),
@@ -712,9 +732,11 @@ export async function runSubAgents(input: ChiefAnalystInput): Promise<SubAgentRe
       totalInputTokens += graphUsage.input
       totalOutputTokens += graphUsage.output
       totalTurns += extractTurns(graphResult)
+      collector?.subAgentEnd('Graph Curator', Date.now() - graphStart, 'ok', { in: graphUsage.input, out: graphUsage.output })
 
       console.log(`[SubAgents:graph] Done: ${decisions.length} total decisions`)
     } catch (err) {
+      collector?.subAgentEnd('Graph Curator', Date.now() - graphStart, 'error')
       console.error('[SubAgents:graph] Error:', err)
     }
   }
@@ -735,7 +757,8 @@ export async function runSubAgents(input: ChiefAnalystInput): Promise<SubAgentRe
 
 export async function runReflectionAgent(
   orgId: string,
-  input: ReflectInput
+  input: ReflectInput,
+  collector?: StepCollector
 ): Promise<ReflectResult> {
   const startTime = Date.now()
   const model = process.env.CHIEF_ANALYST_MODEL || DEFAULT_MODEL
@@ -773,9 +796,11 @@ export async function runReflectionAgent(
   const runner = new Runner({ modelProvider: provider })
 
   console.log('[SubAgents:reflect] Starting reflection...')
+  collector?.subAgentStart('Reflector')
   await runner.run(agent, 'Reflect on the decisions made this run. Identify and store reusable patterns.', { maxTurns: 5 })
 
   const durationMs = Date.now() - startTime
+  collector?.subAgentEnd('Reflector', durationMs, 'ok')
   console.log(`[SubAgents:reflect] Done: ${newProceduralMemories.length} new procedural memories, ${durationMs}ms`)
 
   return { newProceduralMemories, durationMs }

@@ -6,6 +6,7 @@
  *   - Output summary & error messages
  *   - Cost (if applicable)
  *   - Tokens used (if applicable)
+ *   - Per-step agent activity (tool calls, sub-agent runs, LLM calls)
  *
  * Writes to the `worker_executions` table for unified visibility
  * alongside chat workers and chief-loop runs.
@@ -13,6 +14,135 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { Json } from '@/types/database'
+
+// ─── Per-Step Activity Logging ──────────────────────────────────────────
+
+/** A single step recorded during agent execution within a cron. */
+export interface ExecutionStep {
+  /** ISO timestamp */
+  ts: string
+  /** Step type */
+  type: 'tool_call' | 'tool_result' | 'sub_agent_start' | 'sub_agent_end' | 'llm_call'
+  /** Tool name or sub-agent name */
+  name: string
+  /** Outcome status */
+  status?: 'ok' | 'error'
+  /** How long this step took */
+  duration_ms?: number
+  /** Truncated input/args summary */
+  input?: string
+  /** Truncated result summary */
+  output?: string
+  /** Error message if failed */
+  error?: string
+  /** Token usage for LLM steps */
+  tokens?: { in: number; out: number }
+}
+
+/**
+ * Collects execution steps during a cron agent run.
+ * Thread-safe accumulator with a hard cap to prevent JSONB bloat.
+ */
+export class StepCollector {
+  private steps: ExecutionStep[] = []
+  private readonly maxSteps: number
+
+  constructor(maxSteps = 200) {
+    this.maxSteps = maxSteps
+  }
+
+  /** Add a raw step. */
+  add(step: ExecutionStep): void {
+    if (this.steps.length < this.maxSteps) {
+      this.steps.push(step)
+    }
+  }
+
+  /** Record a tool call start. */
+  toolCall(name: string, input?: Record<string, unknown>): void {
+    this.add({
+      ts: new Date().toISOString(),
+      type: 'tool_call',
+      name,
+      input: input ? JSON.stringify(input).slice(0, 200) : undefined,
+    })
+  }
+
+  /** Record a tool call result. */
+  toolResult(
+    name: string,
+    status: 'ok' | 'error',
+    durationMs: number,
+    output?: string,
+    error?: string
+  ): void {
+    this.add({
+      ts: new Date().toISOString(),
+      type: 'tool_result',
+      name,
+      status,
+      duration_ms: durationMs,
+      output: output?.slice(0, 300),
+      error: error?.slice(0, 300),
+    })
+  }
+
+  /** Record a sub-agent starting. */
+  subAgentStart(name: string): void {
+    this.add({
+      ts: new Date().toISOString(),
+      type: 'sub_agent_start',
+      name,
+    })
+  }
+
+  /** Record a sub-agent finishing. */
+  subAgentEnd(
+    name: string,
+    durationMs: number,
+    status: 'ok' | 'error' = 'ok',
+    tokens?: { in: number; out: number }
+  ): void {
+    this.add({
+      ts: new Date().toISOString(),
+      type: 'sub_agent_end',
+      name,
+      status,
+      duration_ms: durationMs,
+      tokens,
+    })
+  }
+
+  /** Record a direct LLM call. */
+  llmCall(
+    name: string,
+    durationMs: number,
+    tokens?: { in: number; out: number },
+    output?: string
+  ): void {
+    this.add({
+      ts: new Date().toISOString(),
+      type: 'llm_call',
+      name,
+      status: 'ok',
+      duration_ms: durationMs,
+      tokens,
+      output: output?.slice(0, 300),
+    })
+  }
+
+  /** Get the collected steps for storage. */
+  toJSON(): ExecutionStep[] {
+    return this.steps
+  }
+
+  /** Number of steps collected so far. */
+  get length(): number {
+    return this.steps.length
+  }
+}
+
+// ─── Cron Run Result & Options ──────────────────────────────────────────
 
 export interface CronRunResult {
   /** Human-readable summary of what happened */
@@ -23,6 +153,8 @@ export interface CronRunResult {
   costUsd?: number
   /** Optional token usage */
   tokensUsed?: Record<string, number>
+  /** Optional per-step agent activity */
+  steps?: ExecutionStep[]
 }
 
 export interface CronLogOptions {
@@ -39,17 +171,9 @@ export interface CronLogOptions {
  *
  * Usage:
  * ```ts
- * await logCronRun({ worker: 'eod-wrap' }, async (log) => {
+ * await logCronRun({ worker: 'eod-wrap' }, async () => {
  *   // ... do work ...
- *   return { summary: 'Sent 3 EOD wraps' }
- * })
- * ```
- *
- * For per-org crons that iterate multiple orgs, use `logCronRunMultiOrg`:
- * ```ts
- * await logCronRunMultiOrg('meeting-sync', orgIds, async (orgId) => {
- *   // ... do work for this org ...
- *   return { summary: '5 meetings synced' }
+ *   return { summary: 'Sent 3 EOD wraps', steps: collector.toJSON() }
  * })
  * ```
  */
@@ -91,6 +215,9 @@ export async function logCronRun(
           cost_usd: result.costUsd ?? null,
           tokens_used: result.tokensUsed
             ? (result.tokensUsed as unknown as Json)
+            : null,
+          steps: result.steps?.length
+            ? (result.steps as unknown as Json)
             : null,
         })
         .eq('id', executionId)
@@ -165,6 +292,9 @@ export async function logCronRunMultiOrg(
           cost_usd: result.costUsd ?? null,
           tokens_used: result.tokensUsed
             ? (result.tokensUsed as unknown as Json)
+            : null,
+          steps: result.steps?.length
+            ? (result.steps as unknown as Json)
             : null,
         })
         summaries.push(`${orgId.slice(0, 8)}: ${result.summary}`)

@@ -228,8 +228,8 @@ export function createChiefAnalystTools(orgId: string) {
     name: 'read_recent_emails',
     description: 'Fetch recent emails from the user\'s Gmail inbox. Use this to get additional emails beyond what was provided in the initial context, or to search for specific emails using a Gmail query.',
     parameters: z.object({
-      max_results: z.number().optional().default(10),
-      query: z.string().optional().describe('Gmail search query'),
+      max_results: z.number().nullable().default(10),
+      query: z.string().nullable().describe('Gmail search query'),
     }),
     execute: async (args) => {
       const gmailTokens = await TokenManager.getTokens(orgId, 'gmail')
@@ -237,7 +237,7 @@ export function createChiefAnalystTools(orgId: string) {
       try {
         const q = args.query || 'newer_than:1d'
         const listRes = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${args.max_results}&q=${encodeURIComponent(q)}`,
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${args.max_results ?? 10}&q=${encodeURIComponent(q)}`,
           { headers: { Authorization: `Bearer ${gmailTokens.access_token}` } }
         )
         const listData = (await listRes.json()) as { messages?: Array<{ id: string }>; error?: { message: string } }
@@ -245,7 +245,7 @@ export function createChiefAnalystTools(orgId: string) {
         if (!listData.messages?.length) return 'No emails found matching query.'
 
         const emails = await Promise.all(
-          listData.messages.slice(0, args.max_results).map(async (msg) => {
+          listData.messages.slice(0, args.max_results ?? 10).map(async (msg) => {
             const detailRes = await fetch(
               `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date&metadataHeaders=To`,
               { headers: { Authorization: `Bearer ${gmailTokens.access_token}` } }
@@ -320,21 +320,21 @@ export function createChiefAnalystTools(orgId: string) {
     description: 'Search the user\'s Gmail inbox using a Gmail search query (e.g., "from:john subject:budget", "newer_than:3d label:important"). Returns matching emails with subject, sender, date, and snippet.',
     parameters: z.object({
       query: z.string(),
-      max_results: z.number().optional().default(10),
+      max_results: z.number().nullable().default(10),
     }),
     execute: async (args) => {
       const gmailTokens = await TokenManager.getTokens(orgId, 'gmail')
       if (!gmailTokens) return 'No email integration connected.'
       try {
         const listRes = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${args.max_results}&q=${encodeURIComponent(args.query)}`,
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${args.max_results ?? 10}&q=${encodeURIComponent(args.query)}`,
           { headers: { Authorization: `Bearer ${gmailTokens.access_token}` } }
         )
         const listData = (await listRes.json()) as { messages?: Array<{ id: string }>; error?: { message: string } }
         if (listData.error) return `Gmail error: ${listData.error.message}`
         if (!listData.messages?.length) return `No emails for: "${args.query}"`
         const emails = await Promise.all(
-          listData.messages.slice(0, args.max_results).map(async (msg) => {
+          listData.messages.slice(0, args.max_results ?? 10).map(async (msg) => {
             const detailRes = await fetch(
               `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
               { headers: { Authorization: `Bearer ${gmailTokens.access_token}` } }
@@ -356,14 +356,14 @@ export function createChiefAnalystTools(orgId: string) {
   const getSlackMentions = tool({
     name: 'get_slack_mentions',
     description: 'Get recent Slack @mentions directed at the user and unread direct messages. Use this to discover messages that need the user\'s attention or response. Searches within a configurable time window (default: 24 hours).',
-    parameters: z.object({ hours_back: z.number().optional().default(24) }),
+    parameters: z.object({ hours_back: z.number().nullable().default(24) }),
     execute: async (args) => {
       const tokens = await TokenManager.getTokens(orgId, 'slack')
       if (!tokens) return 'Slack not connected.'
       const client = new WebClient(tokens.user_access_token || tokens.access_token)
       try {
         const searchRes = await client.search.messages({
-          query: `to:me after:${Math.floor((Date.now() - args.hours_back * 3600_000) / 1000)}`,
+          query: `to:me after:${Math.floor((Date.now() - (args.hours_back ?? 24) * 3600_000) / 1000)}`,
           count: 20, sort: 'timestamp', sort_dir: 'desc',
         })
         const results = (searchRes.messages?.matches ?? []).slice(0, 15).map(m => ({
@@ -382,7 +382,7 @@ export function createChiefAnalystTools(orgId: string) {
     description: 'Search across all Slack channels and conversations using a text query. Returns matching messages with channel name, sender, text content, timestamp, and permalink. Useful for finding discussions about specific topics.',
     parameters: z.object({
       query: z.string(),
-      count: z.number().optional().default(15),
+      count: z.number().nullable().default(15),
     }),
     execute: async (args) => {
       const tokens = await TokenManager.getTokens(orgId, 'slack')
@@ -391,9 +391,9 @@ export function createChiefAnalystTools(orgId: string) {
       try {
         const searchRes = await client.search.messages({
           query: args.query,
-          count: args.count, sort: 'timestamp', sort_dir: 'desc',
+          count: args.count ?? 15, sort: 'timestamp', sort_dir: 'desc',
         })
-        const results = (searchRes.messages?.matches ?? []).slice(0, args.count).map(m => ({
+        const results = (searchRes.messages?.matches ?? []).slice(0, args.count ?? 15).map(m => ({
           channel: m.channel?.name ?? 'unknown',
           from: m.username ?? 'unknown',
           text: m.text?.substring(0, 400),
@@ -409,14 +409,14 @@ export function createChiefAnalystTools(orgId: string) {
     description: 'Read the most recent messages from a specific Slack channel by its channel ID. Use this to get context about what is being discussed in a particular channel. Returns messages with user, text content, and timestamp.',
     parameters: z.object({
       channel_id: z.string(),
-      limit: z.number().optional().default(20),
+      limit: z.number().nullable().default(20),
     }),
     execute: async (args) => {
       const tokens = await TokenManager.getTokens(orgId, 'slack')
       if (!tokens) return 'Slack not connected.'
       const client = new WebClient(tokens.user_access_token || tokens.access_token)
       try {
-        const res = await client.conversations.history({ channel: args.channel_id, limit: args.limit })
+        const res = await client.conversations.history({ channel: args.channel_id, limit: args.limit ?? 20 })
         if (!res.messages?.length) return 'No messages found.'
         const messages = res.messages.map(m => ({
           user: m.user ?? 'unknown',
@@ -434,7 +434,7 @@ export function createChiefAnalystTools(orgId: string) {
     parameters: z.object({
       channel_id: z.string(),
       thread_ts: z.string(),
-      limit: z.number().optional().default(30),
+      limit: z.number().nullable().default(30),
     }),
     execute: async (args) => {
       const tokens = await TokenManager.getTokens(orgId, 'slack')
@@ -444,7 +444,7 @@ export function createChiefAnalystTools(orgId: string) {
         const res = await client.conversations.replies({
           channel: args.channel_id,
           ts: args.thread_ts,
-          limit: args.limit,
+          limit: args.limit ?? 30,
         })
         if (!res.messages?.length) return 'No thread messages found.'
         const messages = res.messages.map(m => ({
@@ -460,11 +460,11 @@ export function createChiefAnalystTools(orgId: string) {
   const getTodayEvents = tool({
     name: 'get_today_events',
     description: 'Get calendar events for today and the next few days from the user\'s Google Calendar. Returns event summaries, start/end times, and attendee lists. Use this to understand the user\'s schedule and upcoming commitments.',
-    parameters: z.object({ days_ahead: z.number().optional().default(2) }),
+    parameters: z.object({ days_ahead: z.number().nullable().default(2) }),
     execute: async (args) => {
       const now = new Date()
       const start = new Date(now); start.setHours(0, 0, 0, 0)
-      const end = new Date(start); end.setDate(end.getDate() + args.days_ahead)
+      const end = new Date(start); end.setDate(end.getDate() + (args.days_ahead ?? 2))
       const googleTokens = await TokenManager.getTokens(orgId, 'google_calendar')
       if (googleTokens) {
         try {
@@ -492,7 +492,7 @@ export function createChiefAnalystTools(orgId: string) {
     description: 'Search the organization\'s institutional memory (stored knowledge) using a text query. Returns matching memories with subject, content, category, confidence score, and related entities. Use this to recall past decisions, context, preferences, and facts.',
     parameters: z.object({
       query: z.string(),
-      limit: z.number().optional().default(10),
+      limit: z.number().nullable().default(10),
     }),
     execute: async (args) => {
       const query = supabase
@@ -501,7 +501,7 @@ export function createChiefAnalystTools(orgId: string) {
         .eq('org_id', orgId)
         .textSearch('subject', args.query, { type: 'websearch' })
         .order('confidence', { ascending: false })
-        .limit(args.limit)
+        .limit(args.limit ?? 10)
       const { data } = await query
       if (!data?.length) {
         const { data: fallback } = await supabase
@@ -509,7 +509,7 @@ export function createChiefAnalystTools(orgId: string) {
           .select('id, subject, content, category, confidence, created_at')
           .eq('org_id', orgId)
           .or(`subject.ilike.%${args.query}%,content.ilike.%${args.query}%`)
-          .limit(args.limit)
+          .limit(args.limit ?? 10)
         return fallback?.length ? JSON.stringify(fallback, null, 2) : 'No memories found.'
       }
       return JSON.stringify(data, null, 2)
@@ -616,13 +616,13 @@ export function createChiefAnalystTools(orgId: string) {
         step_order: z.number().int().min(1).max(50),
         action_type: z.enum(['tool_call', 'llm_reasoning', 'wait_input', 'wait_approval']),
         description: z.string().max(1000),
-        tool_name: z.string().max(100).optional().describe('REQUIRED for action_type "tool_call". Must be a valid tool name.'),
-        tool_args: z.record(z.string().max(100), z.unknown()).optional(),
+        tool_name: z.string().max(100).nullable().describe('REQUIRED for action_type "tool_call". Must be a valid tool name.'),
+        tool_args: z.record(z.string().max(100), z.unknown()).nullable(),
         risk_class: z.enum(['internal', 'external']).default('internal'),
-      })).max(20).optional(),
-      removed_step_ids: z.array(z.string().uuid()).max(20).optional(),
-      risk_score: z.number().min(0).max(1).optional().describe('Risk score 0.0-1.0. Higher = more disruptive replan.'),
-      expected_outcome: z.string().max(500).optional().describe('Testable prediction: what should change after replan?'),
+      })).max(20).nullable(),
+      removed_step_ids: z.array(z.string().uuid()).max(20).nullable(),
+      risk_score: z.number().min(0).max(1).nullable().describe('Risk score 0.0-1.0. Higher = more disruptive replan.'),
+      expected_outcome: z.string().max(500).nullable().describe('Testable prediction: what should change after replan?'),
     }),
     execute: async (args) => {
       if (!args.material_changes || args.material_changes.length === 0) {
@@ -638,8 +638,8 @@ export function createChiefAnalystTools(orgId: string) {
           removedStepIds: args.removed_step_ids ?? [],
         },
         rationale: args.reason,
-        riskScore: args.risk_score,
-        expectedOutcome: args.expected_outcome,
+        riskScore: args.risk_score ?? undefined,
+        expectedOutcome: args.expected_outcome ?? undefined,
       })
       return `Decision recorded: branch replan for outcome ${args.outcome_id}. Changes: ${args.material_changes.join(', ')}`
     },
@@ -652,18 +652,18 @@ export function createChiefAnalystTools(orgId: string) {
       title: z.string().max(200),
       description: z.string().max(2000),
       priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
-      related_entity_ids: z.array(z.string().uuid()).max(20).optional(),
+      related_entity_ids: z.array(z.string().uuid()).max(20).nullable(),
       steps: z.array(z.object({
         step_order: z.number().int().min(1).max(50),
         action_type: z.enum(['tool_call', 'llm_reasoning', 'wait_input', 'wait_approval']),
         description: z.string().max(1000),
-        tool_name: z.string().max(100).optional().describe('REQUIRED for action_type "tool_call". Must be a valid tool name like recall_memory, read_recent_emails, search_emails, get_today_events, query_commitments, etc.'),
-        tool_args: z.record(z.string().max(100), z.unknown()).optional(),
-        expected_output: z.string().max(500).optional(),
+        tool_name: z.string().max(100).nullable().describe('REQUIRED for action_type "tool_call". Must be a valid tool name like recall_memory, read_recent_emails, search_emails, get_today_events, query_commitments, etc.'),
+        tool_args: z.record(z.string().max(100), z.unknown()).nullable(),
+        expected_output: z.string().max(500).nullable(),
         risk_class: z.enum(['internal', 'external']).default('internal'),
       })).max(20),
-      risk_score: z.number().min(0).max(1).optional().describe('Risk score 0.0-1.0. Higher = more impactful/irreversible outcome.'),
-      expected_outcome: z.string().max(500).optional().describe('Testable prediction: what should happen when this outcome completes?'),
+      risk_score: z.number().min(0).max(1).nullable().describe('Risk score 0.0-1.0. Higher = more impactful/irreversible outcome.'),
+      expected_outcome: z.string().max(500).nullable().describe('Testable prediction: what should happen when this outcome completes?'),
     }),
     execute: async (args) => {
       decisions.push({
@@ -676,8 +676,8 @@ export function createChiefAnalystTools(orgId: string) {
           steps: args.steps,
         },
         rationale: args.description,
-        riskScore: args.risk_score,
-        expectedOutcome: args.expected_outcome,
+        riskScore: args.risk_score ?? undefined,
+        expectedOutcome: args.expected_outcome ?? undefined,
       })
       return `Decision recorded: create outcome "${args.title}" with ${args.steps.length} steps`
     },
@@ -689,16 +689,16 @@ export function createChiefAnalystTools(orgId: string) {
     parameters: z.object({
       step_id: z.string().uuid(),
       rationale: z.string().max(1000),
-      risk_score: z.number().min(0).max(1).optional().describe('Risk score 0.0-1.0. Higher = more impactful/irreversible step.'),
-      expected_outcome: z.string().max(500).optional().describe('Testable prediction: what should happen after this step executes?'),
+      risk_score: z.number().min(0).max(1).nullable().describe('Risk score 0.0-1.0. Higher = more impactful/irreversible step.'),
+      expected_outcome: z.string().max(500).nullable().describe('Testable prediction: what should happen after this step executes?'),
     }),
     execute: async (args) => {
       decisions.push({
         type: 'execute_step',
         payload: { stepId: args.step_id },
         rationale: args.rationale,
-        riskScore: args.risk_score,
-        expectedOutcome: args.expected_outcome,
+        riskScore: args.risk_score ?? undefined,
+        expectedOutcome: args.expected_outcome ?? undefined,
       })
       return `Decision recorded: execute step ${args.step_id}`
     },
@@ -745,9 +745,9 @@ export function createChiefAnalystTools(orgId: string) {
       type: z.enum(['anomaly', 'pattern', 'stale', 'risk', 'contradiction', 'opportunity']),
       summary: z.string().max(2000),
       confidence: z.number().min(0).max(1).describe('0.0-1.0. Min 0.5 for actionable insights.'),
-      severity: z.enum(['critical', 'high', 'medium', 'low']).optional().default('medium'),
-      related_entity_ids: z.array(z.string().uuid()).max(20).optional(),
-      action_template: z.record(z.string().max(100), z.unknown()).optional(),
+      severity: z.enum(['critical', 'high', 'medium', 'low']).nullable().default('medium'),
+      related_entity_ids: z.array(z.string().uuid()).max(20).nullable(),
+      action_template: z.record(z.string().max(100), z.unknown()).nullable(),
     }),
     execute: async (args) => {
       decisions.push({
@@ -766,7 +766,7 @@ export function createChiefAnalystTools(orgId: string) {
       category: z.enum(['decision', 'context', 'preference', 'relationship', 'fact', 'task', 'meeting_outcome', 'project_status', 'blocker', 'deadline']),
       subject: z.string().max(300),
       content: z.string().max(4000),
-      entities: z.array(z.string().max(200)).max(20).optional(),
+      entities: z.array(z.string().max(200)).max(20).nullable(),
     }),
     execute: async (args) => {
       decisions.push({
@@ -786,8 +786,8 @@ export function createChiefAnalystTools(orgId: string) {
     parameters: z.object({
       name: z.string().max(200),
       entity_type: z.enum(['person', 'project', 'feature', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process', 'customer', 'metric']),
-      description: z.string().max(2000).optional(),
-      attributes: z.record(z.string().max(100), z.unknown()).optional(),
+      description: z.string().max(2000).nullable(),
+      attributes: z.record(z.string().max(100), z.unknown()).nullable(),
       rationale: z.string().max(1000),
     }),
     execute: async (args) => {
@@ -812,7 +812,7 @@ export function createChiefAnalystTools(orgId: string) {
       source_entity_id: z.string().uuid(),
       target_entity_id: z.string().uuid(),
       relationship_type: z.string().max(100),
-      properties: z.record(z.string().max(100), z.unknown()).optional(),
+      properties: z.record(z.string().max(100), z.unknown()).nullable(),
       confidence: z.number().min(0).max(1).default(0.8),
       rationale: z.string().max(1000),
     }),
@@ -837,8 +837,8 @@ export function createChiefAnalystTools(orgId: string) {
     description: 'Update the description or attributes of an existing entity in the knowledge graph. Use this when you discover new information about a known entity and want to keep the graph current.',
     parameters: z.object({
       entity_id: z.string().uuid(),
-      description: z.string().max(2000).optional(),
-      attributes: z.record(z.string().max(100), z.unknown()).optional(),
+      description: z.string().max(2000).nullable(),
+      attributes: z.record(z.string().max(100), z.unknown()).nullable(),
       rationale: z.string().max(1000),
     }),
     execute: async (args) => {
@@ -861,11 +861,11 @@ export function createChiefAnalystTools(orgId: string) {
     parameters: z.object({
       outcome_id: z.string().uuid(),
       step_id: z.string().uuid(),
-      user_id: z.string().uuid().optional().describe('Target user. Omit for default org user.'),
+      user_id: z.string().uuid().nullable().describe('Target user. Omit for default org user.'),
       one_clear_ask: z.string().max(1000),
       severity: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
-      risk_score: z.number().min(0).max(1).optional().describe('Risk score 0.0-1.0. Higher = more urgent/disruptive escalation.'),
-      expected_outcome: z.string().max(500).optional().describe('Testable prediction: what should the user do to resolve this?'),
+      risk_score: z.number().min(0).max(1).nullable().describe('Risk score 0.0-1.0. Higher = more urgent/disruptive escalation.'),
+      expected_outcome: z.string().max(500).nullable().describe('Testable prediction: what should the user do to resolve this?'),
     }),
     execute: async (args) => {
       decisions.push({
@@ -878,8 +878,8 @@ export function createChiefAnalystTools(orgId: string) {
           severity: args.severity,
         },
         rationale: args.one_clear_ask,
-        riskScore: args.risk_score,
-        expectedOutcome: args.expected_outcome,
+        riskScore: args.risk_score ?? undefined,
+        expectedOutcome: args.expected_outcome ?? undefined,
       })
       return `Decision recorded: escalate blocker for outcome ${args.outcome_id}, step ${args.step_id}`
     },

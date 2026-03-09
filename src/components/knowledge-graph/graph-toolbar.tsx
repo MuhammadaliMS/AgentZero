@@ -1,6 +1,6 @@
 'use client'
 
-import { Search, RotateCcw } from 'lucide-react'
+import { Search, RotateCcw, BarChart3, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { getEntityColor } from './entity-type-badge'
@@ -14,6 +14,8 @@ interface GraphToolbarProps {
   totalEntities: number
   totalRelationships: number
   onResetZoom: () => void
+  onToggleStats: () => void
+  statsOpen: boolean
 }
 
 export function GraphToolbar({
@@ -25,33 +27,63 @@ export function GraphToolbar({
   totalEntities,
   totalRelationships,
   onResetZoom,
+  onToggleStats,
+  statsOpen,
 }: GraphToolbarProps) {
   return (
-    <div className="flex flex-col gap-3 p-4 border-b border-border/40 bg-background/80 backdrop-blur-sm">
-      {/* Top row: search + stats + reset */}
-      <div className="flex items-center gap-3">
+    <div className="flex flex-col gap-2 p-3 m-3 rounded-xl border border-border/30 bg-background/70 backdrop-blur-xl shadow-lg">
+      {/* Top row: search + stats + actions */}
+      <div className="flex items-center gap-2">
         <div className="relative flex-1 max-w-xs">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             placeholder="Search entities..."
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="pl-8 h-8 text-sm"
+            className="pl-8 h-8 text-sm bg-background/60 border-border/30"
           />
+          {searchQuery && (
+            <button
+              onClick={() => onSearchChange('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span><span className="font-medium text-foreground">{totalEntities}</span> entities</span>
-          <span><span className="font-medium text-foreground">{totalRelationships}</span> relationships</span>
+
+        <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground px-2">
+          <span className="flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+            <span className="font-semibold text-foreground">{totalEntities}</span> entities
+          </span>
+          <span className="text-border">|</span>
+          <span className="flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/50" />
+            <span className="font-semibold text-foreground">{totalRelationships}</span> links
+          </span>
         </div>
-        <Button variant="ghost" size="sm" onClick={onResetZoom} className="h-7 px-2 text-xs gap-1">
-          <RotateCcw className="h-3 w-3" />
-          Reset
-        </Button>
+
+        <div className="flex items-center gap-1 ml-auto">
+          <Button
+            variant={statsOpen ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={onToggleStats}
+            className="h-7 px-2 text-xs gap-1"
+          >
+            <BarChart3 className="h-3 w-3" />
+            <span className="hidden sm:inline">Insights</span>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onResetZoom} className="h-7 px-2 text-xs gap-1">
+            <RotateCcw className="h-3 w-3" />
+            <span className="hidden sm:inline">Reset</span>
+          </Button>
+        </div>
       </div>
 
       {/* Filter pills */}
       {entityTypes.length > 0 && (
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap">
           {entityTypes.map((type) => {
             const color = getEntityColor(type)
             const isActive = activeFilters.has(type)
@@ -65,7 +97,7 @@ export function GraphToolbar({
                   backgroundColor: isActive ? `${color}15` : 'transparent',
                   color: isActive ? color : 'var(--muted-foreground)',
                   borderColor: isActive ? `${color}40` : 'var(--border)',
-                  opacity: isActive ? 1 : 0.6,
+                  opacity: isActive ? 1 : 0.5,
                 }}
               >
                 <span

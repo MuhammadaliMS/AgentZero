@@ -53,8 +53,11 @@ export function KnowledgeGraph() {
   // Stats panel
   const [statsOpen, setStatsOpen] = useState(false)
 
-  // Container dimensions
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
+  // Container dimensions — start with window size so first render isn't 800x600
+  const [dimensions, setDimensions] = useState(() => ({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1440,
+    height: typeof window !== 'undefined' ? window.innerHeight - 56 : 800,
+  }))
 
   // Hovered node for highlight
   const [hoveredNode, setHoveredNode] = useState<string | null>(null)
@@ -107,10 +110,10 @@ export function KnowledgeGraph() {
   }, [])
 
   // Configure d3 forces for better spread across the full canvas
-  const [graphMounted, setGraphMounted] = useState(false)
+  const forcesConfigured = useRef(false)
   useEffect(() => {
-    if (loading || graphMounted) return
-    // Wait a tick for the graph ref to be available
+    if (loading || forcesConfigured.current) return
+    // Wait a tick for the graph ref to be available after render
     const timer = setTimeout(() => {
       const fg = graphRef.current
       if (!fg) return
@@ -120,10 +123,22 @@ export function KnowledgeGraph() {
       fg.d3Force('link')?.distance(80)
       // Re-heat the simulation so the new forces take effect
       fg.d3ReheatSimulation()
-      setGraphMounted(true)
+      forcesConfigured.current = true
     }, 100)
     return () => clearTimeout(timer)
-  }, [loading, graphMounted])
+  }, [loading])
+
+  // Re-fit the graph whenever the container dimensions change
+  useEffect(() => {
+    if (loading) return
+    const fg = graphRef.current
+    if (!fg || dimensions.width === 0 || dimensions.height === 0) return
+    // Small delay so the canvas has time to resize
+    const timer = setTimeout(() => {
+      fg.zoomToFit(300, 30)
+    }, 150)
+    return () => clearTimeout(timer)
+  }, [dimensions.width, dimensions.height, loading])
 
   // Entity lookup map
   const entityMap = useMemo(() => {

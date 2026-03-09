@@ -3,6 +3,8 @@
 import { LayoutGrid, Sparkles } from 'lucide-react'
 import { DailyView } from '@/components/command-center/daily-view'
 import { StatsOverview } from '@/components/command-center/stats-overview'
+import { AIActivityView } from '@/components/command-center/ai-activity-view'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 
 export default function CommandCenterPage() {
   return (
@@ -28,13 +30,26 @@ export default function CommandCenterPage() {
         </div>
       </header>
 
-      {/* Stats + Daily View */}
-      <div className="space-y-8">
-        <StatsOverview />
-        <div className="border-t border-border/40 pt-8">
-          <DailyView />
-        </div>
-      </div>
+      {/* Tabs: Feed | AI Activity */}
+      <Tabs defaultValue="feed">
+        <TabsList variant="line" className="mb-6">
+          <TabsTrigger value="feed">Feed</TabsTrigger>
+          <TabsTrigger value="ai-activity">AI Activity</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="feed">
+          <div className="space-y-8">
+            <StatsOverview />
+            <div className="border-t border-border/40 pt-8">
+              <DailyView />
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="ai-activity">
+          <AIActivityView />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

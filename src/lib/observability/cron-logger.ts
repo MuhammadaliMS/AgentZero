@@ -223,7 +223,7 @@ export async function logCronRun(
       await supabase
         .from('worker_executions')
         .update({
-          status: 'ok',
+          status: 'completed',
           completed_at: new Date().toISOString(),
           duration_ms: durationMs,
           output_summary: result.summary,
@@ -245,7 +245,7 @@ export async function logCronRun(
       await supabase
         .from('worker_executions')
         .update({
-          status: 'error',
+          status: 'failed',
           completed_at: new Date().toISOString(),
           duration_ms: durationMs,
           error: errorMessage,
@@ -304,7 +304,7 @@ export async function logCronRunMultiOrg(
           worker,
           trigger: 'cron',
           org_id: orgId,
-          status: 'ok',
+          status: 'completed',
           completed_at: new Date().toISOString(),
           duration_ms: durationMs,
           output_summary: result.summary,
@@ -327,7 +327,7 @@ export async function logCronRunMultiOrg(
         worker,
         trigger: 'cron',
         org_id: orgId,
-        status: 'error',
+        status: 'failed',
         completed_at: new Date().toISOString(),
         duration_ms: durationMs,
         error: errorMessage,
@@ -343,7 +343,7 @@ export async function logCronRunMultiOrg(
     await supabase
       .from('worker_executions')
       .update({
-        status: failed > 0 ? 'partial' : 'ok',
+        status: failed > 0 ? 'failed' : 'completed',
         completed_at: new Date().toISOString(),
         duration_ms: Date.now() - topStartMs,
         output_summary: `Processed ${processed}/${orgIds.length} orgs (${failed} failed). ${summaries.join('; ')}`.slice(0, 2000),

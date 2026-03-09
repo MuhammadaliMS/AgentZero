@@ -107,13 +107,13 @@ const ALL_WORKERS = Object.keys(CRON_CONFIG)
 function StatusIcon({ status }: { status: string }) {
   switch (status) {
     case 'ok':
+    case 'completed':
       return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
     case 'running':
       return <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin shrink-0" />
     case 'error':
+    case 'failed':
       return <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
-    case 'partial':
-      return <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
     default:
       return <Clock className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
   }
@@ -253,7 +253,7 @@ function CronWorkerRow({ worker, runs }: { worker: string; runs: CronRunEntry[] 
   const Icon = config.icon
   const latestRun = runs[0] || null
   const runsToday = runs.length
-  const errorCount = runs.filter(r => r.status === 'error').length
+  const errorCount = runs.filter(r => r.status === 'error' || r.status === 'failed').length
   const avgDuration = runs.length > 0
     ? Math.round(runs.reduce((sum, r) => sum + (r.duration_ms ?? 0), 0) / runs.length)
     : null
@@ -418,7 +418,7 @@ export function CronMonitor({ runs }: { runs: CronRunEntry[] }) {
 
   // Count totals
   const totalRuns = runs.length
-  const totalErrors = runs.filter(r => r.status === 'error').length
+  const totalErrors = runs.filter(r => r.status === 'error' || r.status === 'failed').length
   const activeWorkers = [...runsByWorker.entries()].filter(([, r]) => r.length > 0).length
 
   return (

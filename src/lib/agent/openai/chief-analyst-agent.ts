@@ -1182,9 +1182,10 @@ const DEFAULT_CHIEF_ANALYST_MODEL = 'moonshotai/kimi-k2.5'
 
 // ─── Runner ──────────────────────────────────────────────────────────────
 
-export async function runChiefAnalyst(input: ChiefAnalystInput): Promise<ChiefAnalystResult> {
+export async function runChiefAnalyst(input: ChiefAnalystInput, collector?: StepCollector): Promise<ChiefAnalystResult> {
   const startTime = Date.now()
-  const { tools, decisions } = createChiefAnalystTools(input.orgId)
+  const { tools: rawTools, decisions } = createChiefAnalystTools(input.orgId)
+  const tools = collector ? wrapToolsWithStepCollector(rawTools, collector) : rawTools
   const prompt = buildChiefAnalystPrompt(input)
   const model = process.env.CHIEF_ANALYST_MODEL || DEFAULT_CHIEF_ANALYST_MODEL
 
@@ -1201,6 +1202,7 @@ export async function runChiefAnalyst(input: ChiefAnalystInput): Promise<ChiefAn
     modelProvider: getChiefAnalystProvider(),
   })
 
+  collector?.subAgentStart('Chief Analyst (monolithic)')
   const result = await runner.run(agent, 'Analyze all gathered data and make decisions. Use your tools to read deeper and act on what you find.', {
     maxTurns: 50,
   })
@@ -1210,12 +1212,15 @@ export async function runChiefAnalyst(input: ChiefAnalystInput): Promise<ChiefAn
     rawResponses?: unknown[]
   }
 
+  const usage = {
+    input: resultAny.usage?.inputTokens ?? 0,
+    output: resultAny.usage?.outputTokens ?? 0,
+  }
+  collector?.subAgentEnd('Chief Analyst (monolithic)', Date.now() - startTime, 'ok', { in: usage.input, out: usage.output })
+
   return {
     decisions,
-    usage: {
-      input: resultAny.usage?.inputTokens ?? 0,
-      output: resultAny.usage?.outputTokens ?? 0,
-    },
+    usage,
     turns: Array.isArray(resultAny.rawResponses) ? resultAny.rawResponses.length : 0,
     durationMs: Date.now() - startTime,
   }

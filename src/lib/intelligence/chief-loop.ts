@@ -322,9 +322,10 @@ export async function runChiefLoopForOrg(
   // Complete worker execution
   try {
     if (executionId) {
+      console.log(`[ChiefLoop] org=${orgId}: stepCollector has ${stepCollector.length} agent activity steps`)
       await completeWorkerExecution(executionId, {
         status: 'completed',
-        output_summary: `signals=${result.signalsGathered} replans=${result.replans} outcomes=${result.newOutcomes} steps=${result.stepsExecuted} blockers=${result.blockersEscalated} graph=${result.graphUpdates} deferred=${result.deferredItems}`,
+        output_summary: `signals=${result.signalsGathered} replans=${result.replans} outcomes=${result.newOutcomes} outcome_steps=${result.stepsExecuted} blockers=${result.blockersEscalated} graph=${result.graphUpdates} deferred=${result.deferredItems} agent_steps=${stepCollector.length}`,
         duration_ms: result.durationMs,
         cost_usd: result.costUsd,
         steps: stepCollector.length > 0 ? stepCollector.toJSON() : undefined,
@@ -338,7 +339,7 @@ export async function runChiefLoopForOrg(
   result.durationMs = Date.now() - startTime
 
   console.log(
-    `[ChiefLoop] org=${orgId}: signals=${result.signalsGathered} replans=${result.replans} outcomes=${result.newOutcomes} steps=${result.stepsExecuted} blockers=${result.blockersEscalated} graph=${result.graphUpdates} cost=$${result.costUsd.toFixed(4)} (${result.durationMs}ms)`
+    `[ChiefLoop] org=${orgId}: signals=${result.signalsGathered} replans=${result.replans} outcomes=${result.newOutcomes} outcome_steps=${result.stepsExecuted} blockers=${result.blockersEscalated} graph=${result.graphUpdates} agent_steps=${stepCollector.length} cost=$${result.costUsd.toFixed(4)} (${result.durationMs}ms)`
   )
 
   return result
@@ -1189,7 +1190,7 @@ async function phaseThink(
       // Fallback: original monolithic runChiefAnalyst — zero regression risk
       const { runChiefAnalyst } = await import('@/lib/agent/openai/chief-analyst-agent')
       agentResult = await Promise.race([
-        runChiefAnalyst(input),
+        runChiefAnalyst(input, collector),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error(`Chief analyst timed out after ${AGENT_TIMEOUT_MS / 1000}s`)), AGENT_TIMEOUT_MS)
         ),

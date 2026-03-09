@@ -545,7 +545,7 @@ async function phaseGather(
 
       // Worker views (zero LLM)
       gatherWorkerViews(supabase as any, orgId).catch(e => {
-        console.error('[ChiefLoop:gather] worker views error:', e)
+        console.error(`[ChiefLoop:gather] worker views error for org=${orgId}:`, e instanceof Error ? e.message : e, e instanceof Error ? e.stack : '')
         return null
       }),
 
@@ -1132,10 +1132,18 @@ async function phaseThink(
   const startTime = Date.now()
   const r: ThinkResult = { durationMs: 0, decisions: [], costUsd: 0 }
 
-  // Skip if no worker views (org not properly set up)
+  // Provide empty defaults if worker views failed (don't skip Think entirely)
+  const emptyWorkerViews: import('@/lib/intelligence/brief-synthesizer').WorkerViews = {
+    cole: { activeCount: 0, atRiskCount: 0, overdueCount: 0, completedTodayCount: 0, topDeadlines: [], pendingActionsCount: 0, oldestActionDays: null },
+    rhea: { hasVantaConnection: false, failingControlsCount: 0, topFailingControls: [], complianceFindings: 0 },
+    eve: { recentDecisions: [], keyStakeholders: [] },
+    patrol: { openFindingsCount: 0, criticalFindings: 0, byType: {}, newSinceYesterday: 0 },
+    insights: { contradictions: [], patterns: [], anomalies: [], staleItems: [], risks: [], totalActive: 0 },
+    outcomes: { active: [], totalActive: 0 },
+  }
+
   if (!gather.workerViews) {
-    r.durationMs = Date.now() - startTime
-    return r
+    console.warn(`[ChiefLoop:think] org=${orgId}: workerViews is null — using empty defaults. Agent will still run with emails/Slack/calendar data.`)
   }
 
   try {
@@ -1156,7 +1164,7 @@ async function phaseThink(
       topEntities: gather.topEntities,
       recentRelationships: gather.recentRelationships,
       recentMemories: gather.recentMemories,
-      workerViews: gather.workerViews,
+      workerViews: gather.workerViews ?? emptyWorkerViews,
       connectedIntegrations: gather.connectedIntegrations,
 
       // QW1: Carry-forward context from previous run

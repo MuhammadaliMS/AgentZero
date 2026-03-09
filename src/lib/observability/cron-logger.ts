@@ -183,22 +183,37 @@ export async function logCronRun(
 ): Promise<void> {
   const supabase = createAdminClient()
   const startMs = Date.now()
-  const orgId = opts.orgId ?? 'system'
 
-  // Insert a 'running' row
-  const { data: row } = await supabase
-    .from('worker_executions')
-    .insert({
-      worker: opts.worker,
-      trigger: opts.trigger ?? 'cron',
-      org_id: orgId,
-      status: 'running',
-      input_summary: `Cron triggered at ${new Date().toISOString()}`,
-    })
-    .select('id')
-    .single()
+  // Resolve orgId: use provided, or find first onboarded org, or skip DB logging
+  let orgId = opts.orgId ?? null
+  if (!orgId) {
+    const { data: firstOrg } = await supabase
+      .from('profiles')
+      .select('org_id')
+      .not('onboarded_at', 'is', null)
+      .limit(1)
+      .single()
+    orgId = firstOrg?.org_id ?? null
+  }
 
-  const executionId = row?.id
+  // Insert a 'running' row (skip if no valid org to attribute to)
+  let executionId: string | undefined
+  if (orgId) {
+    const { data: row } = await supabase
+      .from('worker_executions')
+      .insert({
+        worker: opts.worker,
+        trigger: opts.trigger ?? 'cron',
+        org_id: orgId,
+        status: 'running',
+        input_summary: `Cron triggered at ${new Date().toISOString()}`,
+      })
+      .select('id')
+      .single()
+    executionId = row?.id
+  } else {
+    console.warn(`[CronLogger] No valid org for worker=${opts.worker}, running without DB logging`)
+  }
 
   try {
     const result = await fn()
@@ -255,18 +270,22 @@ export async function logCronRunMultiOrg(
   const supabase = createAdminClient()
   const topStartMs = Date.now()
 
-  // Insert top-level system row
-  const { data: systemRow } = await supabase
-    .from('worker_executions')
-    .insert({
-      worker,
-      trigger: 'cron',
-      org_id: orgIds[0] ?? 'system', // Use first org or system
-      status: 'running',
-      input_summary: `Cron triggered for ${orgIds.length} orgs`,
-    })
-    .select('id')
-    .single()
+  // Insert top-level summary row (attributed to first org, skip if no orgs)
+  let systemRowId: string | undefined
+  if (orgIds.length > 0) {
+    const { data: systemRow } = await supabase
+      .from('worker_executions')
+      .insert({
+        worker,
+        trigger: 'cron',
+        org_id: orgIds[0],
+        status: 'running',
+        input_summary: `Cron triggered for ${orgIds.length} orgs`,
+      })
+      .select('id')
+      .single()
+    systemRowId = systemRow?.id
+  }
 
   let processed = 0
   let failed = 0
@@ -319,8 +338,8 @@ export async function logCronRunMultiOrg(
     }
   }
 
-  // Update system row with final summary
-  if (systemRow?.id) {
+  // Update summary row with final status
+  if (systemRowId) {
     await supabase
       .from('worker_executions')
       .update({
@@ -329,7 +348,7 @@ export async function logCronRunMultiOrg(
         duration_ms: Date.now() - topStartMs,
         output_summary: `Processed ${processed}/${orgIds.length} orgs (${failed} failed). ${summaries.join('; ')}`.slice(0, 2000),
       })
-      .eq('id', systemRow.id)
+      .eq('id', systemRowId)
   }
 
   return { processed, failed }

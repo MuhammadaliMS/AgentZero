@@ -134,8 +134,18 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       .maybeSingle()
 
     let model = botConfig?.summarization_model || DEFAULT_SUMMARIZATION_MODEL
+    // If using NVIDIA NIM, ignore OpenRouter-formatted models (anthropic/*, openai/*, etc.)
+    // since they don't exist on NVIDIA's endpoint — use the default NVIDIA model instead
+    if (NVIDIA_API_KEY && model && model.includes('/')) {
+      const provider = model.split('/')[0]
+      const nvidiaProviders = ['moonshotai', 'nvidia', 'meta', 'google', 'microsoft', 'mistralai', 'deepseek']
+      if (!nvidiaProviders.includes(provider)) {
+        console.log(`[meeting-processor] Model "${model}" not available on NVIDIA NIM — using ${DEFAULT_SUMMARIZATION_MODEL}`)
+        model = DEFAULT_SUMMARIZATION_MODEL
+      }
+    }
     // Ensure model has provider prefix for OpenRouter (e.g. "anthropic/claude-...")
-    if (model && !model.includes('/')) {
+    if (!NVIDIA_API_KEY && model && !model.includes('/')) {
       model = `anthropic/${model}`
     }
 

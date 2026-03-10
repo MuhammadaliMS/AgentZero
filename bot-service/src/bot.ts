@@ -87,6 +87,10 @@ export class MeetingBot {
   private consecutiveNulls: number = 0
   private domAnalysisInProgress: boolean = false
 
+  // MutationObserver-based speaker detection (reactive, not polling)
+  private speakerObserverActive: boolean = false
+  private lastObserverEvent: number = 0
+
   constructor(meetingId: string, meetingUrl: string, platform: string | null, title: string) {
     this.meetingId = meetingId
     this.meetingUrl = meetingUrl
@@ -121,6 +125,9 @@ export class MeetingBot {
 
       // Try to enable captions (best-effort, not required)
       await this.tryEnableCaptions()
+
+      // Install MutationObserver for reactive speaker detection (replaces polling)
+      await this.setupSpeakerObserver()
 
       // Start both audio + video recording
       this.startAudioRecording()
@@ -1081,12 +1088,172 @@ export class MeetingBot {
     return false
   }
 
-  // ─── Active Speaker Detection (DOM) ────────────────────────────────────
+  // ─── MutationObserver-Based Speaker Detection (Reactive) ──────────────
+  //
+  // Instead of polling every 2s, inject a MutationObserver that watches for
+  // CSS class toggles on participant tile child elements. When Google Meet
+  // adds 'S7urwe' to a '.Zi94Db' element (blue speaking border), the observer
+  // fires instantly and pushes the speaker name into a queue.
+  //
+  // The polling loop just drains this queue — no more querySelector cascades.
+
+  /**
+   * Inject a MutationObserver into the page that watches for active speaker
+   * class toggles. Events are pushed into window.__speakerEvents queue.
+   * Called once after joining; self-heals if the observer dies.
+   */
+  private async setupSpeakerObserver(): Promise<boolean> {
+    if (!this.page) return false
+
+    try {
+      const success = await this.page.evaluate(() => {
+        // Don't double-install
+        if ((window as any).__speakerObserverActive) return true
+
+        // Queue for speaker events — polling loop drains this
+        ;(window as any).__speakerEvents = [] as Array<{ speaker: string; time: number }>
+        ;(window as any).__speakerObserverActive = true
+
+        // Known speaking indicator classes (discovered from live DOM analysis, March 2026)
+        // S7urwe on .Zi94Db = blue border (primary)
+        // kssMZb on .CNjCjf = video container (secondary)
+        const SPEAKING_CLASSES = ['S7urwe', 'kssMZb']
+
+        function extractSpeakerFromTile(tile: Element): string | null {
+          // Primary: .notranslate span inside name area
+          const nameEl = tile.querySelector('.XEazBc .notranslate')
+            || tile.querySelector('.notranslate')
+          if (nameEl?.textContent?.trim()) return nameEl.textContent.trim()
+
+          // Fallback: aria-label on "Pin" button
+          const pinBtn = tile.querySelector('[aria-label^="Pin "]')
+          if (pinBtn) {
+            const match = pinBtn.getAttribute('aria-label')?.match(/^Pin (.+?) to/)
+            if (match) return match[1]
+          }
+
+          // Fallback: aria-label on "Mute" button
+          const muteBtn = tile.querySelector('[aria-label*="microphone"]')
+          if (muteBtn) {
+            const match = muteBtn.getAttribute('aria-label')?.match(/Mute (.+?)'s microphone/)
+            if (match) return match[1]
+          }
+
+          // Legacy fallbacks
+          const selfName = tile.querySelector('[data-self-name]')?.getAttribute('data-self-name')
+          if (selfName) return selfName.trim()
+
+          return null
+        }
+
+        const observer = new MutationObserver((mutations) => {
+          for (const mutation of mutations) {
+            if (mutation.type !== 'attributes' || mutation.attributeName !== 'class') continue
+
+            const target = mutation.target as Element
+            const classList = target.classList
+
+            // Check if a speaking class was ADDED (not removed)
+            const isSpeaking = SPEAKING_CLASSES.some(cls => classList.contains(cls))
+            if (!isSpeaking) continue
+
+            // Walk up to the participant tile
+            const tile = target.closest('[data-participant-id]')
+            if (!tile) continue
+
+            const speaker = extractSpeakerFromTile(tile)
+            if (!speaker) continue
+
+            // Deduplicate: don't push if last event is same speaker
+            const queue = (window as any).__speakerEvents as Array<{ speaker: string; time: number }>
+            if (queue.length > 0 && queue[queue.length - 1].speaker === speaker) continue
+
+            queue.push({ speaker, time: Date.now() })
+          }
+        })
+
+        // Observe the meeting container for class changes on ALL descendants
+        // This catches class toggles on .Zi94Db, .CNjCjf, etc. inside tiles
+        const meetingContainer = document.querySelector('[data-allocation-index]')
+          || document.querySelector('[data-requested-participant-id]')?.parentElement?.parentElement?.parentElement
+          || document.body
+
+        observer.observe(meetingContainer, {
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['class'],
+        })
+
+        // Store observer reference for cleanup
+        ;(window as any).__speakerObserver = observer
+
+        return true
+      })
+
+      if (success) {
+        this.speakerObserverActive = true
+        console.log(`[bot/${this.meetingId.slice(0, 8)}] ✓ MutationObserver installed — reactive speaker detection active`)
+      }
+      return success
+    } catch (err) {
+      console.warn(`[bot/${this.meetingId.slice(0, 8)}] MutationObserver setup failed:`, (err as Error).message)
+      return false
+    }
+  }
+
+  /**
+   * Drain speaker events from the MutationObserver queue.
+   * Returns all new speaker events since last drain.
+   */
+  private async drainSpeakerEvents(): Promise<Array<{ speaker: string; time: number }>> {
+    if (!this.page || !this.speakerObserverActive) return []
+
+    try {
+      const events = await this.page.evaluate(() => {
+        const queue = (window as any).__speakerEvents as Array<{ speaker: string; time: number }> | undefined
+        if (!queue || queue.length === 0) return []
+
+        // Drain the queue
+        const events = [...queue]
+        queue.length = 0
+        return events
+      })
+      return events
+    } catch {
+      return []
+    }
+  }
+
+  // ─── Active Speaker Detection (Observer + Polling Fallback) ──────────
 
   private async detectActiveSpeaker(): Promise<void> {
     if (!this.page) return
 
     try {
+      // PRIMARY: Drain events from MutationObserver (instant, zero-cost)
+      if (this.speakerObserverActive) {
+        const events = await this.drainSpeakerEvents()
+        if (events.length > 0) {
+          this.lastObserverEvent = Date.now()
+          this.consecutiveNulls = 0
+
+          // Process all events — the last one is the current speaker
+          for (const event of events) {
+            if (!this.isBotName(event.speaker)) {
+              this.participants.add(event.speaker)
+              if (event.speaker !== this.currentSpeaker) {
+                const elapsed = (event.time - this.startTime) / 1000
+                this.addSpeakerEvent(event.speaker, elapsed)
+              }
+            }
+          }
+          return // Observer handled it — skip polling
+        }
+      }
+
+      // FALLBACK: Poll with querySelector cascade if observer has no events
+      // This handles: observer not installed, observer died, nobody speaking,
+      // or Google changed class names and observer isn't catching them
       let speaker: string | null = null
       const isGoogleMeet = this.platform === 'google_meet' || this.meetingUrl.includes('meet.google.com')
 
@@ -1109,7 +1276,7 @@ export class MeetingBot {
 
       if (speaker && !this.isBotName(speaker)) {
         this.participants.add(speaker)
-        this.consecutiveNulls = 0 // Reset failure counter
+        this.consecutiveNulls = 0
 
         if (speaker !== this.currentSpeaker) {
           const elapsed = (Date.now() - this.startTime) / 1000
@@ -1481,6 +1648,30 @@ export class MeetingBot {
         }
       }
 
+      // ── Observer self-healing: Re-install if observer died or isn't firing ──
+      // If observer was active but no events for 60s AND polling also failing,
+      // the observer probably died (page navigation, DOM rebuild). Re-install it.
+      if (
+        this.speakerObserverActive &&
+        this.lastObserverEvent > 0 &&
+        Date.now() - this.lastObserverEvent > 60000 &&
+        this.consecutiveNulls >= 20 &&
+        elapsed % 30000 < POLL_MS  // Check every 30s
+      ) {
+        console.log(`[bot/${this.meetingId.slice(0, 8)}] Observer silent for 60s + polling failing — re-installing observer...`)
+        this.speakerObserverActive = false
+        await this.setupSpeakerObserver()
+      }
+
+      // If observer was never installed or failed, try again after 10s
+      if (
+        !this.speakerObserverActive &&
+        elapsed > 10000 &&
+        elapsed % 30000 < POLL_MS
+      ) {
+        await this.setupSpeakerObserver()
+      }
+
       // ── DOM Agent: Re-analyze if detection is consistently failing ──
       // If 30+ consecutive nulls (60s of failure), try re-discovering patterns
       if (
@@ -1526,7 +1717,8 @@ export class MeetingBot {
       if (elapsed % (5 * 60 * 1000) < POLL_MS) {
         const mins = Math.round(elapsed / 60000)
         const domAgentCalls = this.domAgent?.calls ?? 0
-        console.log(`[bot/${this.meetingId.slice(0, 8)}] Recording... ${mins}min, ${this.speakerTimeline.length} speaker events, ${this.participants.size} participants, ${domAgentCalls} DomAgent calls`)
+        const observerStatus = this.speakerObserverActive ? 'active' : 'inactive'
+        console.log(`[bot/${this.meetingId.slice(0, 8)}] Recording... ${mins}min, ${this.speakerTimeline.length} speaker events, ${this.participants.size} participants, observer=${observerStatus}, ${domAgentCalls} DomAgent calls`)
       }
     }
 

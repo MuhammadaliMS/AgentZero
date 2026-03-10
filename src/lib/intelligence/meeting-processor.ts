@@ -8,6 +8,8 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
+import { runEvidencePipeline } from '@/lib/evidence/pipeline'
+import { isFeatureEnabled } from '@/lib/evidence/flags'
 import { resolvePersonEntity } from '@/lib/graph/entity-resolver'
 import { attributeSpeakersIfNeeded } from '@/lib/intelligence/speaker-attribution'
 import type { Json } from '@/types/database'
@@ -133,6 +135,12 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       .select('summarization_model')
       .eq('org_id', meeting.org_id)
       .maybeSingle()
+    const { data: orgRow } = await supabase
+      .from('organizations')
+      .select('settings')
+      .eq('id', meeting.org_id)
+      .maybeSingle()
+    const orgSettings = (orgRow?.settings || {}) as Record<string, unknown>
 
     let model = botConfig?.summarization_model || DEFAULT_SUMMARIZATION_MODEL
     // If using NVIDIA NIM, ignore OpenRouter-formatted models (anthropic/*, openai/*, etc.)
@@ -168,7 +176,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
     // 4. Assemble full transcript (after attribution so we get corrected speaker names)
     const { data: segments, error: segErr } = await supabase
       .from('transcript_segments')
-      .select('speaker, text, start_time, end_time, confidence')
+      .select('id, speaker, text, start_time, end_time, confidence, created_at')
       .eq('meeting_id', meetingId)
       .eq('is_final', true)
       .order('start_time', { ascending: true })
@@ -305,25 +313,61 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
 
     // 11. Feed into knowledge graph (AWAITED — was fire-and-forget but got killed on Vercel
     //     before completion, and the randomUUID() conversationId caused FK violations)
+    let evidencePipelineCompleted = false
     try {
-      const graphContent = buildGraphExtractionContent(meeting.title, summaryResult, fullTranscript, participants)
-      await runExtractionPipeline({
-        orgId: meeting.org_id,
-        conversationId: null, // no conversation row — pass null to avoid FK violation
-        messageContent: graphContent,
-        role: 'assistant',
-      })
-      console.log(`[meeting-processor] Knowledge graph extraction completed for ${meetingId}`)
+      if (isFeatureEnabled('evidence_graph_v2', orgSettings)) {
+        await runEvidencePipeline({
+          orgId: meeting.org_id,
+          source: {
+            kind: 'meeting',
+            meeting,
+            segments,
+            summary: {
+              tldr: summaryResult.tldr,
+              executive_summary: summaryResult.executive_summary,
+              detailed_summary: summaryResult.detailed_summary,
+              topics: summaryResult.topics,
+            },
+            actionItems: summaryResult.action_items.map(item => ({
+              action: item.action,
+              owner: item.owner,
+              due_date: item.due_date,
+              priority: item.priority,
+              context_quote: item.context_quote,
+            })),
+            decisions: summaryResult.decisions.map(decision => ({
+              decision: decision.decision,
+              rationale: decision.rationale,
+              decided_by: decision.decided_by,
+              stakeholders: decision.stakeholders,
+              context_quote: decision.context_quote,
+            })),
+          },
+        })
+        evidencePipelineCompleted = true
+        console.log(`[meeting-processor] Evidence graph pipeline completed for ${meetingId}`)
+      } else {
+        const graphContent = buildGraphExtractionContent(meeting.title, summaryResult, fullTranscript, participants)
+        await runExtractionPipeline({
+          orgId: meeting.org_id,
+          conversationId: null, // no conversation row — pass null to avoid FK violation
+          messageContent: graphContent,
+          role: 'assistant',
+        })
+        console.log(`[meeting-processor] Knowledge graph extraction completed for ${meetingId}`)
+      }
     } catch (err) {
       // Non-fatal — meeting should still be marked completed even if graph extraction fails
       console.error(`[meeting-processor] Extraction pipeline failed for ${meetingId}:`, err)
     }
 
     // 12. Store meeting outcome as memory (awaited for same reason — Vercel kills fire-and-forget)
-    try {
-      await storeMeetingMemory(supabase, meeting, summaryResult)
-    } catch (err) {
-      console.error(`[meeting-processor] Memory storage failed for ${meetingId}:`, err)
+    if (!evidencePipelineCompleted) {
+      try {
+        await storeMeetingMemory(supabase, meeting, summaryResult)
+      } catch (err) {
+        console.error(`[meeting-processor] Memory storage failed for ${meetingId}:`, err)
+      }
     }
 
     const result: ProcessingResult = {

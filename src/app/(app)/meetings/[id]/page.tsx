@@ -141,8 +141,8 @@ export default function MeetingDetailPage() {
       const [mR, sR, aR, dR] = await Promise.all([
         sb.from('meetings').select('id, title, platform, scheduled_start, scheduled_end, actual_start, actual_end, duration_seconds, participants, status, summary_ready, transcript_ready, error_message').eq('id', id).single(),
         sb.from('meeting_summaries').select('tldr, executive_summary, detailed_summary, topics, model_used, cost_usd').eq('meeting_id', id).maybeSingle(),
-        sb.from('meeting_action_items').select('id, action, owner_name, owner_email, owner_entity_id, due_date, priority, status, context_quote').eq('meeting_id', id).order('priority', { ascending: true }),
-        sb.from('meeting_decisions').select('id, decision, rationale, decided_by, decided_by_entity_id, stakeholders, context_quote').eq('meeting_id', id),
+        sb.from('meeting_action_items').select('id, action, owner_name, owner_email, owner_entity_id, commitment_id, due_date, priority, status, context_quote').eq('meeting_id', id).order('priority', { ascending: true }),
+        sb.from('meeting_decisions').select('id, decision, rationale, decided_by, decided_by_entity_id, decision_thread_id, stakeholders, context_quote').eq('meeting_id', id),
       ])
       if (mR.error || !mR.data) { toast.error('Meeting not found'); router.push('/meetings'); return }
       setMeeting(mR.data as unknown as MeetingDetail)

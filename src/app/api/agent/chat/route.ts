@@ -5,6 +5,8 @@ import { runCaptainWithSDK, getSDKInfo, type AgentSDK } from '@/lib/agent/sdk-sw
 import type { StreamEvent } from '@/lib/agent/orchestrator'
 import { cleanupConversationApprovals } from '@/lib/agent/approval-store'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
+import { runEvidencePipeline } from '@/lib/evidence/pipeline'
+import { isFeatureEnabled } from '@/lib/evidence/flags'
 import { isOpenAIConfigured } from '@/lib/openai/client'
 import { waitUntil } from '@vercel/functions'
 import type {
@@ -258,13 +260,14 @@ export async function POST(request: NextRequest) {
 
   // ─── Load org SDK preference ───────────────────────────────────────────────
   let orgSdkOverride: AgentSDK | undefined
+  let orgSettings: Record<string, unknown> = {}
   {
     const { data: orgRow } = await admin
       .from('organizations')
       .select('settings')
       .eq('id', orgId)
       .single()
-    const orgSettings = (orgRow?.settings || {}) as Record<string, unknown>
+    orgSettings = (orgRow?.settings || {}) as Record<string, unknown>
     if (orgSettings.agent_sdk === 'openai' || orgSettings.agent_sdk === 'claude') {
       orgSdkOverride = orgSettings.agent_sdk as AgentSDK
     }
@@ -355,12 +358,12 @@ export async function POST(request: NextRequest) {
 
   // ─── Save User Message ────────────────────────────────────────────────────
 
-  await admin.from('messages').insert({
+  const { data: userMessageRow } = await admin.from('messages').insert({
     conversation_id: conversationId,
     role: 'user',
     content: message,
     parts: [{ id: crypto.randomUUID(), type: 'text', content: message, timestamp: Date.now() }] as unknown as Json,
-  })
+  }).select('id, created_at').single()
 
   // ─── AbortController ──────────────────────────────────────────────────────
   // Propagate request cancellation to the agent via AbortController.
@@ -405,7 +408,7 @@ export async function POST(request: NextRequest) {
         const INTEGRATION_TOOLS = new Set([
           'read_recent_emails', 'search_emails', 'read_email',
           'get_today_events', 'get_upcoming_events',
-          'read_slack_channel', 'get_slack_mentions',
+          'read_slack_channel', 'read_slack_thread', 'read_slack_dms', 'get_slack_mentions',
           'get_compliance_overview', 'get_compliance_controls',
           'query_commitments',
         ])
@@ -467,7 +470,7 @@ export async function POST(request: NextRequest) {
           if (event.type === 'done' && !doneHandled) {
             doneHandled = true
             // Save assistant message with full metadata and parts for agentic UI reload
-            await admin.from('messages').insert({
+            const { data: assistantMessageRow } = await admin.from('messages').insert({
               conversation_id: conversationId,
               role: 'assistant',
               content: fullResponse,
@@ -480,7 +483,7 @@ export async function POST(request: NextRequest) {
                 model_usage: event.modelUsage,
                 session_id: event.sessionId,
               },
-            })
+            }).select('id, created_at').single()
 
             // Update conversation with session_id for resume
             if (event.sessionId) {
@@ -501,24 +504,66 @@ export async function POST(request: NextRequest) {
             // The assistant extraction is enriched with raw tool output data from
             // integration tools (emails, calendar, Slack, etc.) for richer entities.
             if (isOpenAIConfigured()) {
-              waitUntil(
-                Promise.all([
-                  runExtractionPipeline({
-                    orgId,
-                    conversationId: conversationId!,
-                    messageContent: message,
-                    role: 'user',
-                  }),
-                  runExtractionPipeline({
-                    orgId,
-                    conversationId: conversationId!,
-                    messageContent: fullResponse,
-                    role: 'assistant',
-                    toolOutputs: toolOutputs.length > 0 ? toolOutputs : undefined,
-                    injectedEntityIds: injectedEntityIds.length > 0 ? injectedEntityIds : undefined,
-                  }),
-                ]).catch(err => console.error('[Extraction] Background failed:', err))
-              )
+              const evidenceGraphEnabled = isFeatureEnabled('evidence_graph_v2', orgSettings)
+              waitUntil((async () => {
+                try {
+                  if (evidenceGraphEnabled) {
+                    await runEvidencePipeline({
+                      orgId,
+                      source: {
+                        kind: 'chat',
+                        conversation: {
+                          id: conversationId!,
+                          title: message.slice(0, 100),
+                          created_at: userMessageRow?.created_at ?? new Date().toISOString(),
+                          updated_at: assistantMessageRow?.created_at ?? new Date().toISOString(),
+                        },
+                        messages: [
+                          {
+                            id: userMessageRow?.id ?? crypto.randomUUID(),
+                            role: 'user',
+                            content: message,
+                            created_at: userMessageRow?.created_at ?? new Date().toISOString(),
+                          },
+                          {
+                            id: assistantMessageRow?.id ?? crypto.randomUUID(),
+                            role: 'assistant',
+                            content: fullResponse,
+                            created_at: assistantMessageRow?.created_at ?? new Date().toISOString(),
+                          },
+                        ],
+                        toolOutputs: toolOutputs.length > 0 ? toolOutputs : undefined,
+                      },
+                      compatibility: {
+                        conversationId: conversationId!,
+                        messageId: assistantMessageRow?.id ?? null,
+                        role: 'assistant',
+                        injectedEntityIds: injectedEntityIds.length > 0 ? injectedEntityIds : undefined,
+                      },
+                    })
+                    return
+                  }
+
+                  await Promise.all([
+                    runExtractionPipeline({
+                      orgId,
+                      conversationId: conversationId!,
+                      messageContent: message,
+                      role: 'user',
+                    }),
+                    runExtractionPipeline({
+                      orgId,
+                      conversationId: conversationId!,
+                      messageContent: fullResponse,
+                      role: 'assistant',
+                      toolOutputs: toolOutputs.length > 0 ? toolOutputs : undefined,
+                      injectedEntityIds: injectedEntityIds.length > 0 ? injectedEntityIds : undefined,
+                    }),
+                  ])
+                } catch (err) {
+                  console.error('[Extraction] Background failed:', err)
+                }
+              })())
             }
 
             // Send final done event with conversation ID

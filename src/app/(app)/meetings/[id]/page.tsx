@@ -132,8 +132,11 @@ export default function MeetingDetailPage() {
 
   /* ── Fetch core data ─────────────────────────────────────────────── */
 
+  const initialLoadDone = useRef(false)
+
   const load = useCallback(async () => {
-    setLoading(true)
+    // Only show skeleton on first load, not on subsequent polls
+    if (!initialLoadDone.current) setLoading(true)
     try {
       const [mR, sR, aR, dR] = await Promise.all([
         sb.from('meetings').select('id, title, platform, scheduled_start, scheduled_end, actual_start, actual_end, duration_seconds, participants, status, summary_ready, transcript_ready, error_message').eq('id', id).single(),
@@ -147,10 +150,27 @@ export default function MeetingDetailPage() {
       setActions((aR.data ?? []) as unknown as ActionItem[])
       setDecisions((dR.data ?? []) as unknown as Decision[])
     } catch { toast.error('Failed to load meeting') }
-    finally { setLoading(false) }
+    finally {
+      setLoading(false)
+      initialLoadDone.current = true
+    }
   }, [sb, id, router])
 
   useEffect(() => { load() }, [load])
+
+  /* ── Auto-poll while meeting is in a non-terminal state ────────── */
+
+  useEffect(() => {
+    if (!meeting) return
+    const terminal: MeetingStatus[] = ['completed', 'failed', 'skipped']
+    if (terminal.includes(meeting.status)) return
+
+    const interval = setInterval(() => {
+      load()
+    }, 10_000) // poll every 10 seconds
+
+    return () => clearInterval(interval)
+  }, [meeting?.status, load])
 
   /* ── Lazy-load transcript ────────────────────────────────────────── */
 

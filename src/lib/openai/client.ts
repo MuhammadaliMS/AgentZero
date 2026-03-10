@@ -14,9 +14,16 @@ const LLM_API_KEY = NVIDIA_API_KEY || OPENROUTER_API_KEY
 const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
   ? 'https://integrate.api.nvidia.com/v1'
   : 'https://openrouter.ai/api/v1')
-const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || (NVIDIA_API_KEY
+export const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || (NVIDIA_API_KEY
   ? 'moonshotai/kimi-k2.5'
   : 'minimax/minimax-m2.5')
+
+// Fallback model for extraction when primary model times out or returns empty.
+// google/gemini-2.0-flash is fast (~5-15s), cheap, and reliable for JSON extraction.
+const FALLBACK_EXTRACTOR_MODEL = process.env.FALLBACK_EXTRACTOR_MODEL || 'google/gemini-2.0-flash-001'
+
+// Timeout for LLM extraction calls (ms). Default 90s — well under Vercel's 300s limit.
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 90_000
 
 // Embeddings config (separate — DB requires 1536-dim vectors, NVIDIA only does 1024)
 const EMBEDDING_API_KEY = process.env.EMBEDDING_API_KEY || OPENROUTER_API_KEY
@@ -104,8 +111,10 @@ Respond with valid JSON matching this schema:
 // ─── API Functions ───────────────────────────────────────────────────────
 
 /**
- * Extract entities and relationships from text using a cheap LLM via OpenRouter.
- * Returns structured data suitable for graph insertion.
+ * Extract entities and relationships from text using an LLM.
+ * Primary: uses configured provider (NVIDIA NIM or OpenRouter).
+ * Fallback: always uses OpenRouter with a fast model if primary fails/returns empty.
+ * Includes 90s timeout per call to prevent Vercel function exhaustion.
  */
 export async function extractEntitiesAndRelationships(text: string): Promise<ExtractionResult> {
   if (!LLM_API_KEY) {
@@ -117,54 +126,139 @@ export async function extractEntitiesAndRelationships(text: string): Promise<Ext
     return { entities: [], relationships: [] }
   }
 
-  const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${LLM_API_KEY}`,
-      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-      'X-Title': 'Captain Knowledge Graph',
-    },
-    body: JSON.stringify({
-      model: EXTRACTOR_MODEL,
-      messages: [
-        { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
-        { role: 'user', content: text },
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0,
-      max_tokens: 3000,
-    }),
-  })
-
-  if (!response.ok) {
-    const err = await response.text()
-    throw new Error(`LLM extraction failed (${response.status}): ${err}`)
-  }
-
-  const data = await response.json()
-  const content = data.choices?.[0]?.message?.content
-  if (!content) {
-    return { entities: [], relationships: [] }
-  }
-
-  let parsed: { entities: ExtractedEntity[]; relationships: ExtractedRelationship[] }
+  // Try primary model first
+  let primaryResult: ExtractionResult
   try {
-    parsed = JSON.parse(content)
-  } catch {
-    console.error('[LLM Client] Failed to parse extraction JSON:', content.slice(0, 200))
-    return { entities: [], relationships: [] }
+    primaryResult = await callExtractionModel({
+      model: EXTRACTOR_MODEL,
+      apiKey: LLM_API_KEY,
+      baseUrl: LLM_BASE_URL,
+      text,
+    })
+    if (primaryResult.entities.length > 0) {
+      return primaryResult
+    }
+  } catch (err) {
+    console.error(`[LLM Client] Primary model ${EXTRACTOR_MODEL} threw:`, (err as Error).message)
+    primaryResult = { entities: [], relationships: [] }
   }
 
-  // Validate entity types
-  const validTypes = new Set(['person', 'project', 'feature', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process', 'customer', 'metric'])
-  parsed.entities = (parsed.entities || []).filter(e => validTypes.has(e.type))
-  parsed.relationships = parsed.relationships || []
+  // Primary returned empty or threw — retry with fallback model via OpenRouter
+  if (OPENROUTER_API_KEY && FALLBACK_EXTRACTOR_MODEL && FALLBACK_EXTRACTOR_MODEL !== EXTRACTOR_MODEL) {
+    console.warn(
+      `[LLM Client] Primary model ${EXTRACTOR_MODEL} returned 0 entities — ` +
+      `retrying with fallback ${FALLBACK_EXTRACTOR_MODEL} via OpenRouter`
+    )
+    try {
+      const fallbackResult = await callExtractionModel({
+        model: FALLBACK_EXTRACTOR_MODEL,
+        apiKey: OPENROUTER_API_KEY, // Always use OpenRouter for fallback
+        baseUrl: 'https://openrouter.ai/api/v1',
+        text,
+      })
+      if (fallbackResult.entities.length > 0) {
+        return fallbackResult
+      }
+      console.error(`[LLM Client] Fallback model ${FALLBACK_EXTRACTOR_MODEL} also returned 0 entities`)
+    } catch (err) {
+      console.error(`[LLM Client] Fallback model ${FALLBACK_EXTRACTOR_MODEL} threw:`, (err as Error).message)
+    }
+  }
 
-  return {
-    entities: parsed.entities,
-    relationships: parsed.relationships,
-    usage: data.usage,
+  return primaryResult
+}
+
+interface ExtractionModelConfig {
+  model: string
+  apiKey: string
+  baseUrl: string
+  text: string
+}
+
+/**
+ * Call a specific model for entity extraction with timeout and error handling.
+ */
+async function callExtractionModel(config: ExtractionModelConfig): Promise<ExtractionResult> {
+  const { model, apiKey, baseUrl, text } = config
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS)
+
+  try {
+    const startMs = Date.now()
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+        'X-Title': 'Captain Knowledge Graph',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
+          { role: 'user', content: text },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0,
+        max_tokens: 4000,
+      }),
+      signal: controller.signal,
+    })
+
+    const elapsed = Date.now() - startMs
+
+    if (!response.ok) {
+      const err = await response.text()
+      console.error(`[LLM Client] ${model} extraction failed (${response.status}, ${elapsed}ms): ${err.slice(0, 300)}`)
+      throw new Error(`LLM extraction failed (${response.status}): ${err}`)
+    }
+
+    const data = await response.json()
+    const content = data.choices?.[0]?.message?.content
+
+    if (!content) {
+      console.warn(
+        `[LLM Client] ${model} returned empty content (${elapsed}ms). ` +
+        `finish_reason=${data.choices?.[0]?.finish_reason ?? 'unknown'}, ` +
+        `usage=${JSON.stringify(data.usage ?? null)}`
+      )
+      return { entities: [], relationships: [], usage: data.usage }
+    }
+
+    let parsed: { entities: ExtractedEntity[]; relationships: ExtractedRelationship[] }
+    try {
+      parsed = JSON.parse(content)
+    } catch {
+      console.error(
+        `[LLM Client] ${model} returned non-JSON (${elapsed}ms): ${content.slice(0, 300)}`
+      )
+      return { entities: [], relationships: [], usage: data.usage }
+    }
+
+    // Validate entity types
+    const validTypes = new Set(['person', 'project', 'feature', 'decision', 'team', 'tool', 'vendor', 'framework', 'document', 'process', 'customer', 'metric'])
+    parsed.entities = (parsed.entities || []).filter(e => validTypes.has(e.type))
+    parsed.relationships = parsed.relationships || []
+
+    console.log(
+      `[LLM Client] ${model} extracted ${parsed.entities.length} entities, ` +
+      `${parsed.relationships.length} relationships (${elapsed}ms)`
+    )
+
+    return {
+      entities: parsed.entities,
+      relationships: parsed.relationships,
+      usage: data.usage,
+    }
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') {
+      console.error(`[LLM Client] ${model} timed out after ${LLM_TIMEOUT_MS}ms`)
+      return { entities: [], relationships: [] }
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
@@ -177,28 +271,43 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
   if (!EMBEDDING_API_KEY) return null
   if (!text || text.trim().length < 3) return null
 
-  const response = await fetch(`${EMBEDDING_BASE_URL}/embeddings`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${EMBEDDING_API_KEY}`,
-      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-      'X-Title': 'Captain Knowledge Graph',
-    },
-    body: JSON.stringify({
-      model: EMBEDDING_MODEL,
-      input: text.slice(0, 8000), // trim to model limit
-    }),
-  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000) // 30s timeout for embeddings
 
-  if (!response.ok) {
-    const err = await response.text()
-    console.error(`Embedding failed (${response.status}): ${err}`)
+  try {
+    const response = await fetch(`${EMBEDDING_BASE_URL}/embeddings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${EMBEDDING_API_KEY}`,
+        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+        'X-Title': 'Captain Knowledge Graph',
+      },
+      body: JSON.stringify({
+        model: EMBEDDING_MODEL,
+        input: text.slice(0, 8000), // trim to model limit
+      }),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      const err = await response.text()
+      console.error(`Embedding failed (${response.status}): ${err}`)
+      return null
+    }
+
+    const data = await response.json()
+    return data.data?.[0]?.embedding ?? null
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') {
+      console.error('[LLM Client] Embedding timed out after 30s')
+      return null
+    }
+    console.error('[LLM Client] Embedding error:', error)
     return null
+  } finally {
+    clearTimeout(timeout)
   }
-
-  const data = await response.json()
-  return data.data?.[0]?.embedding ?? null
 }
 
 /**

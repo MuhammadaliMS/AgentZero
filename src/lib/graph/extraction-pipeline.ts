@@ -11,6 +11,7 @@ import {
   extractEntitiesAndRelationships,
   generateEmbedding,
   isOpenAIConfigured,
+  EXTRACTOR_MODEL,
   type ExtractedEntity,
   type ExtractedRelationship,
 } from '@/lib/openai/client'
@@ -75,7 +76,7 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
         conversation_id: conversationId ?? null,
         message_id: messageId ?? null,
         status: 'processing',
-        model_used: process.env.EXTRACTOR_MODEL || 'x-ai/grok-4.1-fast',
+        model_used: EXTRACTOR_MODEL,
       })
       .select('id')
       .single()

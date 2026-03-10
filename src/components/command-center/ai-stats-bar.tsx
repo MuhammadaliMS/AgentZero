@@ -1,12 +1,14 @@
 'use client'
 
-import { Target, Zap, Brain, RefreshCw } from 'lucide-react'
+import { Target, Zap, Brain, RefreshCw, FileCheck, BookOpen } from 'lucide-react'
 
 interface AIStats {
   activeOutcomes: number
   stepsToday: number
   decisionsToday: number
   chiefRuns: number
+  claimsToday: number
+  vaultDocsToday: number
 }
 
 const statConfig = [
@@ -46,13 +48,31 @@ const statConfig = [
     ring: 'ring-emerald-200/50 dark:ring-emerald-800/30',
     pulse: () => false,
   },
+  {
+    key: 'claimsToday' as const,
+    label: 'Claims Today',
+    icon: FileCheck,
+    accent: 'text-teal-600 dark:text-teal-400',
+    bg: 'bg-teal-50 dark:bg-teal-950/30',
+    ring: 'ring-teal-200/50 dark:ring-teal-800/30',
+    pulse: () => false,
+  },
+  {
+    key: 'vaultDocsToday' as const,
+    label: 'Vault Docs',
+    icon: BookOpen,
+    accent: 'text-sky-600 dark:text-sky-400',
+    bg: 'bg-sky-50 dark:bg-sky-950/30',
+    ring: 'ring-sky-200/50 dark:ring-sky-800/30',
+    pulse: () => false,
+  },
 ]
 
 export function AIStatsBar({ stats }: { stats: AIStats | null }) {
   if (!stats) {
     return (
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+        {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className="h-[88px] animate-pulse rounded-xl bg-muted/40" />
         ))}
       </div>
@@ -60,7 +80,7 @@ export function AIStatsBar({ stats }: { stats: AIStats | null }) {
   }
 
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
       {statConfig.map((cfg) => {
         const Icon = cfg.icon
         const value = stats[cfg.key]

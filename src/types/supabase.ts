@@ -342,21 +342,164 @@ export type Database = {
           },
         ]
       }
+      claim_evidence_links: {
+        Row: {
+          claim_id: string
+          created_at: string
+          evidence_item_id: string
+          id: string
+          link_type: string
+          org_id: string
+        }
+        Insert: {
+          claim_id: string
+          created_at?: string
+          evidence_item_id: string
+          id?: string
+          link_type: string
+          org_id: string
+        }
+        Update: {
+          claim_id?: string
+          created_at?: string
+          evidence_item_id?: string
+          id?: string
+          link_type?: string
+          org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_evidence_links_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_evidence_links_evidence_item_id_fkey"
+            columns: ["evidence_item_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_evidence_links_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      claims: {
+        Row: {
+          artifact_id: string | null
+          claim_key: string
+          claim_kind: string
+          confidence: number
+          created_at: string
+          evidence_status: string
+          id: string
+          metadata: Json
+          object_entity_id: string | null
+          object_value: string | null
+          org_id: string
+          predicate: string
+          status: string
+          subject_entity_id: string
+          updated_at: string
+          valid_from: string
+          valid_to: string | null
+        }
+        Insert: {
+          artifact_id?: string | null
+          claim_key: string
+          claim_kind: string
+          confidence?: number
+          created_at?: string
+          evidence_status?: string
+          id?: string
+          metadata?: Json
+          object_entity_id?: string | null
+          object_value?: string | null
+          org_id: string
+          predicate: string
+          status?: string
+          subject_entity_id: string
+          updated_at?: string
+          valid_from?: string
+          valid_to?: string | null
+        }
+        Update: {
+          artifact_id?: string | null
+          claim_key?: string
+          claim_kind?: string
+          confidence?: number
+          created_at?: string
+          evidence_status?: string
+          id?: string
+          metadata?: Json
+          object_entity_id?: string | null
+          object_value?: string | null
+          org_id?: string
+          predicate?: string
+          status?: string
+          subject_entity_id?: string
+          updated_at?: string
+          valid_from?: string
+          valid_to?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claims_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claims_object_entity_id_fkey"
+            columns: ["object_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claims_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claims_subject_entity_id_fkey"
+            columns: ["subject_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       commitments: {
         Row: {
           completed_at: string | null
           conversation_id: string | null
           created_at: string
+          decision_thread_id: string | null
           description: string | null
           due_date: string | null
           id: string
+          latest_evidence_item_id: string | null
           metadata: Json | null
           org_id: string
+          owner_entity_id: string | null
           owner_id: string | null
           priority: string
+          related_entity_ids: string[]
           risk_computed_at: string | null
           risk_score: number | null
           source: string | null
+          source_claim_id: string | null
           source_ref: string | null
           status: string
           tags: string[] | null
@@ -367,16 +510,21 @@ export type Database = {
           completed_at?: string | null
           conversation_id?: string | null
           created_at?: string
+          decision_thread_id?: string | null
           description?: string | null
           due_date?: string | null
           id?: string
+          latest_evidence_item_id?: string | null
           metadata?: Json | null
           org_id: string
+          owner_entity_id?: string | null
           owner_id?: string | null
           priority?: string
+          related_entity_ids?: string[]
           risk_computed_at?: string | null
           risk_score?: number | null
           source?: string | null
+          source_claim_id?: string | null
           source_ref?: string | null
           status?: string
           tags?: string[] | null
@@ -387,16 +535,21 @@ export type Database = {
           completed_at?: string | null
           conversation_id?: string | null
           created_at?: string
+          decision_thread_id?: string | null
           description?: string | null
           due_date?: string | null
           id?: string
+          latest_evidence_item_id?: string | null
           metadata?: Json | null
           org_id?: string
+          owner_entity_id?: string | null
           owner_id?: string | null
           priority?: string
+          related_entity_ids?: string[]
           risk_computed_at?: string | null
           risk_score?: number | null
           source?: string | null
+          source_claim_id?: string | null
           source_ref?: string | null
           status?: string
           tags?: string[] | null
@@ -412,6 +565,20 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "commitments_decision_thread_id_fkey"
+            columns: ["decision_thread_id"]
+            isOneToOne: false
+            referencedRelation: "decision_threads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commitments_latest_evidence_item_id_fkey"
+            columns: ["latest_evidence_item_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "commitments_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
@@ -419,10 +586,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "commitments_owner_entity_id_fkey"
+            columns: ["owner_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "commitments_owner_id_fkey"
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commitments_source_claim_id_fkey"
+            columns: ["source_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
             referencedColumns: ["id"]
           },
         ]
@@ -714,6 +895,83 @@ export type Database = {
           },
         ]
       }
+      decision_threads: {
+        Row: {
+          canonical_title: string
+          created_at: string
+          current_claim_id: string | null
+          dedupe_key: string
+          first_artifact_id: string | null
+          id: string
+          last_artifact_id: string | null
+          metadata: Json
+          org_id: string
+          related_entity_ids: string[]
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          canonical_title: string
+          created_at?: string
+          current_claim_id?: string | null
+          dedupe_key: string
+          first_artifact_id?: string | null
+          id?: string
+          last_artifact_id?: string | null
+          metadata?: Json
+          org_id: string
+          related_entity_ids?: string[]
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          canonical_title?: string
+          created_at?: string
+          current_claim_id?: string | null
+          dedupe_key?: string
+          first_artifact_id?: string | null
+          id?: string
+          last_artifact_id?: string | null
+          metadata?: Json
+          org_id?: string
+          related_entity_ids?: string[]
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "decision_threads_current_claim_id_fkey"
+            columns: ["current_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_threads_first_artifact_id_fkey"
+            columns: ["first_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_threads_last_artifact_id_fkey"
+            columns: ["last_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_threads_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       entities: {
         Row: {
           access_count: number
@@ -861,6 +1119,76 @@ export type Database = {
             columns: ["target_entity_id"]
             isOneToOne: false
             referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      evidence_items: {
+        Row: {
+          artifact_id: string
+          author_entity_id: string | null
+          author_name: string | null
+          created_at: string
+          embedding: string | null
+          happened_at: string | null
+          id: string
+          metadata: Json
+          org_id: string
+          sequence_no: number
+          source_anchor: string
+          text: string
+          updated_at: string
+        }
+        Insert: {
+          artifact_id: string
+          author_entity_id?: string | null
+          author_name?: string | null
+          created_at?: string
+          embedding?: string | null
+          happened_at?: string | null
+          id?: string
+          metadata?: Json
+          org_id: string
+          sequence_no: number
+          source_anchor: string
+          text: string
+          updated_at?: string
+        }
+        Update: {
+          artifact_id?: string
+          author_entity_id?: string | null
+          author_name?: string | null
+          created_at?: string
+          embedding?: string | null
+          happened_at?: string | null
+          id?: string
+          metadata?: Json
+          org_id?: string
+          sequence_no?: number
+          source_anchor?: string
+          text?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evidence_items_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_items_author_entity_id_fkey"
+            columns: ["author_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_items_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
@@ -1409,12 +1737,15 @@ export type Database = {
           context_timestamp: number | null
           created_at: string | null
           due_date: string | null
+          evidence_item_id: string | null
           id: string
           meeting_id: string
           org_id: string
           owner_email: string | null
+          owner_entity_id: string | null
           owner_name: string | null
           priority: string | null
+          source_artifact_id: string | null
           status: string | null
         }
         Insert: {
@@ -1424,12 +1755,15 @@ export type Database = {
           context_timestamp?: number | null
           created_at?: string | null
           due_date?: string | null
+          evidence_item_id?: string | null
           id?: string
           meeting_id: string
           org_id: string
           owner_email?: string | null
+          owner_entity_id?: string | null
           owner_name?: string | null
           priority?: string | null
+          source_artifact_id?: string | null
           status?: string | null
         }
         Update: {
@@ -1439,12 +1773,15 @@ export type Database = {
           context_timestamp?: number | null
           created_at?: string | null
           due_date?: string | null
+          evidence_item_id?: string | null
           id?: string
           meeting_id?: string
           org_id?: string
           owner_email?: string | null
+          owner_entity_id?: string | null
           owner_name?: string | null
           priority?: string | null
+          source_artifact_id?: string | null
           status?: string | null
         }
         Relationships: [
@@ -1453,6 +1790,13 @@ export type Database = {
             columns: ["commitment_id"]
             isOneToOne: false
             referencedRelation: "commitments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_action_items_evidence_item_id_fkey"
+            columns: ["evidence_item_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
             referencedColumns: ["id"]
           },
           {
@@ -1467,6 +1811,20 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_action_items_owner_entity_id_fkey"
+            columns: ["owner_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_action_items_source_artifact_id_fkey"
+            columns: ["source_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
             referencedColumns: ["id"]
           },
         ]
@@ -1545,11 +1903,15 @@ export type Database = {
           context_timestamp: number | null
           created_at: string | null
           decided_by: string | null
+          decided_by_entity_id: string | null
           decision: string
+          decision_thread_id: string | null
+          evidence_item_id: string | null
           id: string
           meeting_id: string
           org_id: string
           rationale: string | null
+          source_artifact_id: string | null
           stakeholders: Json | null
         }
         Insert: {
@@ -1557,11 +1919,15 @@ export type Database = {
           context_timestamp?: number | null
           created_at?: string | null
           decided_by?: string | null
+          decided_by_entity_id?: string | null
           decision: string
+          decision_thread_id?: string | null
+          evidence_item_id?: string | null
           id?: string
           meeting_id: string
           org_id: string
           rationale?: string | null
+          source_artifact_id?: string | null
           stakeholders?: Json | null
         }
         Update: {
@@ -1569,14 +1935,39 @@ export type Database = {
           context_timestamp?: number | null
           created_at?: string | null
           decided_by?: string | null
+          decided_by_entity_id?: string | null
           decision?: string
+          decision_thread_id?: string | null
+          evidence_item_id?: string | null
           id?: string
           meeting_id?: string
           org_id?: string
           rationale?: string | null
+          source_artifact_id?: string | null
           stakeholders?: Json | null
         }
         Relationships: [
+          {
+            foreignKeyName: "meeting_decisions_decided_by_entity_id_fkey"
+            columns: ["decided_by_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_decisions_decision_thread_id_fkey"
+            columns: ["decision_thread_id"]
+            isOneToOne: false
+            referencedRelation: "decision_threads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_decisions_evidence_item_id_fkey"
+            columns: ["evidence_item_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "meeting_decisions_meeting_id_fkey"
             columns: ["meeting_id"]
@@ -1589,6 +1980,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_decisions_source_artifact_id_fkey"
+            columns: ["source_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
             referencedColumns: ["id"]
           },
         ]
@@ -1795,43 +2193,55 @@ export type Database = {
       memory: {
         Row: {
           category: string
+          citation_coverage: number
           confidence: number
           content: string
           created_at: string
           event_date: string | null
           expires_at: string | null
           id: string
+          metadata: Json
           org_id: string
+          primary_claim_ids: string[]
           related_entities: string[] | null
           source: string | null
+          source_artifact_ids: string[]
           subject: string
           updated_at: string
         }
         Insert: {
           category: string
+          citation_coverage?: number
           confidence?: number
           content: string
           created_at?: string
           event_date?: string | null
           expires_at?: string | null
           id?: string
+          metadata?: Json
           org_id: string
+          primary_claim_ids?: string[]
           related_entities?: string[] | null
           source?: string | null
+          source_artifact_ids?: string[]
           subject: string
           updated_at?: string
         }
         Update: {
           category?: string
+          citation_coverage?: number
           confidence?: number
           content?: string
           created_at?: string
           event_date?: string | null
           expires_at?: string | null
           id?: string
+          metadata?: Json
           org_id?: string
+          primary_claim_ids?: string[]
           related_entities?: string[] | null
           source?: string | null
+          source_artifact_ids?: string[]
           subject?: string
           updated_at?: string
         }
@@ -3141,6 +3551,59 @@ export type Database = {
           },
         ]
       }
+      source_artifacts: {
+        Row: {
+          channel: string
+          created_at: string
+          ended_at: string | null
+          external_id: string
+          id: string
+          metadata: Json
+          org_id: string
+          raw_ref: string | null
+          source_url: string | null
+          started_at: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          channel: string
+          created_at?: string
+          ended_at?: string | null
+          external_id: string
+          id?: string
+          metadata?: Json
+          org_id: string
+          raw_ref?: string | null
+          source_url?: string | null
+          started_at?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          ended_at?: string | null
+          external_id?: string
+          id?: string
+          metadata?: Json
+          org_id?: string
+          raw_ref?: string | null
+          source_url?: string | null
+          started_at?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "source_artifacts_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       strategic_narratives: {
         Row: {
           created_at: string
@@ -3148,6 +3611,7 @@ export type Database = {
           id: string
           key_facts: Json
           last_updated_by: string | null
+          metadata: Json
           narrative_type: string
           open_questions: Json
           org_id: string
@@ -3166,6 +3630,7 @@ export type Database = {
           id?: string
           key_facts?: Json
           last_updated_by?: string | null
+          metadata?: Json
           narrative_type: string
           open_questions?: Json
           org_id: string
@@ -3184,6 +3649,7 @@ export type Database = {
           id?: string
           key_facts?: Json
           last_updated_by?: string | null
+          metadata?: Json
           narrative_type?: string
           open_questions?: Json
           org_id?: string
@@ -3373,6 +3839,98 @@ export type Database = {
           },
         ]
       }
+      vault_document_links: {
+        Row: {
+          created_at: string
+          id: string
+          link_kind: string
+          org_id: string
+          target_id: string
+          vault_document_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          link_kind: string
+          org_id: string
+          target_id: string
+          vault_document_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          link_kind?: string
+          org_id?: string
+          target_id?: string
+          vault_document_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vault_document_links_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vault_document_links_vault_document_id_fkey"
+            columns: ["vault_document_id"]
+            isOneToOne: false
+            referencedRelation: "vault_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vault_documents: {
+        Row: {
+          content_markdown: string
+          created_at: string
+          document_type: string
+          frontmatter: Json
+          id: string
+          metadata: Json
+          org_id: string
+          path: string
+          source_mode: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          content_markdown?: string
+          created_at?: string
+          document_type: string
+          frontmatter?: Json
+          id?: string
+          metadata?: Json
+          org_id: string
+          path: string
+          source_mode?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          content_markdown?: string
+          created_at?: string
+          document_type?: string
+          frontmatter?: Json
+          id?: string
+          metadata?: Json
+          org_id?: string
+          path?: string
+          source_mode?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vault_documents_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       weekly_tuning_log: {
         Row: {
           acceptance_rate: number | null
@@ -3441,6 +3999,7 @@ export type Database = {
           org_id: string
           output_summary: string | null
           status: string
+          steps: Json | null
           tokens_used: Json | null
           trigger: string | null
           worker: string
@@ -3459,6 +4018,7 @@ export type Database = {
           org_id: string
           output_summary?: string | null
           status?: string
+          steps?: Json | null
           tokens_used?: Json | null
           trigger?: string | null
           worker: string
@@ -3477,6 +4037,7 @@ export type Database = {
           org_id?: string
           output_summary?: string | null
           status?: string
+          steps?: Json | null
           tokens_used?: Json | null
           trigger?: string | null
           worker?: string
@@ -3961,3 +4522,4 @@ export const Constants = {
     Enums: {},
   },
 } as const
+

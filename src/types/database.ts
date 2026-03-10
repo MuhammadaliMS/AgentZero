@@ -342,21 +342,164 @@ export type Database = {
           },
         ]
       }
+      claim_evidence_links: {
+        Row: {
+          claim_id: string
+          created_at: string
+          evidence_item_id: string
+          id: string
+          link_type: string
+          org_id: string
+        }
+        Insert: {
+          claim_id: string
+          created_at?: string
+          evidence_item_id: string
+          id?: string
+          link_type: string
+          org_id: string
+        }
+        Update: {
+          claim_id?: string
+          created_at?: string
+          evidence_item_id?: string
+          id?: string
+          link_type?: string
+          org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_evidence_links_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_evidence_links_evidence_item_id_fkey"
+            columns: ["evidence_item_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_evidence_links_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      claims: {
+        Row: {
+          artifact_id: string | null
+          claim_key: string
+          claim_kind: string
+          confidence: number
+          created_at: string
+          evidence_status: string
+          id: string
+          metadata: Json
+          object_entity_id: string | null
+          object_value: string | null
+          org_id: string
+          predicate: string
+          status: string
+          subject_entity_id: string
+          updated_at: string
+          valid_from: string
+          valid_to: string | null
+        }
+        Insert: {
+          artifact_id?: string | null
+          claim_key: string
+          claim_kind: string
+          confidence?: number
+          created_at?: string
+          evidence_status?: string
+          id?: string
+          metadata?: Json
+          object_entity_id?: string | null
+          object_value?: string | null
+          org_id: string
+          predicate: string
+          status?: string
+          subject_entity_id: string
+          updated_at?: string
+          valid_from?: string
+          valid_to?: string | null
+        }
+        Update: {
+          artifact_id?: string | null
+          claim_key?: string
+          claim_kind?: string
+          confidence?: number
+          created_at?: string
+          evidence_status?: string
+          id?: string
+          metadata?: Json
+          object_entity_id?: string | null
+          object_value?: string | null
+          org_id?: string
+          predicate?: string
+          status?: string
+          subject_entity_id?: string
+          updated_at?: string
+          valid_from?: string
+          valid_to?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claims_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claims_object_entity_id_fkey"
+            columns: ["object_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claims_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claims_subject_entity_id_fkey"
+            columns: ["subject_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       commitments: {
         Row: {
           completed_at: string | null
           conversation_id: string | null
           created_at: string
+          decision_thread_id: string | null
           description: string | null
           due_date: string | null
           id: string
+          latest_evidence_item_id: string | null
           metadata: Json | null
           org_id: string
+          owner_entity_id: string | null
           owner_id: string | null
           priority: string
+          related_entity_ids: string[]
           risk_computed_at: string | null
           risk_score: number | null
           source: string | null
+          source_claim_id: string | null
           source_ref: string | null
           status: string
           tags: string[] | null
@@ -367,16 +510,21 @@ export type Database = {
           completed_at?: string | null
           conversation_id?: string | null
           created_at?: string
+          decision_thread_id?: string | null
           description?: string | null
           due_date?: string | null
           id?: string
+          latest_evidence_item_id?: string | null
           metadata?: Json | null
           org_id: string
+          owner_entity_id?: string | null
           owner_id?: string | null
           priority?: string
+          related_entity_ids?: string[]
           risk_computed_at?: string | null
           risk_score?: number | null
           source?: string | null
+          source_claim_id?: string | null
           source_ref?: string | null
           status?: string
           tags?: string[] | null
@@ -387,16 +535,21 @@ export type Database = {
           completed_at?: string | null
           conversation_id?: string | null
           created_at?: string
+          decision_thread_id?: string | null
           description?: string | null
           due_date?: string | null
           id?: string
+          latest_evidence_item_id?: string | null
           metadata?: Json | null
           org_id?: string
+          owner_entity_id?: string | null
           owner_id?: string | null
           priority?: string
+          related_entity_ids?: string[]
           risk_computed_at?: string | null
           risk_score?: number | null
           source?: string | null
+          source_claim_id?: string | null
           source_ref?: string | null
           status?: string
           tags?: string[] | null
@@ -412,6 +565,20 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "commitments_decision_thread_id_fkey"
+            columns: ["decision_thread_id"]
+            isOneToOne: false
+            referencedRelation: "decision_threads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commitments_latest_evidence_item_id_fkey"
+            columns: ["latest_evidence_item_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "commitments_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
@@ -419,10 +586,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "commitments_owner_entity_id_fkey"
+            columns: ["owner_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "commitments_owner_id_fkey"
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commitments_source_claim_id_fkey"
+            columns: ["source_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
             referencedColumns: ["id"]
           },
         ]
@@ -714,6 +895,83 @@ export type Database = {
           },
         ]
       }
+      decision_threads: {
+        Row: {
+          canonical_title: string
+          created_at: string
+          current_claim_id: string | null
+          dedupe_key: string
+          first_artifact_id: string | null
+          id: string
+          last_artifact_id: string | null
+          metadata: Json
+          org_id: string
+          related_entity_ids: string[]
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          canonical_title: string
+          created_at?: string
+          current_claim_id?: string | null
+          dedupe_key: string
+          first_artifact_id?: string | null
+          id?: string
+          last_artifact_id?: string | null
+          metadata?: Json
+          org_id: string
+          related_entity_ids?: string[]
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          canonical_title?: string
+          created_at?: string
+          current_claim_id?: string | null
+          dedupe_key?: string
+          first_artifact_id?: string | null
+          id?: string
+          last_artifact_id?: string | null
+          metadata?: Json
+          org_id?: string
+          related_entity_ids?: string[]
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "decision_threads_current_claim_id_fkey"
+            columns: ["current_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_threads_first_artifact_id_fkey"
+            columns: ["first_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_threads_last_artifact_id_fkey"
+            columns: ["last_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_threads_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       entities: {
         Row: {
           access_count: number
@@ -861,6 +1119,76 @@ export type Database = {
             columns: ["target_entity_id"]
             isOneToOne: false
             referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      evidence_items: {
+        Row: {
+          artifact_id: string
+          author_entity_id: string | null
+          author_name: string | null
+          created_at: string
+          embedding: string | null
+          happened_at: string | null
+          id: string
+          metadata: Json
+          org_id: string
+          sequence_no: number
+          source_anchor: string
+          text: string
+          updated_at: string
+        }
+        Insert: {
+          artifact_id: string
+          author_entity_id?: string | null
+          author_name?: string | null
+          created_at?: string
+          embedding?: string | null
+          happened_at?: string | null
+          id?: string
+          metadata?: Json
+          org_id: string
+          sequence_no: number
+          source_anchor: string
+          text: string
+          updated_at?: string
+        }
+        Update: {
+          artifact_id?: string
+          author_entity_id?: string | null
+          author_name?: string | null
+          created_at?: string
+          embedding?: string | null
+          happened_at?: string | null
+          id?: string
+          metadata?: Json
+          org_id?: string
+          sequence_no?: number
+          source_anchor?: string
+          text?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evidence_items_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_items_author_entity_id_fkey"
+            columns: ["author_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_items_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
@@ -1401,46 +1729,519 @@ export type Database = {
           },
         ]
       }
+      meeting_action_items: {
+        Row: {
+          action: string
+          commitment_id: string | null
+          context_quote: string | null
+          context_timestamp: number | null
+          created_at: string | null
+          due_date: string | null
+          evidence_item_id: string | null
+          id: string
+          meeting_id: string
+          org_id: string
+          owner_email: string | null
+          owner_entity_id: string | null
+          owner_name: string | null
+          priority: string | null
+          source_artifact_id: string | null
+          status: string | null
+        }
+        Insert: {
+          action: string
+          commitment_id?: string | null
+          context_quote?: string | null
+          context_timestamp?: number | null
+          created_at?: string | null
+          due_date?: string | null
+          evidence_item_id?: string | null
+          id?: string
+          meeting_id: string
+          org_id: string
+          owner_email?: string | null
+          owner_entity_id?: string | null
+          owner_name?: string | null
+          priority?: string | null
+          source_artifact_id?: string | null
+          status?: string | null
+        }
+        Update: {
+          action?: string
+          commitment_id?: string | null
+          context_quote?: string | null
+          context_timestamp?: number | null
+          created_at?: string | null
+          due_date?: string | null
+          evidence_item_id?: string | null
+          id?: string
+          meeting_id?: string
+          org_id?: string
+          owner_email?: string | null
+          owner_entity_id?: string | null
+          owner_name?: string | null
+          priority?: string | null
+          source_artifact_id?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meeting_action_items_commitment_id_fkey"
+            columns: ["commitment_id"]
+            isOneToOne: false
+            referencedRelation: "commitments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_action_items_evidence_item_id_fkey"
+            columns: ["evidence_item_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_action_items_meeting_id_fkey"
+            columns: ["meeting_id"]
+            isOneToOne: false
+            referencedRelation: "meetings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_action_items_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_action_items_owner_entity_id_fkey"
+            columns: ["owner_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_action_items_source_artifact_id_fkey"
+            columns: ["source_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meeting_bot_config: {
+        Row: {
+          auto_summarize: boolean | null
+          blocklist_patterns: Json | null
+          created_at: string | null
+          enable_diarization: boolean | null
+          enabled: boolean | null
+          excluded_calendars: Json | null
+          id: string
+          join_mode: string | null
+          language: string | null
+          min_attendees: number | null
+          notify_via_email: boolean | null
+          notify_via_slack: boolean | null
+          org_id: string
+          record_label: string | null
+          summarization_model: string | null
+          transcription_engine: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          auto_summarize?: boolean | null
+          blocklist_patterns?: Json | null
+          created_at?: string | null
+          enable_diarization?: boolean | null
+          enabled?: boolean | null
+          excluded_calendars?: Json | null
+          id?: string
+          join_mode?: string | null
+          language?: string | null
+          min_attendees?: number | null
+          notify_via_email?: boolean | null
+          notify_via_slack?: boolean | null
+          org_id: string
+          record_label?: string | null
+          summarization_model?: string | null
+          transcription_engine?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          auto_summarize?: boolean | null
+          blocklist_patterns?: Json | null
+          created_at?: string | null
+          enable_diarization?: boolean | null
+          enabled?: boolean | null
+          excluded_calendars?: Json | null
+          id?: string
+          join_mode?: string | null
+          language?: string | null
+          min_attendees?: number | null
+          notify_via_email?: boolean | null
+          notify_via_slack?: boolean | null
+          org_id?: string
+          record_label?: string | null
+          summarization_model?: string | null
+          transcription_engine?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meeting_bot_config_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meeting_decisions: {
+        Row: {
+          context_quote: string | null
+          context_timestamp: number | null
+          created_at: string | null
+          decided_by: string | null
+          decided_by_entity_id: string | null
+          decision: string
+          decision_thread_id: string | null
+          evidence_item_id: string | null
+          id: string
+          meeting_id: string
+          org_id: string
+          rationale: string | null
+          source_artifact_id: string | null
+          stakeholders: Json | null
+        }
+        Insert: {
+          context_quote?: string | null
+          context_timestamp?: number | null
+          created_at?: string | null
+          decided_by?: string | null
+          decided_by_entity_id?: string | null
+          decision: string
+          decision_thread_id?: string | null
+          evidence_item_id?: string | null
+          id?: string
+          meeting_id: string
+          org_id: string
+          rationale?: string | null
+          source_artifact_id?: string | null
+          stakeholders?: Json | null
+        }
+        Update: {
+          context_quote?: string | null
+          context_timestamp?: number | null
+          created_at?: string | null
+          decided_by?: string | null
+          decided_by_entity_id?: string | null
+          decision?: string
+          decision_thread_id?: string | null
+          evidence_item_id?: string | null
+          id?: string
+          meeting_id?: string
+          org_id?: string
+          rationale?: string | null
+          source_artifact_id?: string | null
+          stakeholders?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meeting_decisions_decided_by_entity_id_fkey"
+            columns: ["decided_by_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_decisions_decision_thread_id_fkey"
+            columns: ["decision_thread_id"]
+            isOneToOne: false
+            referencedRelation: "decision_threads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_decisions_evidence_item_id_fkey"
+            columns: ["evidence_item_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_decisions_meeting_id_fkey"
+            columns: ["meeting_id"]
+            isOneToOne: false
+            referencedRelation: "meetings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_decisions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_decisions_source_artifact_id_fkey"
+            columns: ["source_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meeting_speaker_map: {
+        Row: {
+          confidence: number | null
+          id: string
+          meeting_id: string
+          participant_email: string | null
+          speaker_id: number
+          speaker_label: string
+        }
+        Insert: {
+          confidence?: number | null
+          id?: string
+          meeting_id: string
+          participant_email?: string | null
+          speaker_id: number
+          speaker_label: string
+        }
+        Update: {
+          confidence?: number | null
+          id?: string
+          meeting_id?: string
+          participant_email?: string | null
+          speaker_id?: number
+          speaker_label?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meeting_speaker_map_meeting_id_fkey"
+            columns: ["meeting_id"]
+            isOneToOne: false
+            referencedRelation: "meetings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meeting_summaries: {
+        Row: {
+          cost_usd: number | null
+          created_at: string | null
+          detailed_summary: string | null
+          executive_summary: string | null
+          id: string
+          meeting_id: string
+          model_used: string | null
+          org_id: string
+          processing_time_ms: number | null
+          raw_llm_response: Json | null
+          tldr: string | null
+          tokens_used: Json | null
+          topics: Json | null
+        }
+        Insert: {
+          cost_usd?: number | null
+          created_at?: string | null
+          detailed_summary?: string | null
+          executive_summary?: string | null
+          id?: string
+          meeting_id: string
+          model_used?: string | null
+          org_id: string
+          processing_time_ms?: number | null
+          raw_llm_response?: Json | null
+          tldr?: string | null
+          tokens_used?: Json | null
+          topics?: Json | null
+        }
+        Update: {
+          cost_usd?: number | null
+          created_at?: string | null
+          detailed_summary?: string | null
+          executive_summary?: string | null
+          id?: string
+          meeting_id?: string
+          model_used?: string | null
+          org_id?: string
+          processing_time_ms?: number | null
+          raw_llm_response?: Json | null
+          tldr?: string | null
+          tokens_used?: Json | null
+          topics?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meeting_summaries_meeting_id_fkey"
+            columns: ["meeting_id"]
+            isOneToOne: false
+            referencedRelation: "meetings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_summaries_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meetings: {
+        Row: {
+          actual_end: string | null
+          actual_start: string | null
+          bot_rule_applied: Json | null
+          bot_session_id: string | null
+          calendar_event_id: string | null
+          calendar_provider: string | null
+          created_at: string | null
+          duration_seconds: number | null
+          error_message: string | null
+          id: string
+          meeting_url: string | null
+          org_id: string
+          organizer_email: string | null
+          participants: Json | null
+          platform: string | null
+          recording_format: string | null
+          recording_path: string | null
+          recording_size_bytes: number | null
+          retry_count: number | null
+          scheduled_end: string | null
+          scheduled_start: string | null
+          skip_reason: string | null
+          status: string
+          summary_ready: boolean | null
+          title: string
+          transcript_ready: boolean | null
+          updated_at: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          actual_end?: string | null
+          actual_start?: string | null
+          bot_rule_applied?: Json | null
+          bot_session_id?: string | null
+          calendar_event_id?: string | null
+          calendar_provider?: string | null
+          created_at?: string | null
+          duration_seconds?: number | null
+          error_message?: string | null
+          id?: string
+          meeting_url?: string | null
+          org_id: string
+          organizer_email?: string | null
+          participants?: Json | null
+          platform?: string | null
+          recording_format?: string | null
+          recording_path?: string | null
+          recording_size_bytes?: number | null
+          retry_count?: number | null
+          scheduled_end?: string | null
+          scheduled_start?: string | null
+          skip_reason?: string | null
+          status?: string
+          summary_ready?: boolean | null
+          title: string
+          transcript_ready?: boolean | null
+          updated_at?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          actual_end?: string | null
+          actual_start?: string | null
+          bot_rule_applied?: Json | null
+          bot_session_id?: string | null
+          calendar_event_id?: string | null
+          calendar_provider?: string | null
+          created_at?: string | null
+          duration_seconds?: number | null
+          error_message?: string | null
+          id?: string
+          meeting_url?: string | null
+          org_id?: string
+          organizer_email?: string | null
+          participants?: Json | null
+          platform?: string | null
+          recording_format?: string | null
+          recording_path?: string | null
+          recording_size_bytes?: number | null
+          retry_count?: number | null
+          scheduled_end?: string | null
+          scheduled_start?: string | null
+          skip_reason?: string | null
+          status?: string
+          summary_ready?: boolean | null
+          title?: string
+          transcript_ready?: boolean | null
+          updated_at?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meetings_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memory: {
         Row: {
           category: string
+          citation_coverage: number
           confidence: number
           content: string
           created_at: string
           event_date: string | null
           expires_at: string | null
           id: string
+          metadata: Json
           org_id: string
+          primary_claim_ids: string[]
           related_entities: string[] | null
           source: string | null
+          source_artifact_ids: string[]
           subject: string
           updated_at: string
         }
         Insert: {
           category: string
+          citation_coverage?: number
           confidence?: number
           content: string
           created_at?: string
           event_date?: string | null
           expires_at?: string | null
           id?: string
+          metadata?: Json
           org_id: string
+          primary_claim_ids?: string[]
           related_entities?: string[] | null
           source?: string | null
+          source_artifact_ids?: string[]
           subject: string
           updated_at?: string
         }
         Update: {
           category?: string
+          citation_coverage?: number
           confidence?: number
           content?: string
           created_at?: string
           event_date?: string | null
           expires_at?: string | null
           id?: string
+          metadata?: Json
           org_id?: string
+          primary_claim_ids?: string[]
           related_entities?: string[] | null
           source?: string | null
+          source_artifact_ids?: string[]
           subject?: string
           updated_at?: string
         }
@@ -2750,6 +3551,59 @@ export type Database = {
           },
         ]
       }
+      source_artifacts: {
+        Row: {
+          channel: string
+          created_at: string
+          ended_at: string | null
+          external_id: string
+          id: string
+          metadata: Json
+          org_id: string
+          raw_ref: string | null
+          source_url: string | null
+          started_at: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          channel: string
+          created_at?: string
+          ended_at?: string | null
+          external_id: string
+          id?: string
+          metadata?: Json
+          org_id: string
+          raw_ref?: string | null
+          source_url?: string | null
+          started_at?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          ended_at?: string | null
+          external_id?: string
+          id?: string
+          metadata?: Json
+          org_id?: string
+          raw_ref?: string | null
+          source_url?: string | null
+          started_at?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "source_artifacts_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       strategic_narratives: {
         Row: {
           created_at: string
@@ -2757,6 +3611,7 @@ export type Database = {
           id: string
           key_facts: Json
           last_updated_by: string | null
+          metadata: Json
           narrative_type: string
           open_questions: Json
           org_id: string
@@ -2775,6 +3630,7 @@ export type Database = {
           id?: string
           key_facts?: Json
           last_updated_by?: string | null
+          metadata?: Json
           narrative_type: string
           open_questions?: Json
           org_id: string
@@ -2793,6 +3649,7 @@ export type Database = {
           id?: string
           key_facts?: Json
           last_updated_by?: string | null
+          metadata?: Json
           narrative_type?: string
           open_questions?: Json
           org_id?: string
@@ -2811,6 +3668,59 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      transcript_segments: {
+        Row: {
+          confidence: number | null
+          created_at: string | null
+          end_time: number | null
+          id: string
+          is_final: boolean | null
+          language: string | null
+          meeting_id: string
+          speaker: string | null
+          speaker_id: number | null
+          start_time: number | null
+          text: string
+          word_count: number | null
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string | null
+          end_time?: number | null
+          id?: string
+          is_final?: boolean | null
+          language?: string | null
+          meeting_id: string
+          speaker?: string | null
+          speaker_id?: number | null
+          start_time?: number | null
+          text: string
+          word_count?: number | null
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string | null
+          end_time?: number | null
+          id?: string
+          is_final?: boolean | null
+          language?: string | null
+          meeting_id?: string
+          speaker?: string | null
+          speaker_id?: number | null
+          start_time?: number | null
+          text?: string
+          word_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transcript_segments_meeting_id_fkey"
+            columns: ["meeting_id"]
+            isOneToOne: false
+            referencedRelation: "meetings"
             referencedColumns: ["id"]
           },
         ]
@@ -2925,6 +3835,98 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vault_document_links: {
+        Row: {
+          created_at: string
+          id: string
+          link_kind: string
+          org_id: string
+          target_id: string
+          vault_document_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          link_kind: string
+          org_id: string
+          target_id: string
+          vault_document_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          link_kind?: string
+          org_id?: string
+          target_id?: string
+          vault_document_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vault_document_links_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vault_document_links_vault_document_id_fkey"
+            columns: ["vault_document_id"]
+            isOneToOne: false
+            referencedRelation: "vault_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vault_documents: {
+        Row: {
+          content_markdown: string
+          created_at: string
+          document_type: string
+          frontmatter: Json
+          id: string
+          metadata: Json
+          org_id: string
+          path: string
+          source_mode: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          content_markdown?: string
+          created_at?: string
+          document_type: string
+          frontmatter?: Json
+          id?: string
+          metadata?: Json
+          org_id: string
+          path: string
+          source_mode?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          content_markdown?: string
+          created_at?: string
+          document_type?: string
+          frontmatter?: Json
+          id?: string
+          metadata?: Json
+          org_id?: string
+          path?: string
+          source_mode?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vault_documents_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
@@ -3300,6 +4302,10 @@ export type Database = {
           relevance_score: number
           utility: number
         }[]
+      }
+      merge_entity: {
+        Args: { keep_id: string; merge_id: string }
+        Returns: undefined
       }
       release_chief_lease:
         | {

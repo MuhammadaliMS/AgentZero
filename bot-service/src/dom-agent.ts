@@ -71,6 +71,9 @@ async function getCleanDomSnapshot(
         'type', 'placeholder', 'value', 'disabled', 'aria-disabled',
         'data-idom-class', 'data-panel-id', 'aria-live',
         'data-participant-count', 'tabindex', 'aria-haspopup',
+        // Google Meet 2024-2026: class-based active speaker indicators
+        'data-resolution-cap', 'data-media-type',
+        'translate', // notranslate spans contain participant names
       ]
 
       function serialize(el: Element, d: number): string {
@@ -86,7 +89,7 @@ async function getCleanDomSnapshot(
           }
         }
 
-        // For participant tiles, include computed border/outline
+        // For participant tiles, include computed border/outline + speaking class indicators
         if (
           el.hasAttribute('data-participant-id') ||
           el.hasAttribute('data-requested-participant-id')
@@ -100,6 +103,23 @@ async function getCleanDomSnapshot(
             }
             if (outline && outline !== 'rgb(0, 0, 0)') {
               attrs.push(`computed-outline="${outline}"`)
+            }
+            // Google Meet 2024-2026: Class-based active speaker detection
+            // S7urwe on .Zi94Db = blue speaking border
+            // kssMZb on .CNjCjf = video container speaking marker
+            const borderEl = el.querySelector('.Zi94Db')
+            if (borderEl?.classList.contains('S7urwe')) {
+              attrs.push('speaking-border="true"')
+            }
+            const vcEl = el.querySelector('.CNjCjf')
+            if (vcEl?.classList.contains('kssMZb')) {
+              attrs.push('speaking-vc="true"')
+            }
+            // Extract participant name from .notranslate span
+            const nameEl = el.querySelector('.XEazBc .notranslate')
+              || el.querySelector('.notranslate')
+            if (nameEl?.textContent?.trim()) {
+              attrs.push(`participant-name="${nameEl.textContent.trim().slice(0, 60)}"`)
             }
           } catch { /* skip */ }
         }
@@ -272,9 +292,23 @@ function createDomTools(page: Page) {
               for (const attr of ['id', 'class', 'aria-label', 'data-self-name',
                 'data-participant-id', 'data-requested-participant-id',
                 'data-is-speaking', 'data-sender-name', 'role', 'jsname',
-                'data-tooltip', 'aria-pressed', 'type', 'placeholder']) {
+                'data-tooltip', 'aria-pressed', 'type', 'placeholder',
+                'translate']) {
                 const val = el.getAttribute(attr)
                 if (val) attrs[attr] = val.slice(0, 80)
+              }
+              // If this is a participant tile, check speaking indicators
+              const isTile = el.hasAttribute('data-participant-id')
+              let speakingInfo: Record<string, unknown> | null = null
+              if (isTile) {
+                const borderEl = el.querySelector('.Zi94Db')
+                const vcEl = el.querySelector('.CNjCjf')
+                const nameSpan = el.querySelector('.XEazBc .notranslate') || el.querySelector('.notranslate')
+                speakingInfo = {
+                  hasSpeakingBorder: borderEl?.classList.contains('S7urwe') || false,
+                  hasSpeakingVC: vcEl?.classList.contains('kssMZb') || false,
+                  participantName: nameSpan?.textContent?.trim() || null,
+                }
               }
               return {
                 tag,
@@ -283,6 +317,7 @@ function createDomTools(page: Page) {
                 width: Math.round(rect.width),
                 height: Math.round(rect.height),
                 attrs,
+                ...(speakingInfo ? { speakingInfo } : {}),
               }
             })
             return { total: els.length, items }
@@ -315,6 +350,16 @@ function createDomTools(page: Page) {
                 || (el.getAttribute('aria-label') || '').split(',')[0].trim()
                 || el.textContent?.trim().slice(0, 40)
                 || '(unnamed)'
+              // Check for class-based speaking indicators (Google Meet 2024-2026)
+              const borderEl = el.querySelector('.Zi94Db')
+              const hasSpeakingBorder = borderEl?.classList.contains('S7urwe') || false
+              const vcEl = el.querySelector('.CNjCjf')
+              const hasSpeakingVC = vcEl?.classList.contains('kssMZb') || false
+              // Extract name from .notranslate span
+              const nameSpan = el.querySelector('.XEazBc .notranslate')
+                || el.querySelector('.notranslate')
+              const extractedName = nameSpan?.textContent?.trim() || null
+
               return {
                 name,
                 border: style.border,
@@ -325,6 +370,12 @@ function createDomTools(page: Page) {
                 boxShadow: style.boxShadow?.slice(0, 100),
                 classList: Array.from(el.classList).join(' ').slice(0, 120),
                 dataSpeaking: el.getAttribute('data-is-speaking'),
+                // Class-based speaking indicators (modern Google Meet)
+                hasSpeakingBorderClass: hasSpeakingBorder,
+                hasSpeakingVCClass: hasSpeakingVC,
+                borderElementClasses: borderEl ? Array.from(borderEl.classList).join(' ').slice(0, 80) : null,
+                vcElementClasses: vcEl ? Array.from(vcEl.classList).join(' ').slice(0, 80) : null,
+                extractedName,
               }
             })
             return { total: els.length, items }
@@ -534,25 +585,38 @@ const DISCOVER_SPEAKER_PROMPT = `You are a DOM analysis agent specializing in Go
 
 TASK: Discover how to programmatically detect the active speaker in a Google Meet call.
 
-BACKGROUND: In Google Meet, when someone speaks, their video tile gets a visual indicator — typically a colored border (blue/accent), an outline, a data attribute change, or a CSS class change. You need to find these patterns.
+BACKGROUND: In Google Meet, when someone speaks, their video tile gets a visual indicator. As of 2024-2026, Google Meet uses CSS CLASS TOGGLES rather than data attributes or inline styles:
+- The active speaker's tile gets a class like "S7urwe" on a border element (class "Zi94Db")
+- A class like "kssMZb" appears on the video container element (class "CNjCjf")
+- Older patterns like data-is-speaking="true" or inline border colors may no longer exist
+- Participant names are found in spans with class "notranslate" (often inside a ".XEazBc" container)
+- Tiles are wrapped in elements with data-participant-id attributes
 
 STRATEGY:
-1. Call get_dom_snapshot to see the full meeting page DOM structure.
-2. Look for participant video tiles — they typically have data-participant-id or data-requested-participant-id attributes.
-3. Use test_selector on candidate tile selectors to verify they match actual tiles.
-4. Call get_element_styles on the tile elements — compare border colors, outline colors, and box shadows between different tiles. The active speaker should have a distinctly different border/outline.
-5. Check for data-self-name attributes on tiles (contain participant display names).
-6. Check aria-label attributes (usually contain "name, microphone status, camera status").
-7. Check for data-is-speaking attributes or similar boolean indicators.
-8. Use evaluate_expression if you need to run custom JS to inspect specific properties.
-9. When you're confident in ALL four patterns (tile selector, active speaker indicator, name extraction, changing attribute), call submit_speaker_patterns.
+1. Call get_dom_snapshot with root_selector "[data-participant-id]" to see tile structure.
+2. Look for participant video tiles with data-participant-id attributes. The tile selector is typically "div[data-participant-id]" or elements with class "oZRSLe".
+3. Use get_element_styles on tile elements — but ALSO check the DOM snapshot for class differences between tiles. Look specifically for:
+   - Classes on child elements that differ between speaking and non-speaking tiles
+   - Elements with classes like "S7urwe", "kssMZb" that appear only on the active speaker's tile
+4. Check for ".notranslate" spans inside tiles for participant names.
+5. Use evaluate_expression to check class lists on child elements:
+   - document.querySelectorAll('.Zi94Db') → check which has "S7urwe"
+   - document.querySelectorAll('.CNjCjf') → check which has "kssMZb"
+6. Also check for legacy patterns as fallbacks: data-is-speaking, data-self-name, data-sender-name, borderColor changes.
+7. Use test_selector to verify all discovered selectors work.
+8. Submit patterns with submit_speaker_patterns.
 
-KEY INSIGHT: Compare styles across multiple tiles. The speaking person's tile will have a DIFFERENT border or outline color than non-speaking tiles. That difference IS the active speaker indicator.
+KEY INSIGHTS:
+- Google Meet's active speaker indicator is a CSS CLASS TOGGLE on child elements, NOT a data-attribute or inline style on the tile itself.
+- Look INSIDE each tile for child elements whose class list differs between speaking and non-speaking participants.
+- The changing_attribute should be "class" (not "data-is-speaking" or "style.borderColor").
+- Name extraction: ".notranslate" text content, or aria-label on buttons inside the tile (e.g., "[aria-label^='Pin ']" or "[aria-label*='microphone']").
 
 VERIFICATION: Before submitting, make sure:
 - tile_selector matches multiple elements (one per participant)
-- You can extract names from tiles
-- You've identified what changes on the active speaker's tile`
+- You can extract names from tiles via .notranslate or aria-label
+- You've identified the specific class toggle that marks the active speaker
+- active_speaker_selector matches 0-1 elements (only the currently speaking person)`
 
 const FIND_AND_CLICK_PROMPT = `You are a DOM interaction agent with tools to find and click elements on a live web page.
 
@@ -575,18 +639,19 @@ const FIND_PARTICIPANTS_PROMPT = `You are a DOM analysis agent. Extract all part
 
 STRATEGY:
 1. Call get_dom_snapshot to see the page structure.
-2. Look for these name sources:
-   - data-self-name attributes on participant tiles
-   - aria-label attributes on tiles (name is typically before the first comma)
-   - data-sender-name attributes on caption elements
-   - Text elements within participant tile containers
-3. Use test_selector to verify your extraction selectors work.
-4. Use evaluate_expression to extract names programmatically if needed. For example:
-   Array.from(document.querySelectorAll('[data-self-name]')).map(el => el.getAttribute('data-self-name'))
-5. Filter out bot names (Zerowing, Captain, Meeting Bot, You).
+2. Look for these name sources (try in order):
+   a. Spans with class "notranslate" inside participant tiles — these are the PRIMARY name source (2024-2026 Google Meet). They are typically inside ".XEazBc" containers within "[data-participant-id]" tiles.
+   b. aria-label attributes on buttons inside tiles (e.g., "Pin <name> to main screen" or "Mute <name>'s microphone")
+   c. data-self-name attributes on participant tiles (legacy, may not exist)
+   d. data-sender-name attributes on caption elements
+3. Use evaluate_expression to extract names programmatically. For example:
+   Array.from(document.querySelectorAll('[data-participant-id] .notranslate')).map(el => el.textContent?.trim()).filter(Boolean)
+4. If notranslate spans are empty, try:
+   Array.from(document.querySelectorAll('[data-participant-id] [aria-label]')).map(el => { const m = el.getAttribute('aria-label')?.match(/^Pin (.+?) to/); return m ? m[1] : null; }).filter(Boolean)
+5. Filter out bot names (Zerowing, Captain, Meeting Bot, You, Axari).
 6. Call submit_participant_names with the verified list of names.
 
-IMPORTANT: Verify names are real participant names, not UI labels or button text.`
+IMPORTANT: Verify names are real participant names, not UI labels or button text. The ".notranslate" class is your best bet — it contains the actual display name.`
 
 /* ------------------------------------------------------------------ */
 /*  DomAgent Class                                                     */

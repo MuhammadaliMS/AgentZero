@@ -9,7 +9,7 @@ import {
   CheckCircle2, AlertCircle, Loader2, ChevronDown,
   ChevronUp, ListChecks, Lightbulb, MessageSquare,
   Sparkles, FileText, CircleCheck, Circle, Video,
-  Hash, User2, Quote, Flag, Link2,
+  Hash, User2, Quote, Flag, Link2, RefreshCw,
 } from 'lucide-react'
 import type { MeetingStatus, ActionItemPriority } from '@/types/meetings'
 
@@ -174,14 +174,16 @@ export default function MeetingDetailPage() {
 
   /* ── Lazy-load transcript ────────────────────────────────────────── */
 
+  const loadTranscript = useCallback(async () => {
+    const { data } = await sb.from('transcript_segments').select('speaker, text, start_time').eq('meeting_id', id).eq('is_final', true).order('start_time', { ascending: true })
+    setSegs((data ?? []) as unknown as Segment[])
+    setSegsLoaded(true)
+  }, [sb, id])
+
   useEffect(() => {
     if (tab !== 'transcript' || segsLoaded) return
-    ;(async () => {
-      const { data } = await sb.from('transcript_segments').select('speaker, text, start_time').eq('meeting_id', id).eq('is_final', true).order('start_time', { ascending: true })
-      setSegs((data ?? []) as unknown as Segment[])
-      setSegsLoaded(true)
-    })()
-  }, [tab, segsLoaded, sb, id])
+    loadTranscript()
+  }, [tab, segsLoaded, loadTranscript])
 
   /* ── Toggle action item ──────────────────────────────────────────── */
 
@@ -339,7 +341,7 @@ export default function MeetingDetailPage() {
           detailedOpen={detailedOpen} setDetailedOpen={setDetailedOpen}
         />
       )}
-      {tab === 'transcript' && <TranscriptPane segs={segs} loaded={segsLoaded} colorMap={colorMap.current} />}
+      {tab === 'transcript' && <TranscriptPane segs={segs} loaded={segsLoaded} colorMap={colorMap.current} meetingId={id} onReload={loadTranscript} />}
       {tab === 'actions' && <ActionsPane items={actions} toggle={toggle} />}
       {tab === 'decisions' && <DecisionsPane items={decisions} />}
     </div>
@@ -549,7 +551,30 @@ function Row({ label, value }: { label: string; value: string }) {
 
 /* ── Transcript Pane ───────────────────────────────────────────────── */
 
-function TranscriptPane({ segs, loaded, colorMap }: { segs: Segment[]; loaded: boolean; colorMap: Map<string, number> }) {
+/**
+ * Detect if speaker attribution is broken (all same speaker or concatenated names).
+ */
+function needsSpeakerAttribution(segs: Segment[]): boolean {
+  if (segs.length === 0) return false
+  const speakers = new Set(segs.map(s => s.speaker || 'Unknown'))
+  if (speakers.size > 2) return false
+  // Check for concatenated speaker names (contains multiple commas)
+  const first = [...speakers][0]
+  if (first.includes(',') && first.split(',').length >= 3) return true
+  // All segments have same speaker and it's not "System"
+  if (speakers.size === 1 && first !== 'System') return true
+  return false
+}
+
+function TranscriptPane({ segs, loaded, colorMap, meetingId, onReload }: {
+  segs: Segment[]
+  loaded: boolean
+  colorMap: Map<string, number>
+  meetingId: string
+  onReload?: () => void
+}) {
+  const [attributing, setAttributing] = useState(false)
+
   if (!loaded) return (
     <div className="flex items-center justify-center py-16">
       <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -563,22 +588,90 @@ function TranscriptPane({ segs, loaded, colorMap }: { segs: Segment[]; loaded: b
     </div>
   )
 
+  const broken = needsSpeakerAttribution(segs)
+
+  const handleReattribute = async () => {
+    setAttributing(true)
+    try {
+      const res = await fetch('/api/meetings/reprocess-speakers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ meeting_id: meetingId }),
+      })
+      const data = await res.json()
+      if (data.ok && data.attributed > 0) {
+        toast.success(`Identified ${data.speakers?.length || 0} speakers: ${data.speakers?.join(', ') || 'Unknown'}`)
+        // Reset color map for fresh speaker colors
+        colorMap.clear()
+        // Reload transcript segments
+        onReload?.()
+      } else if (data.ok) {
+        toast.info(data.message || 'No changes needed')
+      } else {
+        toast.error(data.error || 'Attribution failed')
+      }
+    } catch (err) {
+      toast.error('Failed to re-process speakers')
+    } finally {
+      setAttributing(false)
+    }
+  }
+
   return (
     <Section title="Full Transcript" icon={FileText} badge={<span className="text-[11px] text-muted-foreground">{segs.length} segments</span>}>
+      {/* Speaker attribution banner */}
+      {broken && (
+        <div className="mx-5 mt-3 mb-1 flex items-center gap-3 rounded-lg border border-amber-200 dark:border-amber-800/40 bg-amber-50/50 dark:bg-amber-950/20 px-4 py-3">
+          <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-amber-800 dark:text-amber-300">
+              Speaker identification unavailable — all segments attributed to the same speaker.
+            </p>
+          </div>
+          <button
+            onClick={handleReattribute}
+            disabled={attributing}
+            className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 dark:bg-amber-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-amber-700 dark:hover:bg-amber-700 transition-colors disabled:opacity-50 shrink-0"
+          >
+            {attributing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            {attributing ? 'Identifying…' : 'Identify Speakers'}
+          </button>
+        </div>
+      )}
       <div className="divide-y divide-border/30 max-h-[640px] overflow-y-auto">
         {segs.map((s, i) => {
-          const name = s.speaker || 'Unknown'
+          const rawName = s.speaker || 'Unknown'
+          // Clean up concatenated speaker names — show "Unknown" instead of the mess
+          const name = (rawName.includes(',') && rawName.split(',').length >= 3) ? 'Unknown' : rawName
+          const prev = i > 0 ? segs[i - 1] : null
+          const prevName = prev?.speaker || 'Unknown'
+          const prevClean = (prevName.includes(',') && prevName.split(',').length >= 3) ? 'Unknown' : prevName
+          const sameSpeaker = name === prevClean
+          // Show speaker header when speaker changes
+          const showHeader = !sameSpeaker || i === 0
+
           return (
-            <div key={i} className="flex gap-3 px-5 py-3 hover:bg-accent/20 transition-colors duration-150">
-              <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${speakerCls(name, colorMap)}`}>
-                {ini(name)}
-              </span>
+            <div key={i} className={`flex gap-3 px-5 ${showHeader ? 'pt-4 pb-2' : 'py-1.5'} hover:bg-accent/20 transition-colors duration-150`}>
+              {showHeader ? (
+                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${speakerCls(name, colorMap)}`}>
+                  {ini(name)}
+                </span>
+              ) : (
+                <span className="w-7 shrink-0" />
+              )}
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <span className="text-xs font-semibold">{name}</span>
-                  {s.start_time != null && <span className="text-[10px] text-muted-foreground/50 tabular-nums">{ts(s.start_time)}</span>}
-                </div>
-                <p className="text-[13px] leading-relaxed text-foreground/80">{s.text}</p>
+                {showHeader && (
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-xs font-semibold">{name}</span>
+                    {s.start_time != null && <span className="text-[10px] text-muted-foreground/50 tabular-nums">{ts(s.start_time)}</span>}
+                  </div>
+                )}
+                <p className="text-[13px] leading-relaxed text-foreground/80">
+                  {!showHeader && s.start_time != null && (
+                    <span className="text-[10px] text-muted-foreground/30 tabular-nums mr-1.5">{ts(s.start_time)}</span>
+                  )}
+                  {s.text}
+                </p>
               </div>
             </div>
           )

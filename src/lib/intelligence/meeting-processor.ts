@@ -9,6 +9,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
 import { resolvePersonEntity } from '@/lib/graph/entity-resolver'
+import { attributeSpeakersIfNeeded } from '@/lib/intelligence/speaker-attribution'
 import type { Json } from '@/types/database'
 import { randomUUID } from 'crypto'
 
@@ -150,7 +151,22 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       model = `anthropic/${model}`
     }
 
-    // 3. Assemble full transcript
+    // 3. Run speaker attribution if needed (before assembling transcript)
+    // This fixes meetings where DOM speaker tracking failed and all segments
+    // have the same speaker (concatenated participant names or "Unknown")
+    try {
+      const attrResult = await attributeSpeakersIfNeeded(meetingId)
+      if (attrResult && attrResult.attributed > 0) {
+        console.log(
+          `[meeting-processor] Speaker attribution: ${attrResult.attributed} segments → ${attrResult.speakers.length} speakers (${attrResult.durationMs}ms)`
+        )
+      }
+    } catch (attrErr) {
+      // Non-fatal — continue with whatever speaker data we have
+      console.error(`[meeting-processor] Speaker attribution failed (non-fatal):`, (attrErr as Error).message)
+    }
+
+    // 4. Assemble full transcript (after attribution so we get corrected speaker names)
     const { data: segments, error: segErr } = await supabase
       .from('transcript_segments')
       .select('speaker, text, start_time, end_time, confidence')
@@ -175,7 +191,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       ? Math.round(((segments[segments.length - 1].end_time ?? 0) - (segments[0].start_time ?? 0)) / 60)
       : 0
 
-    // 4. Build LLM prompt
+    // 5. Build LLM prompt
     const participants = (meeting.participants as Array<{ name: string; email: string }>) || []
     const participantList = participants.map(p => `${p.name} (${p.email})`).join(', ')
 
@@ -187,7 +203,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       transcript: fullTranscript,
     })
 
-    // 5. Call LLM with retries
+    // 6. Call LLM with retries
     let summaryResult: MeetingSummaryResult | null = null
     let tokensUsed: { prompt_tokens: number; completion_tokens: number } | null = null
     let lastError = ''
@@ -220,7 +236,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       }
     }
 
-    // 6. Store summary
+    // 7. Store summary
     const costUsd = tokensUsed
       ? estimateCost(model, tokensUsed.prompt_tokens, tokensUsed.completion_tokens)
       : 0
@@ -241,7 +257,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       { onConflict: 'meeting_id' }
     )
 
-    // 7. Store action items
+    // 8. Store action items
     if (summaryResult.action_items.length > 0) {
       const actionRows = summaryResult.action_items.map(item => ({
         meeting_id: meetingId,
@@ -259,7 +275,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       await supabase.from('meeting_action_items').insert(actionRows)
     }
 
-    // 8. Store decisions
+    // 9. Store decisions
     if (summaryResult.decisions.length > 0) {
       const decisionRows = summaryResult.decisions.map(d => ({
         meeting_id: meetingId,
@@ -275,10 +291,10 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       await supabase.from('meeting_decisions').insert(decisionRows)
     }
 
-    // 8.5. Resolve action item owners & decision makers to knowledge graph entities
+    // 9.5. Resolve action item owners & decision makers to knowledge graph entities
     await resolveActionItemEntities(supabase, meeting.org_id, meetingId, summaryResult, participants)
 
-    // 9. Mark meeting as completed
+    // 10. Mark meeting as completed
     await supabase
       .from('meetings')
       .update({
@@ -288,7 +304,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       })
       .eq('id', meetingId)
 
-    // 10. Feed into knowledge graph (fire-and-forget, like morning brief)
+    // 11. Feed into knowledge graph (fire-and-forget, like morning brief)
     const graphContent = buildGraphExtractionContent(meeting.title, summaryResult, fullTranscript, participants)
     runExtractionPipeline({
       orgId: meeting.org_id,
@@ -299,7 +315,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       console.error(`[meeting-processor] Extraction pipeline failed for ${meetingId}:`, err)
     })
 
-    // 11. Store meeting outcome as memory (fire-and-forget)
+    // 12. Store meeting outcome as memory (fire-and-forget)
     storeMeetingMemory(supabase, meeting, summaryResult).catch(err => {
       console.error(`[meeting-processor] Memory storage failed for ${meetingId}:`, err)
     })

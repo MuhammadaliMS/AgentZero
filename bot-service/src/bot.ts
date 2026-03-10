@@ -1193,44 +1193,73 @@ export class MeetingBot {
     if (!this.page) return null
 
     return this.page.evaluate(() => {
-      // Google Meet highlights the active speaker's video tile with a blue/colored border
-      // Method 1: Look for the "speaking" indicator on participant tiles
-      // The active speaker typically has a colored border or animation around their tile
+      // Google Meet active speaker detection — updated March 2026 from live DOM analysis
+      //
+      // Meet adds these CSS classes to the active speaker's tile:
+      //   .Zi94Db.S7urwe  → blue border wrapper (most reliable)
+      //   .CNjCjf.kssMZb  → video container indicator
+      //   .lH9pqf.kssMZb  → bottom bar indicator
+      //
+      // Participant name lives in: tile.querySelector('.notranslate')
+      // Tile wrapper: div.oZRSLe[data-participant-id]
 
-      // Check for active speaker indicator via data attributes
-      const speakingEl = document.querySelector('[data-self-name][data-is-speaking="true"]')
-        || document.querySelector('[data-participant-id][data-is-speaking="true"]')
-      if (speakingEl) {
-        return speakingEl.getAttribute('data-self-name')
-          || speakingEl.querySelector('[data-self-name]')?.getAttribute('data-self-name')
-          || null
-      }
-
-      // Method 2: Look for the participant name near an active visual indicator
-      // Google Meet uses a blue border (2px+) on the active speaker's tile
-      const tiles = document.querySelectorAll('[data-participant-id], [data-requested-participant-id]')
-      for (const tile of tiles) {
-        const style = window.getComputedStyle(tile)
-        const border = style.borderColor || ''
-        const outline = style.outlineColor || ''
-        // Active speaker has a blue/accent border
-        if (border.includes('rgb(26, 115, 232)') || border.includes('#1a73e8') ||
-            outline.includes('rgb(26, 115, 232)') || border.includes('rgb(66, 133, 244)')) {
-          // Find name within the tile
-          const nameEl = tile.querySelector('[data-self-name]')
-          if (nameEl) return nameEl.getAttribute('data-self-name')
-
-          // Or look for a text element with the participant name
-          const nameText = tile.querySelector('[class*="ZjFb7c"], [class*="cS7aqe"]')
-          if (nameText?.textContent) return nameText.textContent.trim()
+      // ── Method 1 (primary): S7urwe class = blue speaking border ──
+      const speakingBorder = document.querySelector('.Zi94Db.S7urwe')
+      if (speakingBorder) {
+        const tile = speakingBorder.closest('[data-participant-id]')
+        if (tile) {
+          // Extract name from the tile's name display area
+          const nameEl = tile.querySelector('.XEazBc .notranslate')
+            || tile.querySelector('.notranslate')
+          if (nameEl?.textContent?.trim()) return nameEl.textContent.trim()
+          // Fallback: extract from aria-label "Pin X to your main screen"
+          const pinBtn = tile.querySelector('[aria-label^="Pin "]')
+          if (pinBtn) {
+            const match = pinBtn.getAttribute('aria-label')?.match(/^Pin (.+?) to/)
+            if (match) return match[1]
+          }
         }
       }
 
-      // Method 3: Look at the "pinned" or large video (usually the speaker)
-      const pinnedName = document.querySelector('[data-self-name][data-is-main-screen="true"]')
-      if (pinnedName) return pinnedName.getAttribute('data-self-name')
+      // ── Method 2: kssMZb on video container ──
+      const speakingVC = document.querySelector('.CNjCjf.kssMZb')
+      if (speakingVC) {
+        const tile = speakingVC.closest('[data-participant-id]')
+        if (tile) {
+          const nameEl = tile.querySelector('.XEazBc .notranslate')
+            || tile.querySelector('.notranslate')
+          if (nameEl?.textContent?.trim()) return nameEl.textContent.trim()
+        }
+      }
 
-      // Method 4: Caption indicator (if captions happen to be on)
+      // ── Method 3: Scan all tiles for active border class ──
+      const tiles = document.querySelectorAll('[data-participant-id]')
+      for (const tile of tiles) {
+        // Check for S7urwe (speaking border) or kssMZb (speaking marker)
+        if (tile.querySelector('.S7urwe') || tile.querySelector('.kssMZb')) {
+          const nameEl = tile.querySelector('.XEazBc .notranslate')
+            || tile.querySelector('.notranslate')
+          if (nameEl?.textContent?.trim()) return nameEl.textContent.trim()
+          // Try aria-label extraction
+          const muteBtn = tile.querySelector('[aria-label*="Mute"][aria-label*="microphone"]')
+          if (muteBtn) {
+            const match = muteBtn.getAttribute('aria-label')?.match(/Mute (.+?)'s microphone/)
+            if (match) return match[1]
+          }
+        }
+      }
+
+      // ── Method 4: Legacy fallbacks ──
+      // data-is-speaking (older Meet versions)
+      const legacySpeaking = document.querySelector('[data-is-speaking="true"]')
+      if (legacySpeaking) {
+        const tile = legacySpeaking.closest('[data-participant-id]') || legacySpeaking
+        const nameEl = tile.querySelector('.notranslate')
+          || tile.querySelector('[data-self-name]')
+        if (nameEl) return nameEl.textContent?.trim() || nameEl.getAttribute('data-self-name') || null
+      }
+
+      // Caption speaker name (if captions are enabled)
       const captionSpeaker = document.querySelector('[data-sender-name]')
       if (captionSpeaker) return captionSpeaker.getAttribute('data-sender-name')
 

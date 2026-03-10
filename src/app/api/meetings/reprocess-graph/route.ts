@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
 
 export const runtime = 'nodejs'
-export const maxDuration = 120
+export const maxDuration = 300
 
 /**
  * POST /api/meetings/reprocess-graph

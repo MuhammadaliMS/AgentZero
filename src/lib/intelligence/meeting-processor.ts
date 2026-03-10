@@ -11,7 +11,6 @@ import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
 import { resolvePersonEntity } from '@/lib/graph/entity-resolver'
 import { attributeSpeakersIfNeeded } from '@/lib/intelligence/speaker-attribution'
 import type { Json } from '@/types/database'
-import { randomUUID } from 'crypto'
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -304,21 +303,28 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       })
       .eq('id', meetingId)
 
-    // 11. Feed into knowledge graph (fire-and-forget, like morning brief)
-    const graphContent = buildGraphExtractionContent(meeting.title, summaryResult, fullTranscript, participants)
-    runExtractionPipeline({
-      orgId: meeting.org_id,
-      conversationId: randomUUID(),
-      messageContent: graphContent,
-      role: 'assistant',
-    }).catch(err => {
+    // 11. Feed into knowledge graph (AWAITED — was fire-and-forget but got killed on Vercel
+    //     before completion, and the randomUUID() conversationId caused FK violations)
+    try {
+      const graphContent = buildGraphExtractionContent(meeting.title, summaryResult, fullTranscript, participants)
+      await runExtractionPipeline({
+        orgId: meeting.org_id,
+        conversationId: null, // no conversation row — pass null to avoid FK violation
+        messageContent: graphContent,
+        role: 'assistant',
+      })
+      console.log(`[meeting-processor] Knowledge graph extraction completed for ${meetingId}`)
+    } catch (err) {
+      // Non-fatal — meeting should still be marked completed even if graph extraction fails
       console.error(`[meeting-processor] Extraction pipeline failed for ${meetingId}:`, err)
-    })
+    }
 
-    // 12. Store meeting outcome as memory (fire-and-forget)
-    storeMeetingMemory(supabase, meeting, summaryResult).catch(err => {
+    // 12. Store meeting outcome as memory (awaited for same reason — Vercel kills fire-and-forget)
+    try {
+      await storeMeetingMemory(supabase, meeting, summaryResult)
+    } catch (err) {
       console.error(`[meeting-processor] Memory storage failed for ${meetingId}:`, err)
-    })
+    }
 
     const result: ProcessingResult = {
       meetingId,

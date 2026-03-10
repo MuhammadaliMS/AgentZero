@@ -22,7 +22,10 @@ import type { Json } from '@/types/database'
 
 export interface ExtractionParams {
   orgId: string
-  conversationId: string
+  /** conversation UUID — optional for non-conversation sources (e.g. meetings).
+   *  When null, extraction_jobs.conversation_id and relationship source_conversation_id
+   *  are stored as NULL to avoid FK violations against the conversations table. */
+  conversationId?: string | null
   messageId?: string
   messageContent: string
   role: 'user' | 'assistant'
@@ -41,7 +44,7 @@ export interface ExtractionParams {
  * Never throws — catches all errors, logs them, and marks the job as failed.
  */
 export async function runExtractionPipeline(params: ExtractionParams): Promise<void> {
-  const { orgId, conversationId, messageId, messageContent, role } = params
+  const { orgId, conversationId = null, messageId, messageContent, role } = params
 
   if (!isOpenAIConfigured()) return
   // Skip very short messages unless enriched with tool outputs
@@ -64,11 +67,12 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
 
   try {
     // 1. Create extraction job row
+    // conversation_id is nullable — meetings pass null since they don't have a conversation row
     const { data: job } = await supabase
       .from('extraction_jobs')
       .insert({
         org_id: orgId,
-        conversation_id: conversationId,
+        conversation_id: conversationId ?? null,
         message_id: messageId ?? null,
         status: 'processing',
         model_used: process.env.EXTRACTOR_MODEL || 'x-ai/grok-4.1-fast',
@@ -121,7 +125,7 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
 
     // Run pre-store guard to detect contradictions
     const { allowed, blocked, contradictions } = await runPreStoreGuard(
-      orgId, conversationId, resolvedRels
+      orgId, conversationId ?? 'meeting-extraction', resolvedRels
     )
 
     // Only upsert allowed relationships
@@ -140,7 +144,7 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
 
     // Store contradictions (fire-and-forget)
     if (contradictions.length > 0) {
-      storeContradictions(orgId, conversationId, contradictions).catch(err =>
+      storeContradictions(orgId, conversationId ?? 'meeting-extraction', contradictions).catch(err =>
         console.error('[Extraction] Failed to store contradictions:', err)
       )
     }
@@ -169,7 +173,7 @@ export async function runExtractionPipeline(params: ExtractionParams): Promise<v
       const extractedIds = new Set(entityIdMap.values())
       const citedIds = params.injectedEntityIds.filter(id => extractedIds.has(id))
       if (citedIds.length > 0) {
-        trackUtilityEventBatch(orgId, citedIds, 'cited', conversationId).catch(() => {})
+        trackUtilityEventBatch(orgId, citedIds, 'cited', conversationId ?? undefined).catch(() => {})
       }
     }
 
@@ -381,7 +385,7 @@ async function bumpEntity(
 export async function upsertRelationship(
   supabase: ReturnType<typeof createAdminClient>,
   orgId: string,
-  conversationId: string,
+  conversationId: string | null | undefined,
   sourceId: string,
   targetId: string,
   rel: ExtractedRelationship
@@ -421,7 +425,7 @@ export async function upsertRelationship(
           relationship_type: rel.type,
           properties: (rel.properties ?? {}) as Json,
           confidence: rel.confidence ?? 1.0,
-          source_conversation_id: conversationId,
+          source_conversation_id: conversationId ?? null,
         })
     } else {
       // Same properties — just update timestamps
@@ -441,7 +445,7 @@ export async function upsertRelationship(
         relationship_type: rel.type,
         properties: (rel.properties ?? {}) as Json,
         confidence: rel.confidence ?? 1.0,
-        source_conversation_id: conversationId,
+        source_conversation_id: conversationId ?? null,
       })
   }
 }

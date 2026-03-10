@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
@@ -14,15 +15,32 @@ export const maxDuration = 120
  * pipeline was missed (e.g. due to FK violations or Vercel timeouts).
  *
  * Body: { meeting_id: string }
- * Auth: Requires authenticated user who belongs to the meeting's org.
+ * Auth: Requires authenticated user OR Bearer CRON_SECRET.
  */
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
+  // Auth: accept either user session or CRON_SECRET Bearer token
+  let authed = false
 
-  // Auth check
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Check Bearer token (CRON_SECRET) for automated/CLI calls
+  const authHeader = request.headers.get('authorization') ?? ''
+  if (process.env.CRON_SECRET && authHeader.startsWith('Bearer ')) {
+    const expected = `Bearer ${process.env.CRON_SECRET}`
+    if (
+      authHeader.length === expected.length &&
+      timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))
+    ) {
+      authed = true
+    }
+  }
+
+  // Fallback to user session auth
+  if (!authed) {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    authed = true
   }
 
   let body: { meeting_id: string }

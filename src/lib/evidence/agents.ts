@@ -9,7 +9,7 @@ const LLM_API_KEY = NVIDIA_API_KEY || OPENROUTER_API_KEY
 const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
   ? 'https://integrate.api.nvidia.com/v1'
   : 'https://openrouter.ai/api/v1')
-const EVIDENCE_AGENT_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 90_000
+const EVIDENCE_AGENT_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 180_000
 const EVIDENCE_AGENT_MAX_TOKENS = Math.max(Number(process.env.AGENTIC_EVIDENCE_MAX_TOKENS) || 16384, 2000)
 
 const CHANNEL_ANALYST_SYSTEM_PROMPT = `You are the channel_analyst for Axari's evidence graph.

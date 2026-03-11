@@ -105,6 +105,17 @@ export interface EvidencePipelineParams {
         messages: Array<Record<string, unknown>>
         toolOutputs?: Array<{ toolName: string; output: string }>
       }
+    | {
+        kind: 'email'
+        provider: 'gmail' | 'microsoft_365'
+        thread: Record<string, unknown>
+        messages: Array<Record<string, unknown>>
+      }
+    | {
+        kind: 'slack'
+        conversation: Record<string, unknown>
+        messages: Array<Record<string, unknown>>
+      }
   compatibility?: {
     conversationId?: string | null
     messageId?: string | null

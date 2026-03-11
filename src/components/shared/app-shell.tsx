@@ -17,13 +17,14 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Separator } from '@/components/ui/separator'
 import { CommandPalette } from '@/components/shared/command-palette'
 import type { Database } from '@/types/database'
-import { MessageSquare, LayoutGrid, Layers, Video, Network, Settings, Search, LogOut, Menu, Zap } from 'lucide-react'
+import { MessageSquare, LayoutGrid, Layers, Video, Network, Settings, Search, LogOut, Menu, Zap, BrainCircuit } from 'lucide-react'
 
 type Profile = Database['public']['Tables']['profiles']['Row']
 
 const navItems = [
   { href: '/chat', label: 'Chat', icon: MessageSquare },
   { href: '/command-center', label: 'Command Center', icon: LayoutGrid },
+  { href: '/intelligence', label: 'Intelligence', icon: BrainCircuit },
   { href: '/integrations', label: 'Integrations', icon: Layers },
   { href: '/meetings', label: 'Meetings', icon: Video },
   { href: '/knowledge-graph', label: 'Knowledge Graph', icon: Network },

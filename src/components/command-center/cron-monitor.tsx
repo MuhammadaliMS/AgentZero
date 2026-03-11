@@ -79,6 +79,13 @@ const CRON_CONFIG: Record<string, {
     bg: 'bg-cyan-50 dark:bg-cyan-950/30',
     schedule: 'Every 5 min',
   },
+  'daily-evidence-sync': {
+    label: 'Daily Evidence Sync',
+    icon: Layers,
+    accent: 'text-teal-600 dark:text-teal-400',
+    bg: 'bg-teal-50 dark:bg-teal-950/30',
+    schedule: 'Daily',
+  },
   'nudge': {
     label: 'Nudge',
     icon: Bell,

@@ -19,6 +19,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { upsertEntityAliases } from '@/lib/graph/entity-resolution'
 import type { Json } from '@/types/database'
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -407,7 +408,7 @@ async function mergeEntityInto(
   // 5. Bump keep entity's mention count with merge entity's count
   const { data: mergeEntity } = await supabase
     .from('entities')
-    .select('mention_count, attributes, description')
+    .select('mention_count, attributes, description, name, canonical_name, entity_type, org_id')
     .eq('id', mergeId)
     .single()
 
@@ -419,6 +420,19 @@ async function mergeEntityInto(
       .single()
 
     if (keepEntity) {
+      if (mergeEntity.name && mergeEntity.canonical_name && mergeEntity.entity_type && mergeEntity.org_id) {
+        await upsertEntityAliases({
+          supabase,
+          orgId: mergeEntity.org_id,
+          entityId: keepId,
+          entityType: mergeEntity.entity_type,
+          alias: mergeEntity.name,
+          aliasKind: 'merged',
+          confidence: 0.95,
+          source: 'entity_dedup_merge',
+        })
+      }
+
       await supabase
         .from('entities')
         .update({

@@ -677,6 +677,20 @@ async function resolveEntityRef(
     return data.id
   }
 
+  const { data: aliasMatches } = await supabase
+    .from('entity_aliases')
+    .select('entity_id')
+    .eq('org_id', orgId)
+    .eq('normalized_alias', canonical)
+    .limit(2)
+
+  if ((aliasMatches ?? []).length === 1 && typeof aliasMatches?.[0]?.entity_id === 'string') {
+    const entityId = aliasMatches[0].entity_id
+    entitiesByRef.set(trimmed, entityId)
+    entitiesByRef.set(normalizeRef(trimmed), entityId)
+    return entityId
+  }
+
   return null
 }
 

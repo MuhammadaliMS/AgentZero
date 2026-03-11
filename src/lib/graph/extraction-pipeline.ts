@@ -17,6 +17,11 @@ import {
 } from '@/lib/openai/client'
 import { runPreStoreGuard, storeContradictions, type ResolvedRelationship } from '@/lib/graph/contradiction-detector'
 import { trackUtilityEventBatch } from '@/lib/graph/utility-tracker'
+import {
+  buildResolutionVariants,
+  resolveExistingEntityMatch,
+  upsertEntityAliases,
+} from '@/lib/graph/entity-resolution'
 import type { Json } from '@/types/database'
 
 // ─── Types ───────────────────────────────────────────────────────────────
@@ -253,7 +258,8 @@ const FUZZY_MIN_LENGTH = 4
  *   3. If no match found, insert a new entity.
  */
 export async function upsertEntities(
-  supabase: ReturnType<typeof createAdminClient>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
   orgId: string,
   entities: ExtractedEntity[]
 ): Promise<Map<string, string>> {
@@ -269,49 +275,48 @@ export async function upsertEntities(
       .eq('org_id', orgId)
       .eq('canonical_name', canonical)
       .eq('entity_type', entity.type)
-      .single()
+      .maybeSingle()
 
     if (exactMatch) {
       await bumpEntity(supabase, exactMatch.id, exactMatch.mention_count, entity)
+      for (const variant of buildResolutionVariants(entity.name, entity.type)) {
+        entityIdMap.set(variant, exactMatch.id)
+      }
       entityIdMap.set(canonical, exactMatch.id)
+      await upsertEntityAliases({
+        supabase,
+        orgId,
+        entityId: exactMatch.id,
+        entityType: entity.type,
+        alias: entity.name,
+        aliasKind: 'observed',
+        confidence: 1,
+        source: 'extraction_pipeline',
+      })
       continue
     }
 
-    // ── 2. Fuzzy match — substring containment (same type) ──────────
-    // Only attempt for names with enough characters to avoid false positives.
-    let fuzzyMatch: { id: string; mention_count: number; canonical_name: string } | null = null
+    const resolution = await resolveExistingEntityMatch({
+      supabase,
+      orgId,
+      candidate: {
+        entityType: entity.type,
+        name: entity.name,
+        canonicalName: canonical,
+        attributes: entity.attributes ?? {},
+        aliases: [entity.name, canonical],
+      },
+    })
 
-    if (canonical.length >= FUZZY_MIN_LENGTH) {
-      // Check if any existing entity's canonical name contains the new name,
-      // OR if the new name contains an existing entity's canonical name.
-      // We use ilike for case-insensitive substring matching.
-      const { data: candidates } = await supabase
-        .from('entities')
-        .select('id, mention_count, canonical_name')
-        .eq('org_id', orgId)
-        .eq('entity_type', entity.type)
-        .or(`canonical_name.ilike.%${canonical}%,canonical_name.ilike.${canonical.split(' ')[0]}%`)
-        .order('mention_count', { ascending: false })
-        .limit(5)
-
-      if (candidates && candidates.length > 0) {
-        // Score candidates: prefer exact substring containment both ways
-        fuzzyMatch = candidates.find(c => {
-          const existing = c.canonical_name
-          return existing.includes(canonical) || canonical.includes(existing)
-        }) ?? null
-      }
-    }
-
-    if (fuzzyMatch) {
+    if (resolution.matchedEntity && resolution.decision) {
       // Merge into existing entity. If the new name is longer (more specific),
       // update the canonical name and display name to keep the fuller version.
-      const shouldUpdateName = canonical.length > fuzzyMatch.canonical_name.length
+      const shouldUpdateName = shouldPromoteEntityName(canonical, resolution.matchedEntity.canonicalName)
 
       await supabase
         .from('entities')
         .update({
-          mention_count: fuzzyMatch.mention_count + 1,
+          mention_count: resolution.matchedEntity.mentionCount + 1,
           last_seen_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           ...(entity.description ? { description: entity.description } : {}),
@@ -321,14 +326,31 @@ export async function upsertEntities(
             ? { name: entity.name, canonical_name: canonical }
             : {}),
         })
-        .eq('id', fuzzyMatch.id)
+        .eq('id', resolution.matchedEntity.id)
 
-      // Map both the current canonical AND the original match's canonical to the same ID
-      entityIdMap.set(canonical, fuzzyMatch.id)
-      entityIdMap.set(fuzzyMatch.canonical_name, fuzzyMatch.id)
+      for (const variant of buildResolutionVariants(entity.name, entity.type)) {
+        entityIdMap.set(variant, resolution.matchedEntity.id)
+      }
+      entityIdMap.set(canonical, resolution.matchedEntity.id)
+      entityIdMap.set(resolution.matchedEntity.canonicalName, resolution.matchedEntity.id)
+
+      await upsertEntityAliases({
+        supabase,
+        orgId,
+        entityId: resolution.matchedEntity.id,
+        entityType: entity.type,
+        alias: entity.name,
+        aliasKind: resolution.decision.strategy === 'llm' ? 'llm_inferred' : 'observed',
+        confidence: resolution.decision.score,
+        source: 'extraction_pipeline',
+        metadata: {
+          matchReason: resolution.decision.reason,
+        },
+      })
 
       console.log(
-        `[Extraction] Fuzzy matched "${canonical}" → existing "${fuzzyMatch.canonical_name}" (id=${fuzzyMatch.id.slice(0, 8)})`
+        `[Extraction] Resolved "${canonical}" → existing "${resolution.matchedEntity.canonicalName}" ` +
+        `(id=${resolution.matchedEntity.id.slice(0, 8)}, strategy=${resolution.decision.strategy})`
       )
       continue
     }
@@ -349,6 +371,19 @@ export async function upsertEntities(
 
     if (newEntity) {
       entityIdMap.set(canonical, newEntity.id)
+      for (const variant of buildResolutionVariants(entity.name, entity.type)) {
+        entityIdMap.set(variant, newEntity.id)
+      }
+      await upsertEntityAliases({
+        supabase,
+        orgId,
+        entityId: newEntity.id,
+        entityType: entity.type,
+        alias: entity.name,
+        aliasKind: 'canonical',
+        confidence: 1,
+        source: 'extraction_pipeline',
+      })
     }
   }
 
@@ -359,7 +394,8 @@ export async function upsertEntities(
  * Bump an existing entity's mention count and merge new data into it.
  */
 async function bumpEntity(
-  supabase: ReturnType<typeof createAdminClient>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
   entityId: string,
   currentMentionCount: number,
   entity: ExtractedEntity
@@ -374,6 +410,13 @@ async function bumpEntity(
       ...(entity.attributes ? { attributes: entity.attributes as Json } : {}),
     })
     .eq('id', entityId)
+}
+
+function shouldPromoteEntityName(nextCanonical: string, existingCanonical: string): boolean {
+  if (!nextCanonical || !existingCanonical) return false
+  if (nextCanonical === existingCanonical) return false
+  if (nextCanonical.includes(existingCanonical)) return true
+  return nextCanonical.split(' ').length > existingCanonical.split(' ').length
 }
 
 // ─── Relationship Upsert ────────────────────────────────────────────────

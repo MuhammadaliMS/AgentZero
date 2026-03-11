@@ -9,7 +9,9 @@ import {
 } from '@/lib/evidence/store'
 import {
   normalizeChatArtifact,
+  normalizeEmailArtifact,
   normalizeMeetingArtifact,
+  normalizeSlackArtifact,
   type NormalizedArtifact,
   type NormalizedEvidenceItem,
 } from '@/lib/evidence/normalizers'
@@ -139,6 +141,56 @@ function normalizeSource(params: EvidencePipelineParams): {
         actionItems: params.source.actionItems ?? [],
         decisions: params.source.decisions ?? [],
       },
+    }
+  }
+
+  if (params.source.kind === 'email') {
+    const normalized = normalizeEmailArtifact({
+      orgId: params.orgId,
+      provider: params.source.provider,
+      thread: params.source.thread as {
+        id: string
+        subject: string
+        participants?: string[]
+        sourceUrl?: string | null
+      },
+      messages: params.source.messages as Array<{
+        id: string
+        authorName?: string | null
+        authorEmail?: string | null
+        text: string
+        happenedAt?: string | null
+      }>,
+    })
+
+    return {
+      ...normalized,
+      sourceSummary: null,
+    }
+  }
+
+  if (params.source.kind === 'slack') {
+    const normalized = normalizeSlackArtifact({
+      orgId: params.orgId,
+      conversation: params.source.conversation as {
+        channelId: string
+        channelName: string
+        channelType: 'public' | 'private' | 'dm' | 'group_dm'
+        threadTs?: string | null
+        sourceUrl?: string | null
+      },
+      messages: params.source.messages as Array<{
+        ts: string
+        userName?: string | null
+        userEmail?: string | null
+        text: string
+        happenedAt?: string | null
+      }>,
+    })
+
+    return {
+      ...normalized,
+      sourceSummary: null,
     }
   }
 

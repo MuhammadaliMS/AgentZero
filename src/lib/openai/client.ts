@@ -58,6 +58,13 @@ export interface ExtractionResult {
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
 }
 
+export interface EntityMatchLLMDecision {
+  action: 'match' | 'create_new' | 'uncertain'
+  entityId?: string
+  confidence?: number
+  reasoning?: string
+}
+
 // ─── Extraction System Prompt ────────────────────────────────────────────
 
 const EXTRACTION_SYSTEM_PROMPT = `You are an entity and relationship extractor for a Senior Product Manager's executive workflow system. Extract structured entities and relationships from the given text and any integration data.
@@ -106,6 +113,24 @@ Respond with valid JSON matching this schema:
 {
   "entities": [{ "name": "string", "type": "string", "description": "string", "attributes": {} }],
   "relationships": [{ "source": "string", "target": "string", "type": "string", "properties": {}, "confidence": 1.0 }]
+}`
+
+const ENTITY_RESOLUTION_SYSTEM_PROMPT = `You resolve whether a newly extracted entity refers to an existing knowledge-graph entity.
+
+Rules:
+- Prefer matching only when evidence is strong.
+- Exact email identity is definitive.
+- For people, minor spelling drift is acceptable only if the full name clearly refers to the same person.
+- Do not merge different people who only share a first name.
+- For organizations, treat suffix variants like "VC" and "Ventures" as possibly the same organization if the base name is the same.
+- If uncertain, return "uncertain" instead of forcing a match.
+
+Respond with valid JSON:
+{
+  "action": "match" | "create_new" | "uncertain",
+  "entityId": "existing entity id if action=match",
+  "confidence": 0.0,
+  "reasoning": "short explanation"
 }`
 
 // ─── API Functions ───────────────────────────────────────────────────────
@@ -308,6 +333,74 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
   } finally {
     clearTimeout(timeout)
   }
+}
+
+/**
+ * Ask the configured LLM to resolve a candidate entity against ambiguous existing entities.
+ */
+export async function resolveEntityMatchWithLLM(input: {
+  candidate: Record<string, unknown>
+  candidates: Array<Record<string, unknown>>
+}): Promise<EntityMatchLLMDecision | null> {
+  if (!LLM_API_KEY || input.candidates.length === 0) return null
+
+  const body = JSON.stringify({
+    candidate: input.candidate,
+    candidates: input.candidates,
+  })
+
+  const attempt = async (model: string, apiKey: string, baseUrl: string): Promise<EntityMatchLLMDecision | null> => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), Math.min(LLM_TIMEOUT_MS, 30_000))
+
+    try {
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+          'X-Title': 'Captain Entity Resolution',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: ENTITY_RESOLUTION_SYSTEM_PROMPT },
+            { role: 'user', content: body },
+          ],
+          response_format: { type: 'json_object' },
+          temperature: 0,
+          max_tokens: 800,
+        }),
+        signal: controller.signal,
+      })
+
+      if (!response.ok) {
+        return null
+      }
+
+      const data = await response.json()
+      const content = data.choices?.[0]?.message?.content
+      if (!content) return null
+
+      const parsed = JSON.parse(content) as EntityMatchLLMDecision
+      if (!parsed.action) return null
+      return parsed
+    } catch {
+      return null
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
+  const primary = await attempt(EXTRACTOR_MODEL, LLM_API_KEY, LLM_BASE_URL)
+  if (primary) return primary
+
+  if (OPENROUTER_API_KEY && FALLBACK_EXTRACTOR_MODEL && FALLBACK_EXTRACTOR_MODEL !== EXTRACTOR_MODEL) {
+    return attempt(FALLBACK_EXTRACTOR_MODEL, OPENROUTER_API_KEY, 'https://openrouter.ai/api/v1')
+  }
+
+  return null
 }
 
 /**

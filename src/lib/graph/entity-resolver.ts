@@ -12,6 +12,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeCanonical } from './extraction-pipeline'
+import { resolveExistingEntityMatch, upsertEntityAliases } from './entity-resolution'
 import type { Json } from '@/types/database'
 
 type AdminClient = ReturnType<typeof createAdminClient>
@@ -70,28 +71,33 @@ export async function resolvePersonEntity(
 
   // ── 3. Fuzzy name match (substring containment) ─────────────────────────
   if (canonical.length >= FUZZY_MIN_LENGTH) {
-    const firstName = canonical.split(' ')[0]
-    const { data: candidates } = await supabase
-      .from('entities')
-      .select('id, canonical_name')
-      .eq('org_id', orgId)
-      .eq('entity_type', 'person')
-      .or(`canonical_name.ilike.%${canonical}%,canonical_name.ilike.${firstName}%`)
-      .order('mention_count', { ascending: false })
-      .limit(5)
+    const resolution = await resolveExistingEntityMatch({
+      supabase,
+      orgId,
+      candidate: {
+        entityType: 'person',
+        name,
+        canonicalName: canonical,
+        attributes: email ? { email } : {},
+        aliases: [name, canonical],
+      },
+    })
 
-    if (candidates && candidates.length > 0) {
-      const fuzzyMatch = candidates.find(c => {
-        const existing = c.canonical_name
-        return existing.includes(canonical) || canonical.includes(existing)
-      })
-
-      if (fuzzyMatch) {
-        if (email) {
-          await mergeEmailAttribute(supabase, fuzzyMatch.id, email)
-        }
-        return fuzzyMatch.id
+    if (resolution.matchedEntity?.id) {
+      if (email) {
+        await mergeEmailAttribute(supabase, resolution.matchedEntity.id, email)
       }
+      await upsertEntityAliases({
+        supabase,
+        orgId,
+        entityId: resolution.matchedEntity.id,
+        entityType: 'person',
+        alias: name,
+        aliasKind: resolution.decision?.strategy === 'llm' ? 'llm_inferred' : 'observed',
+        confidence: resolution.decision?.score ?? 0.85,
+        source: 'person_entity_resolver',
+      })
+      return resolution.matchedEntity.id
     }
   }
 
@@ -116,6 +122,16 @@ export async function resolvePersonEntity(
     .single()
 
   if (newEntity) {
+    await upsertEntityAliases({
+      supabase,
+      orgId,
+      entityId: newEntity.id,
+      entityType: 'person',
+      alias: name.trim(),
+      aliasKind: 'canonical',
+      confidence: 1,
+      source: 'person_entity_resolver',
+    })
     console.log(`[entity-resolver] Created person entity "${canonical}" (${email || 'no email'})`)
     return newEntity.id
   }

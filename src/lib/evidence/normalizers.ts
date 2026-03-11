@@ -112,6 +112,37 @@ interface ToolOutputLike {
   output: string
 }
 
+interface EmailThreadLike {
+  id: string
+  subject: string
+  participants?: string[]
+  sourceUrl?: string | null
+}
+
+interface EmailMessageLike {
+  id: string
+  authorName?: string | null
+  authorEmail?: string | null
+  text: string
+  happenedAt?: string | null
+}
+
+interface SlackConversationLike {
+  channelId: string
+  channelName: string
+  channelType: 'public' | 'private' | 'dm' | 'group_dm'
+  threadTs?: string | null
+  sourceUrl?: string | null
+}
+
+interface SlackMessageLike {
+  ts: string
+  userName?: string | null
+  userEmail?: string | null
+  text: string
+  happenedAt?: string | null
+}
+
 export function normalizeChatArtifact(input: {
   orgId: string
   conversation: ConversationLike
@@ -168,6 +199,99 @@ export function normalizeChatArtifact(input: {
     artifact,
     evidenceItems: [...messageItems, ...toolItems],
   }
+}
+
+export function normalizeEmailArtifact(input: {
+  orgId: string
+  provider: 'gmail' | 'microsoft_365'
+  thread: EmailThreadLike
+  messages: EmailMessageLike[]
+}): {
+  artifact: NormalizedArtifact
+  evidenceItems: NormalizedEvidenceItem[]
+} {
+  const artifact: NormalizedArtifact = {
+    orgId: input.orgId,
+    channel: 'email',
+    externalId: `${input.provider}:${input.thread.id}`,
+    title: input.thread.subject?.trim() || `Email thread ${input.thread.id}`,
+    sourceUrl: input.thread.sourceUrl ?? null,
+    startedAt: input.messages[0]?.happenedAt ?? null,
+    endedAt: input.messages[input.messages.length - 1]?.happenedAt ?? null,
+    rawRef: `email:${input.provider}:${input.thread.id}`,
+    metadata: {
+      provider: input.provider,
+      threadId: input.thread.id,
+      participants: input.thread.participants ?? [],
+    },
+  }
+
+  const evidenceItems = input.messages.map((message, index) => ({
+    sequenceNo: index + 1,
+    authorName: message.authorName ?? message.authorEmail ?? null,
+    happenedAt: message.happenedAt ?? null,
+    text: message.text.trim(),
+    sourceAnchor: `message:${message.id}`,
+    artifactChannel: 'email' as const,
+    metadata: {
+      provider: input.provider,
+      messageId: message.id,
+      authorEmail: message.authorEmail ?? null,
+      threadId: input.thread.id,
+    },
+  }))
+
+  return { artifact, evidenceItems }
+}
+
+export function normalizeSlackArtifact(input: {
+  orgId: string
+  conversation: SlackConversationLike
+  messages: SlackMessageLike[]
+}): {
+  artifact: NormalizedArtifact
+  evidenceItems: NormalizedEvidenceItem[]
+} {
+  const externalId = input.conversation.threadTs
+    ? `slack:${input.conversation.channelId}:${input.conversation.threadTs}`
+    : `slack:${input.conversation.channelId}:${input.messages[0]?.happenedAt?.slice(0, 10) ?? 'undated'}`
+
+  const artifact: NormalizedArtifact = {
+    orgId: input.orgId,
+    channel: 'slack',
+    externalId,
+    title: input.conversation.channelName,
+    sourceUrl: input.conversation.sourceUrl ?? null,
+    startedAt: input.messages[0]?.happenedAt ?? null,
+    endedAt: input.messages[input.messages.length - 1]?.happenedAt ?? null,
+    rawRef: input.conversation.threadTs
+      ? `slack:${input.conversation.channelId}:thread:${input.conversation.threadTs}`
+      : `slack:${input.conversation.channelId}:slice`,
+    metadata: {
+      channelId: input.conversation.channelId,
+      channelName: input.conversation.channelName,
+      channelType: input.conversation.channelType,
+      threadTs: input.conversation.threadTs ?? null,
+    },
+  }
+
+  const evidenceItems = input.messages.map((message, index) => ({
+    sequenceNo: index + 1,
+    authorName: message.userName ?? message.userEmail ?? null,
+    happenedAt: message.happenedAt ?? null,
+    text: message.text.trim(),
+    sourceAnchor: `message:${message.ts}`,
+    artifactChannel: 'slack' as const,
+    metadata: {
+      channelId: input.conversation.channelId,
+      channelType: input.conversation.channelType,
+      userEmail: message.userEmail ?? null,
+      ts: message.ts,
+      threadTs: input.conversation.threadTs ?? null,
+    },
+  }))
+
+  return { artifact, evidenceItems }
 }
 
 export function buildClaimKey(input: {

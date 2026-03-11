@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { createClient } from '@/lib/supabase/server'
 import { attributeSpeakersIfNeeded } from '@/lib/intelligence/speaker-attribution'
 
@@ -13,17 +14,9 @@ export const maxDuration = 120
  * segments ended up with the same (or concatenated) speaker name.
  *
  * Body: { meeting_id: string }
- * Auth: Requires authenticated user who belongs to the meeting's org.
+ * Auth: Requires authenticated user OR Bearer CRON_SECRET for admin use.
  */
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
-
-  // Auth check
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
   let body: { meeting_id: string }
   try {
     body = await request.json()
@@ -35,27 +28,49 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'meeting_id required' }, { status: 400 })
   }
 
-  // Verify user has access to this meeting (through org membership)
-  const { data: meeting } = await (supabase as any)
-    .from('meetings')
-    .select('id, org_id, title')
-    .eq('id', body.meeting_id)
-    .single()
+  // Auth: check CRON_SECRET first (admin), then fall back to user auth
+  const authHeader = request.headers.get('authorization') ?? ''
+  const cronSecret = process.env.CRON_SECRET
+  let isAdmin = false
 
-  if (!meeting) {
-    return NextResponse.json({ error: 'Meeting not found' }, { status: 404 })
+  if (cronSecret && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    if (
+      token.length === cronSecret.length &&
+      timingSafeEqual(Buffer.from(token), Buffer.from(cronSecret))
+    ) {
+      isAdmin = true
+    }
   }
 
-  // Verify org membership
-  const { data: membership } = await (supabase as any)
-    .from('organization_members')
-    .select('id')
-    .eq('org_id', meeting.org_id)
-    .eq('user_id', user.id)
-    .maybeSingle()
+  if (!isAdmin) {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-  if (!membership) {
-    return NextResponse.json({ error: 'Not a member of this organization' }, { status: 403 })
+    // Verify user has access to this meeting (through org membership)
+    const { data: meeting } = await (supabase as any)
+      .from('meetings')
+      .select('id, org_id, title')
+      .eq('id', body.meeting_id)
+      .single()
+
+    if (!meeting) {
+      return NextResponse.json({ error: 'Meeting not found' }, { status: 404 })
+    }
+
+    const { data: membership } = await (supabase as any)
+      .from('organization_members')
+      .select('id')
+      .eq('org_id', meeting.org_id)
+      .eq('user_id', user.id)
+      .maybeSingle()
+
+    if (!membership) {
+      return NextResponse.json({ error: 'Not a member of this organization' }, { status: 403 })
+    }
   }
 
   // Run speaker attribution

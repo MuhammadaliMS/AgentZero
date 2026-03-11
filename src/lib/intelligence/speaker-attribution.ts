@@ -37,18 +37,15 @@ export interface AttributionResult {
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────
-// Speaker attribution has its own API config so it can use a different
-// provider than the evidence pipeline (e.g. OpenRouter when NVIDIA is down).
-// Falls back to the shared NVIDIA/OpenRouter config if not set.
+// Speaker attribution uses the same NVIDIA/Kimi stack as the evidence pipeline.
+// Override with SPEAKER_ATTRIBUTION_* env vars if needed.
 
 const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || ''
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
 
-// Prefer OpenRouter for speaker attribution — it's more reliable and
-// Claude Haiku is fast + accurate for this task.
 const ATTRIBUTION_API_KEY = process.env.SPEAKER_ATTRIBUTION_API_KEY
-  || OPENROUTER_API_KEY
   || NVIDIA_API_KEY
+  || OPENROUTER_API_KEY
 const ATTRIBUTION_BASE_URL = process.env.SPEAKER_ATTRIBUTION_BASE_URL
   || (ATTRIBUTION_API_KEY === NVIDIA_API_KEY && NVIDIA_API_KEY
     ? 'https://integrate.api.nvidia.com/v1'

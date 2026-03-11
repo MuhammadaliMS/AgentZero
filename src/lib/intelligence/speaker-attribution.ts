@@ -37,22 +37,31 @@ export interface AttributionResult {
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────
+// Speaker attribution has its own API config so it can use a different
+// provider than the evidence pipeline (e.g. OpenRouter when NVIDIA is down).
+// Falls back to the shared NVIDIA/OpenRouter config if not set.
 
 const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || ''
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
-const LLM_API_KEY = NVIDIA_API_KEY || OPENROUTER_API_KEY
-const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
-  ? 'https://integrate.api.nvidia.com/v1'
-  : 'https://openrouter.ai/api/v1')
-// Use EXTRACTOR_MODEL (which supports reasoning) for attribution.
-// The model needs enough max_tokens for chain-of-thought + JSON output.
-const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || (NVIDIA_API_KEY
-  ? 'moonshotai/kimi-k2.5'
-  : 'anthropic/claude-haiku-4.5')
-const ATTRIBUTION_MODEL = process.env.SPEAKER_ATTRIBUTION_MODEL || EXTRACTOR_MODEL
+
+// Prefer OpenRouter for speaker attribution — it's more reliable and
+// Claude Haiku is fast + accurate for this task.
+const ATTRIBUTION_API_KEY = process.env.SPEAKER_ATTRIBUTION_API_KEY
+  || OPENROUTER_API_KEY
+  || NVIDIA_API_KEY
+const ATTRIBUTION_BASE_URL = process.env.SPEAKER_ATTRIBUTION_BASE_URL
+  || (ATTRIBUTION_API_KEY === NVIDIA_API_KEY && NVIDIA_API_KEY
+    ? 'https://integrate.api.nvidia.com/v1'
+    : 'https://openrouter.ai/api/v1')
+const ATTRIBUTION_MODEL = process.env.SPEAKER_ATTRIBUTION_MODEL
+  || (ATTRIBUTION_API_KEY === NVIDIA_API_KEY && NVIDIA_API_KEY
+    ? 'moonshotai/kimi-k2.5'
+    : 'anthropic/claude-haiku-4.5')
 const ATTRIBUTION_MAX_TOKENS = Math.max(
   Number(process.env.SPEAKER_ATTRIBUTION_MAX_TOKENS) || 16384, 4000
 )
+// Per-chunk fetch timeout (ms) — prevents hanging on unresponsive APIs
+const ATTRIBUTION_FETCH_TIMEOUT_MS = Number(process.env.SPEAKER_ATTRIBUTION_TIMEOUT_MS) || 90_000
 
 // Max segments per LLM call (to stay within context limits)
 const CHUNK_SIZE = 80
@@ -308,7 +317,7 @@ async function callAttributionLLM(
   meetingTitle: string,
   isFirstChunk: boolean,
 ): Promise<SpeakerAttribution[]> {
-  if (!LLM_API_KEY) {
+  if (!ATTRIBUTION_API_KEY) {
     throw new Error('No LLM API key configured for speaker attribution')
   }
 
@@ -330,25 +339,40 @@ ${segmentLines}
 
 Respond with JSON array only. Each object: {"index": <segment_number>, "speaker": "<participant_name>", "confidence": <0.0-1.0>}`
 
-  const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${LLM_API_KEY}`,
-      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-      'X-Title': 'Captain Speaker Attribution',
-    },
-    body: JSON.stringify({
-      model: ATTRIBUTION_MODEL,
-      messages: [
-        { role: 'system', content: ATTRIBUTION_SYSTEM_PROMPT },
-        { role: 'user', content: userPrompt },
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0.1,
-      max_tokens: ATTRIBUTION_MAX_TOKENS,
-    }),
-  })
+  console.log(
+    `[speaker-attribution] Calling ${ATTRIBUTION_MODEL} via ${ATTRIBUTION_BASE_URL} ` +
+    `for ${chunk.length} segments (offset ${globalOffset}, max_tokens=${ATTRIBUTION_MAX_TOKENS})`
+  )
+
+  // AbortController for fetch timeout
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), ATTRIBUTION_FETCH_TIMEOUT_MS)
+
+  let response: Response
+  try {
+    response = await fetch(`${ATTRIBUTION_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${ATTRIBUTION_API_KEY}`,
+        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+        'X-Title': 'Captain Speaker Attribution',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: ATTRIBUTION_MODEL,
+        messages: [
+          { role: 'system', content: ATTRIBUTION_SYSTEM_PROMPT },
+          { role: 'user', content: userPrompt },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.1,
+        max_tokens: ATTRIBUTION_MAX_TOKENS,
+      }),
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
 
   if (!response.ok) {
     const err = await response.text()
@@ -356,6 +380,12 @@ Respond with JSON array only. Each object: {"index": <segment_number>, "speaker"
   }
 
   const data = await response.json()
+  const usage = data.usage
+  console.log(
+    `[speaker-attribution] LLM response: finish_reason=${data.choices?.[0]?.finish_reason}` +
+    `, tokens=${usage?.prompt_tokens || '?'}→${usage?.completion_tokens || '?'}`
+  )
+
   const message = data.choices?.[0]?.message
   // Reasoning models (e.g. kimi-k2.5) put chain-of-thought in reasoning_content
   // and the actual answer in content. Handle both.

@@ -3,8 +3,8 @@ import { timingSafeEqual } from 'crypto'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
-import { runEvidencePipeline } from '@/lib/evidence/pipeline'
 import { isFeatureEnabled } from '@/lib/evidence/flags'
+import { enqueueEvidenceJob, triggerEvidenceJobProcessor } from '@/lib/evidence/jobs'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
   // Run extraction pipeline (awaited)
   const startTime = Date.now()
   if (isFeatureEnabled('evidence_graph_v2', orgSettings)) {
-    await runEvidencePipeline({
+    const job = await enqueueEvidenceJob({
       orgId: meeting.org_id,
       source: {
         kind: 'meeting',
@@ -155,6 +155,14 @@ export async function POST(request: NextRequest) {
           context_quote: decision.context_quote,
         })),
       },
+    })
+    await triggerEvidenceJobProcessor(job.id)
+    return NextResponse.json({
+      ok: true,
+      status: 'queued',
+      jobId: job.id,
+      message: `Evidence graph reprocessing queued for "${meeting.title}"`,
+      evidenceItems: segments?.length ?? 0,
     })
   } else {
     const transcript = segments

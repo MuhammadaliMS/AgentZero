@@ -15,6 +15,7 @@ import {
   type NormalizedArtifact,
   type NormalizedEvidenceItem,
 } from '@/lib/evidence/normalizers'
+import { selectEvidenceForPrompt } from '@/lib/evidence/selection'
 import type { EvidencePipelineParams, EvidencePipelineResult } from '@/lib/evidence/types'
 import { createUntypedAdminClient } from '@/lib/supabase/admin'
 
@@ -33,12 +34,15 @@ export async function runEvidencePipeline(params: EvidencePipelineParams): Promi
     orgId: params.orgId,
     artifactId: artifact.id,
     evidenceItems: normalized.evidenceItems,
+    artifact: normalized.artifact,
+    sourceSummary: normalized.sourceSummary,
   })
 
-  const searchText = [
-    artifact.title,
-    ...persistedEvidenceItems.slice(0, 40).map(item => item.text),
-  ].join('\n').slice(0, 12_000)
+  const searchText = buildEvidenceSearchText({
+    artifactTitle: artifact.title,
+    evidenceItems: persistedEvidenceItems,
+    sourceSummary: normalized.sourceSummary,
+  })
 
   const contextPack = await buildEvidenceContextPack({
     orgId: params.orgId,
@@ -122,7 +126,7 @@ export async function runEvidencePipeline(params: EvidencePipelineParams): Promi
   }
 }
 
-function normalizeSource(params: EvidencePipelineParams): {
+export function normalizeSource(params: EvidencePipelineParams): {
   artifact: NormalizedArtifact
   evidenceItems: NormalizedEvidenceItem[]
   sourceSummary: Record<string, unknown> | null
@@ -231,7 +235,7 @@ function normalizeSource(params: EvidencePipelineParams): {
   }
 }
 
-async function linkMeetingCanonicalRecords(
+export async function linkMeetingCanonicalRecords(
   supabase: AdminClient,
   input: {
     orgId: string
@@ -290,6 +294,30 @@ async function linkMeetingCanonicalRecords(
       })
       .eq('id', decision.id)
   }
+}
+
+export function buildEvidenceSearchText(input: {
+  artifactTitle: string
+  evidenceItems: Array<{ text: string; id?: string; sequenceNo?: number; sourceAnchor?: string; metadata?: Record<string, unknown>; authorName?: string | null; happenedAt?: string | null }>
+  sourceSummary?: Record<string, unknown> | null
+}): string {
+  return [
+    input.artifactTitle,
+    ...selectEvidenceForPrompt({
+      artifactTitle: input.artifactTitle,
+      evidenceItems: input.evidenceItems.map((item, index) => ({
+        id: item.id ?? `evidence-${index}`,
+        sequenceNo: item.sequenceNo ?? index + 1,
+        sourceAnchor: item.sourceAnchor ?? `synthetic:${index + 1}`,
+        metadata: item.metadata ?? {},
+        authorName: item.authorName ?? null,
+        happenedAt: item.happenedAt ?? null,
+        text: item.text,
+      })),
+      sourceSummary: input.sourceSummary,
+      maxItems: 24,
+    }).map(item => item.text),
+  ].join('\n').slice(0, 12_000)
 }
 
 function matchCanonicalId(text: string, candidates: Map<string, string>): string | null {

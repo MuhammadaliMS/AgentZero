@@ -8,8 +8,8 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runExtractionPipeline } from '@/lib/graph/extraction-pipeline'
-import { runEvidencePipeline } from '@/lib/evidence/pipeline'
 import { isFeatureEnabled } from '@/lib/evidence/flags'
+import { enqueueEvidenceJob, triggerEvidenceJobProcessor } from '@/lib/evidence/jobs'
 import { resolvePersonEntity } from '@/lib/graph/entity-resolver'
 import { attributeSpeakersIfNeeded } from '@/lib/intelligence/speaker-attribution'
 import type { Json } from '@/types/database'
@@ -316,7 +316,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
     let evidencePipelineCompleted = false
     try {
       if (isFeatureEnabled('evidence_graph_v2', orgSettings)) {
-        await runEvidencePipeline({
+        const job = await enqueueEvidenceJob({
           orgId: meeting.org_id,
           source: {
             kind: 'meeting',
@@ -344,8 +344,9 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
             })),
           },
         })
+        await triggerEvidenceJobProcessor(job.id)
         evidencePipelineCompleted = true
-        console.log(`[meeting-processor] Evidence graph pipeline completed for ${meetingId}`)
+        console.log(`[meeting-processor] Evidence graph pipeline queued for ${meetingId} (${job.id})`)
       } else {
         const graphContent = buildGraphExtractionContent(meeting.title, summaryResult, fullTranscript, participants)
         await runExtractionPipeline({

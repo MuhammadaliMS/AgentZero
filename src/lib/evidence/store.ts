@@ -5,6 +5,7 @@ import { normalizeCanonical, upsertEntities, upsertRelationship } from '@/lib/gr
 import { buildClaimKey, type NormalizedArtifact, type NormalizedEvidenceItem } from '@/lib/evidence/normalizers'
 import type { ContextPack, EvidenceItem, SourceArtifact } from '@/lib/evidence/types'
 import type { MutationBundle } from '@/lib/evidence/schema'
+import { selectEvidenceForEmbedding } from '@/lib/evidence/selection'
 import {
   buildEntityVaultPath,
   buildTimelineVaultPath,
@@ -89,14 +90,26 @@ export async function upsertEvidenceItems(
     orgId: string
     artifactId: string
     evidenceItems: NormalizedEvidenceItem[]
+    artifact?: NormalizedArtifact | null
+    sourceSummary?: Record<string, unknown> | null
   }
 ): Promise<EvidenceItem[]> {
   if (input.evidenceItems.length === 0) return []
 
+  const selectedForEmbedding = new Set(
+    selectEvidenceItemsForEmbedding(input.evidenceItems, {
+      artifactTitle: input.artifact?.title,
+      sourceSummary: input.sourceSummary,
+    }).map(item => item.sourceAnchor)
+  )
+
   const rows: Array<Record<string, unknown>> = []
   for (const batch of splitIntoChunks(input.evidenceItems, EVIDENCE_EMBEDDING_BATCH_SIZE)) {
     const batchRows = await Promise.all(batch.map(async item => {
-      const embedding = await generateEmbedding(item.text.slice(0, 4000))
+      const shouldEmbed = selectedForEmbedding.has(item.sourceAnchor)
+      const embedding = shouldEmbed
+        ? await generateEmbedding(item.text.slice(0, 4000))
+        : null
       return {
         org_id: input.orgId,
         artifact_id: input.artifactId,
@@ -123,6 +136,16 @@ export async function upsertEvidenceItems(
   }
 
   return (data ?? []).map(mapEvidenceItem)
+}
+
+export function selectEvidenceItemsForEmbedding(
+  evidenceItems: NormalizedEvidenceItem[],
+  options?: {
+    artifactTitle?: string
+    sourceSummary?: Record<string, unknown> | null
+  }
+): NormalizedEvidenceItem[] {
+  return selectEvidenceForEmbedding(evidenceItems, options)
 }
 
 /**
@@ -198,6 +221,7 @@ export async function applyMutationBundle(
       orgId: input.orgId,
       artifactId: input.artifactId,
       evidenceItems: syntheticEvidence,
+      sourceSummary: null,
     })
     for (const item of persistedSyntheticEvidence) {
       evidenceById.set(item.id, item)
@@ -752,7 +776,7 @@ async function fetchClaimsByIds(supabase: AdminClient, orgId: string, claimIds: 
   return (data ?? []) as Array<Record<string, unknown>>
 }
 
-async function fetchArtifactById(supabase: AdminClient, orgId: string, artifactId: string): Promise<SourceArtifact | null> {
+export async function fetchArtifactById(supabase: AdminClient, orgId: string, artifactId: string): Promise<SourceArtifact | null> {
   const { data } = await supabase
     .from('source_artifacts')
     .select('*')
@@ -763,7 +787,7 @@ async function fetchArtifactById(supabase: AdminClient, orgId: string, artifactI
   return data ? mapSourceArtifact(data) : null
 }
 
-async function fetchEvidenceForArtifact(supabase: AdminClient, orgId: string, artifactId: string): Promise<EvidenceItem[]> {
+export async function fetchEvidenceForArtifact(supabase: AdminClient, orgId: string, artifactId: string): Promise<EvidenceItem[]> {
   const { data } = await supabase
     .from('evidence_items')
     .select('*')

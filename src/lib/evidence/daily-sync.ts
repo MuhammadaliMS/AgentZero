@@ -1,6 +1,6 @@
 import { WebClient } from '@slack/web-api'
 
-import { runEvidencePipeline } from '@/lib/evidence/pipeline'
+import { enqueueEvidenceJob, triggerEvidenceJobProcessor } from '@/lib/evidence/jobs'
 import { isRelevantEmailMessage, isRelevantSlackConversation } from '@/lib/evidence/sync-filters'
 import { isFeatureEnabled } from '@/lib/evidence/flags'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -76,6 +76,10 @@ export async function runDailyEvidenceSyncBackground(): Promise<void> {
         })
       }
     }
+
+    await triggerEvidenceJobProcessor().catch(error => {
+      console.error('[daily-evidence-sync] Failed to trigger evidence job processor:', error)
+    })
 
     return {
       summary: `Daily sync complete: ${metrics.emailArtifacts} email artifacts, ${metrics.slackArtifacts} slack artifacts, ${metrics.failed} org failures`,
@@ -196,7 +200,7 @@ async function syncGmail(admin: AdminClient, orgId: string, accessToken: string)
       continue
     }
 
-    await runEvidencePipeline({
+    await enqueueEvidenceJob({
       orgId,
       source: {
         kind: 'email',
@@ -283,7 +287,7 @@ async function syncOutlook(admin: AdminClient, orgId: string, accessToken: strin
       return leftTs - rightTs
     })
 
-    await runEvidencePipeline({
+    await enqueueEvidenceJob({
       orgId,
       source: {
         kind: 'email',
@@ -348,7 +352,7 @@ async function syncSlack(admin: AdminClient, orgId: string, accessToken: string)
       continue
     }
 
-    await runEvidencePipeline({
+    await enqueueEvidenceJob({
       orgId,
       source: {
         kind: 'slack',
@@ -383,7 +387,7 @@ async function syncSlack(admin: AdminClient, orgId: string, accessToken: string)
       continue
     }
 
-    await runEvidencePipeline({
+    await enqueueEvidenceJob({
       orgId,
       source: {
         kind: 'slack',

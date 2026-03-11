@@ -1,6 +1,7 @@
 import { extractEntitiesAndRelationships, EXTRACTOR_MODEL, isOpenAIConfigured } from '@/lib/openai/client'
 import { mutationBundleSchema, type MutationBundle } from '@/lib/evidence/schema'
 import type { ContextPack, EvidenceItem, SourceArtifact } from '@/lib/evidence/types'
+import { selectEvidenceForPrompt } from '@/lib/evidence/selection'
 
 const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || ''
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
@@ -8,14 +9,8 @@ const LLM_API_KEY = NVIDIA_API_KEY || OPENROUTER_API_KEY
 const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
   ? 'https://integrate.api.nvidia.com/v1'
   : 'https://openrouter.ai/api/v1')
-// Use a dedicated non-reasoning model for evidence agents. Reasoning/thinking
-// models (e.g. kimi-k2.5) waste tokens on chain-of-thought and are too slow
-// for the 300s Vercel function limit with two sequential agent calls.
-const AGENTIC_EVIDENCE_MODEL = process.env.AGENTIC_EVIDENCE_MODEL || (NVIDIA_API_KEY
-  ? 'meta/llama-3.3-70b-instruct'
-  : EXTRACTOR_MODEL)
 const EVIDENCE_AGENT_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 90_000
-const EVIDENCE_AGENT_MAX_TOKENS = Math.max(Number(process.env.AGENTIC_EVIDENCE_MAX_TOKENS) || 8192, 2000)
+const EVIDENCE_AGENT_MAX_TOKENS = Math.max(Number(process.env.AGENTIC_EVIDENCE_MAX_TOKENS) || 16384, 2000)
 
 const CHANNEL_ANALYST_SYSTEM_PROMPT = `You are the channel_analyst for Axari's evidence graph.
 
@@ -140,7 +135,7 @@ export async function runChannelAnalyst(input: {
   sourceSummary?: Record<string, unknown> | null
 }): Promise<MutationBundle | null> {
   const prompt = buildAgentPrompt(input)
-  const bundle = await callMutationAgent(CHANNEL_ANALYST_SYSTEM_PROMPT, prompt)
+  const bundle = await callMutationAgent(CHANNEL_ANALYST_SYSTEM_PROMPT, prompt, getEvidenceAgentModels().analystModel)
   if (bundle) return bundle
 
   return fallbackBundleFromExtraction(input)
@@ -174,11 +169,15 @@ export async function runStateSynthesizer(input: {
     }, null, 2),
   ].join('\n')
 
-  const synthesized = await callMutationAgent(STATE_SYNTHESIZER_SYSTEM_PROMPT, prompt)
+  const synthesized = await callMutationAgent(
+    STATE_SYNTHESIZER_SYSTEM_PROMPT,
+    prompt,
+    getEvidenceAgentModels().synthesizerModel
+  )
   return synthesized ?? input.analystBundle
 }
 
-async function callMutationAgent(systemPrompt: string, userPrompt: string): Promise<MutationBundle | null> {
+async function callMutationAgent(systemPrompt: string, userPrompt: string, model: string): Promise<MutationBundle | null> {
   if (!isOpenAIConfigured() || !LLM_API_KEY) {
     console.warn('[evidence-agents] Skipping agent call — no LLM API key configured')
     return null
@@ -189,7 +188,7 @@ async function callMutationAgent(systemPrompt: string, userPrompt: string): Prom
   const startMs = Date.now()
 
   try {
-    console.log(`[evidence-agents] Calling ${AGENTIC_EVIDENCE_MODEL} (max_tokens=${EVIDENCE_AGENT_MAX_TOKENS}, prompt=${Math.round(userPrompt.length / 1000)}k chars)`)
+    console.log(`[evidence-agents] Calling ${model} (max_tokens=${EVIDENCE_AGENT_MAX_TOKENS}, prompt=${Math.round(userPrompt.length / 1000)}k chars)`)
 
     const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
       method: 'POST',
@@ -200,10 +199,10 @@ async function callMutationAgent(systemPrompt: string, userPrompt: string): Prom
         'X-Title': 'Axari Evidence Graph',
       },
       body: JSON.stringify({
-        model: AGENTIC_EVIDENCE_MODEL,
+        model,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt.slice(0, 75_000) },
+          { role: 'user', content: userPrompt.slice(0, 24_000) },
         ],
         response_format: { type: 'json_object' },
         temperature: 0.1,
@@ -231,11 +230,11 @@ async function callMutationAgent(systemPrompt: string, userPrompt: string): Prom
     if (!content) {
       const hasReasoning = !!(message?.reasoning_content || message?.reasoning)
       console.error(
-        `[evidence-agents] Agent returned null content after ${elapsedMs}ms.`,
-        `finish_reason=${finishReason}, usage=${JSON.stringify(usage)},`,
-        `has_reasoning=${hasReasoning}.`,
+          `[evidence-agents] Agent returned null content after ${elapsedMs}ms.`,
+          `finish_reason=${finishReason}, usage=${JSON.stringify(usage)},`,
+          `has_reasoning=${hasReasoning}.`,
         hasReasoning && finishReason === 'length'
-          ? 'Reasoning model exhausted max_tokens on thinking — increase AGENTIC_EVIDENCE_MAX_TOKENS.'
+          ? 'Reasoning model exhausted max_tokens on thinking — reduce prompt size or increase AGENTIC_EVIDENCE_MAX_TOKENS.'
           : ''
       )
       return null
@@ -275,29 +274,77 @@ async function callMutationAgent(systemPrompt: string, userPrompt: string): Prom
   }
 }
 
+export function getEvidenceAgentModels(): {
+  analystModel: string
+  synthesizerModel: string
+} {
+  return {
+    analystModel: process.env.AGENTIC_EVIDENCE_ANALYST_MODEL
+      || process.env.AGENTIC_EVIDENCE_MODEL
+      || EXTRACTOR_MODEL,
+    synthesizerModel: process.env.AGENTIC_EVIDENCE_SYNTHESIZER_MODEL
+      || EXTRACTOR_MODEL,
+  }
+}
+
+export function selectEvidenceForAgentPrompt(input: {
+  artifact: SourceArtifact
+  evidenceItems: EvidenceItem[]
+  sourceSummary?: Record<string, unknown> | null
+}): Array<{
+  id: string
+  sequenceNo: number
+  authorName: string | null
+  happenedAt: string | null
+  sourceAnchor: string
+  text: string
+}> {
+  return selectEvidenceForPrompt({
+    artifactTitle: input.artifact.title,
+    evidenceItems: input.evidenceItems,
+    sourceSummary: input.sourceSummary ?? null,
+  }).map(item => ({
+    id: item.id,
+    sequenceNo: item.sequenceNo,
+    authorName: item.authorName,
+    happenedAt: item.happenedAt,
+    sourceAnchor: item.sourceAnchor,
+    text: item.text.slice(0, 280),
+  }))
+}
+
 function buildAgentPrompt(input: {
   artifact: SourceArtifact
   evidenceItems: EvidenceItem[]
   contextPack: ContextPack
   sourceSummary?: Record<string, unknown> | null
 }): string {
+  const selectedEvidence = selectEvidenceForAgentPrompt(input)
+
   return [
     '## Source Artifact',
-    JSON.stringify(input.artifact, null, 2),
+    JSON.stringify({
+      id: input.artifact.id,
+      channel: input.artifact.channel,
+      title: input.artifact.title,
+      startedAt: input.artifact.startedAt,
+      endedAt: input.artifact.endedAt,
+      metadata: input.artifact.metadata,
+    }, null, 2),
     '',
     input.sourceSummary
-      ? `## Source Summary\n${JSON.stringify(input.sourceSummary, null, 2)}\n`
+      ? `## Source Summary\n${JSON.stringify(compactSourceSummary(input.sourceSummary), null, 2)}\n`
       : '',
-    '## Evidence Items',
-    JSON.stringify(input.evidenceItems.slice(0, 200), null, 2),
+    '## Selected Evidence Items',
+    JSON.stringify(selectedEvidence, null, 2),
     '',
     '## Prior Context',
     JSON.stringify({
-      matchedEntities: input.contextPack.matchedEntities,
+      matchedEntities: input.contextPack.matchedEntities.slice(0, 20),
       activeClaims: input.contextPack.activeClaims.slice(0, 20),
-      commitments: input.contextPack.commitments.slice(0, 12),
-      decisionThreads: input.contextPack.decisionThreads.slice(0, 12),
-      memories: input.contextPack.memories.slice(0, 10),
+      commitments: input.contextPack.commitments.slice(0, 8),
+      decisionThreads: input.contextPack.decisionThreads.slice(0, 8),
+      memories: input.contextPack.memories.slice(0, 6),
       recentArtifacts: input.contextPack.recentArtifacts.slice(0, 10),
       vaultDocuments: input.contextPack.vaultDocuments.slice(0, 10).map(doc => ({
         path: doc.path,
@@ -314,9 +361,9 @@ async function fallbackBundleFromExtraction(input: {
 }): Promise<MutationBundle> {
   const extractionInput = [
     input.artifact.title,
-    JSON.stringify(input.sourceSummary ?? {}, null, 2),
-    ...input.evidenceItems.map(item => `${item.authorName ?? 'Unknown'}: ${item.text}`),
-  ].join('\n').slice(0, 50_000)
+    JSON.stringify(compactSourceSummary(input.sourceSummary ?? {}), null, 2),
+    ...selectEvidenceForAgentPrompt(input).map(item => `${item.authorName ?? 'Unknown'}: ${item.text}`),
+  ].join('\n').slice(0, 18_000)
 
   const extracted = await extractEntitiesAndRelationships(extractionInput)
 
@@ -403,4 +450,31 @@ function parseTitleParties(title: string): string[] {
     }
   }
   return []
+}
+
+function compactSourceSummary(sourceSummary: Record<string, unknown>): Record<string, unknown> {
+  const summary = objectValue(sourceSummary.summary)
+  const actionItems = Array.isArray(sourceSummary.actionItems) ? sourceSummary.actionItems.slice(0, 8) : []
+  const decisions = Array.isArray(sourceSummary.decisions) ? sourceSummary.decisions.slice(0, 8) : []
+
+  return {
+    summary: summary
+      ? {
+        tldr: stringFromUnknown(summary.tldr),
+        executive_summary: stringFromUnknown(summary.executive_summary)?.slice(0, 1200) ?? null,
+      }
+      : null,
+    actionItems,
+    decisions,
+  }
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function stringFromUnknown(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
 }

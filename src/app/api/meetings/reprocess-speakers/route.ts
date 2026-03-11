@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
+import { waitUntil } from '@vercel/functions'
 import { createClient } from '@/lib/supabase/server'
 import { attributeSpeakersIfNeeded } from '@/lib/intelligence/speaker-attribution'
 
 export const runtime = 'nodejs'
-export const maxDuration = 120
+export const maxDuration = 300
 
 /**
  * POST /api/meetings/reprocess-speakers
@@ -13,11 +14,13 @@ export const maxDuration = 120
  * Use this to fix meetings where DOM speaker tracking failed and all
  * segments ended up with the same (or concatenated) speaker name.
  *
- * Body: { meeting_id: string }
+ * Body: { meeting_id: string, async?: boolean }
  * Auth: Requires authenticated user OR Bearer CRON_SECRET for admin use.
+ *
+ * When async=true (or admin auth), returns immediately and runs in background.
  */
 export async function POST(request: NextRequest) {
-  let body: { meeting_id: string }
+  let body: { meeting_id: string; async?: boolean }
   try {
     body = await request.json()
   } catch {
@@ -73,7 +76,27 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Run speaker attribution
+  const useAsync = body.async || isAdmin
+
+  if (useAsync) {
+    // Return immediately, run in background (up to maxDuration)
+    waitUntil((async () => {
+      try {
+        const result = await attributeSpeakersIfNeeded(body.meeting_id)
+        console.log(`[reprocess-speakers] ${body.meeting_id}: done`, result)
+      } catch (err) {
+        console.error(`[reprocess-speakers] ${body.meeting_id}: error`, (err as Error).message)
+      }
+    })())
+
+    return NextResponse.json({
+      ok: true,
+      status: 'accepted',
+      message: 'Speaker attribution started in background',
+    })
+  }
+
+  // Synchronous — wait for result
   const result = await attributeSpeakersIfNeeded(body.meeting_id)
 
   if (!result) {

@@ -8,9 +8,14 @@ const LLM_API_KEY = NVIDIA_API_KEY || OPENROUTER_API_KEY
 const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
   ? 'https://integrate.api.nvidia.com/v1'
   : 'https://openrouter.ai/api/v1')
-const AGENTIC_EVIDENCE_MODEL = process.env.AGENTIC_EVIDENCE_MODEL || EXTRACTOR_MODEL
+// Use a dedicated non-reasoning model for evidence agents. Reasoning/thinking
+// models (e.g. kimi-k2.5) waste tokens on chain-of-thought and are too slow
+// for the 300s Vercel function limit with two sequential agent calls.
+const AGENTIC_EVIDENCE_MODEL = process.env.AGENTIC_EVIDENCE_MODEL || (NVIDIA_API_KEY
+  ? 'meta/llama-3.3-70b-instruct'
+  : EXTRACTOR_MODEL)
 const EVIDENCE_AGENT_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 90_000
-const EVIDENCE_AGENT_MAX_TOKENS = Math.max(Number(process.env.AGENTIC_EVIDENCE_MAX_TOKENS) || 16384, 4000)
+const EVIDENCE_AGENT_MAX_TOKENS = Math.max(Number(process.env.AGENTIC_EVIDENCE_MAX_TOKENS) || 8192, 2000)
 
 const CHANNEL_ANALYST_SYSTEM_PROMPT = `You are the channel_analyst for Axari's evidence graph.
 

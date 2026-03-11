@@ -10,7 +10,7 @@ const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
   : 'https://openrouter.ai/api/v1')
 const AGENTIC_EVIDENCE_MODEL = process.env.AGENTIC_EVIDENCE_MODEL || EXTRACTOR_MODEL
 const EVIDENCE_AGENT_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 90_000
-const EVIDENCE_AGENT_MAX_TOKENS = Math.max(Number(process.env.AGENTIC_EVIDENCE_MAX_TOKENS) || 6000, 2000)
+const EVIDENCE_AGENT_MAX_TOKENS = Math.max(Number(process.env.AGENTIC_EVIDENCE_MAX_TOKENS) || 16384, 4000)
 
 const CHANNEL_ANALYST_SYSTEM_PROMPT = `You are the channel_analyst for Axari's evidence graph.
 
@@ -174,12 +174,18 @@ export async function runStateSynthesizer(input: {
 }
 
 async function callMutationAgent(systemPrompt: string, userPrompt: string): Promise<MutationBundle | null> {
-  if (!isOpenAIConfigured() || !LLM_API_KEY) return null
+  if (!isOpenAIConfigured() || !LLM_API_KEY) {
+    console.warn('[evidence-agents] Skipping agent call — no LLM API key configured')
+    return null
+  }
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), EVIDENCE_AGENT_TIMEOUT_MS)
+  const startMs = Date.now()
 
   try {
+    console.log(`[evidence-agents] Calling ${AGENTIC_EVIDENCE_MODEL} (max_tokens=${EVIDENCE_AGENT_MAX_TOKENS}, prompt=${Math.round(userPrompt.length / 1000)}k chars)`)
+
     const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -208,8 +214,33 @@ async function callMutationAgent(systemPrompt: string, userPrompt: string): Prom
     }
 
     const data = await response.json()
-    const content = data.choices?.[0]?.message?.content
-    if (!content) return null
+    const message = data.choices?.[0]?.message
+    const finishReason = data.choices?.[0]?.finish_reason
+    const usage = data.usage
+    const elapsedMs = Date.now() - startMs
+
+    // Reasoning/thinking models (e.g. kimi-k2.5) put chain-of-thought in
+    // reasoning_content and the actual answer in content. If max_tokens is too
+    // low the model exhausts its budget on reasoning and content stays null.
+    const content = message?.content
+    if (!content) {
+      const hasReasoning = !!(message?.reasoning_content || message?.reasoning)
+      console.error(
+        `[evidence-agents] Agent returned null content after ${elapsedMs}ms.`,
+        `finish_reason=${finishReason}, usage=${JSON.stringify(usage)},`,
+        `has_reasoning=${hasReasoning}.`,
+        hasReasoning && finishReason === 'length'
+          ? 'Reasoning model exhausted max_tokens on thinking — increase AGENTIC_EVIDENCE_MAX_TOKENS.'
+          : ''
+      )
+      return null
+    }
+
+    console.log(
+      `[evidence-agents] Agent responded in ${elapsedMs}ms.`,
+      `finish_reason=${finishReason}, tokens=${usage?.total_tokens ?? '?'},`,
+      `content_length=${content.length}`
+    )
 
     const parsed = mutationBundleSchema.safeParse(JSON.parse(content))
     if (!parsed.success) {
@@ -217,10 +248,21 @@ async function callMutationAgent(systemPrompt: string, userPrompt: string): Prom
       return null
     }
 
-    return parsed.data
+    const bundle = parsed.data
+    console.log(
+      `[evidence-agents] Parsed bundle:`,
+      `${bundle.entities.length} entities, ${bundle.claims.length} claims,`,
+      `${bundle.commitments.length} commitments, ${bundle.decisionThreads.length} threads,`,
+      `${bundle.memories.length} memories`
+    )
+
+    return bundle
   } catch (error) {
-    if ((error as Error).name !== 'AbortError') {
-      console.error('[evidence-agents] Agent error:', error)
+    const elapsedMs = Date.now() - startMs
+    if ((error as Error).name === 'AbortError') {
+      console.error(`[evidence-agents] Agent call timed out after ${elapsedMs}ms (limit=${EVIDENCE_AGENT_TIMEOUT_MS}ms)`)
+    } else {
+      console.error(`[evidence-agents] Agent error after ${elapsedMs}ms:`, error)
     }
     return null
   } finally {

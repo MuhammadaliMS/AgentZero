@@ -53,6 +53,16 @@ export async function runEvidencePipeline(params: EvidencePipelineParams): Promi
     sourceSummary: normalized.sourceSummary,
   })
 
+  if (!analystBundle) {
+    console.warn(`[evidence-pipeline] Channel analyst returned null for "${artifact.title}" — structured output will be empty`)
+  } else {
+    console.log(
+      `[evidence-pipeline] Channel analyst produced:`,
+      `${analystBundle.entities.length} entities, ${analystBundle.claims.length} claims,`,
+      `${analystBundle.memories.length} memories`
+    )
+  }
+
   const finalBundle = analystBundle
     ? await runStateSynthesizer({
       artifact,
@@ -75,6 +85,10 @@ export async function runEvidencePipeline(params: EvidencePipelineParams): Promi
       memories: [],
       vaultDocuments: [],
     })
+
+  if (!finalBundle) {
+    console.warn(`[evidence-pipeline] Using empty fallback bundle for "${artifact.title}" — no claims/memories will be created`)
+  }
 
   const applied = await applyMutationBundle(supabase, {
     orgId: params.orgId,

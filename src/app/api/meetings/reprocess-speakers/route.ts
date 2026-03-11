@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const useAsync = body.async || isAdmin
+  const useAsync = body.async === true || (isAdmin && body.async !== false)
 
   if (useAsync) {
     // Return immediately, run in background (up to maxDuration)

@@ -44,15 +44,20 @@ const LLM_API_KEY = NVIDIA_API_KEY || OPENROUTER_API_KEY
 const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
   ? 'https://integrate.api.nvidia.com/v1'
   : 'https://openrouter.ai/api/v1')
-// Use a fast, cheap model for attribution — it's pattern matching, not creative
-const ATTRIBUTION_MODEL = NVIDIA_API_KEY
+// Use EXTRACTOR_MODEL (which supports reasoning) for attribution.
+// The model needs enough max_tokens for chain-of-thought + JSON output.
+const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || (NVIDIA_API_KEY
   ? 'moonshotai/kimi-k2.5'
-  : 'anthropic/claude-haiku-4.5'
+  : 'anthropic/claude-haiku-4.5')
+const ATTRIBUTION_MODEL = process.env.SPEAKER_ATTRIBUTION_MODEL || EXTRACTOR_MODEL
+const ATTRIBUTION_MAX_TOKENS = Math.max(
+  Number(process.env.SPEAKER_ATTRIBUTION_MAX_TOKENS) || 16384, 4000
+)
 
 // Max segments per LLM call (to stay within context limits)
 const CHUNK_SIZE = 80
 // Overlap between chunks to maintain context across boundaries
-const CHUNK_OVERLAP = 5
+const CHUNK_OVERLAP =5
 
 // ─── System Prompt ───────────────────────────────────────────────────────
 
@@ -341,7 +346,7 @@ Respond with JSON array only. Each object: {"index": <segment_number>, "speaker"
       ],
       response_format: { type: 'json_object' },
       temperature: 0.1,
-      max_tokens: 4000,
+      max_tokens: ATTRIBUTION_MAX_TOKENS,
     }),
   })
 
@@ -351,10 +356,20 @@ Respond with JSON array only. Each object: {"index": <segment_number>, "speaker"
   }
 
   const data = await response.json()
-  const content = data.choices?.[0]?.message?.content
+  const message = data.choices?.[0]?.message
+  // Reasoning models (e.g. kimi-k2.5) put chain-of-thought in reasoning_content
+  // and the actual answer in content. Handle both.
+  const content = message?.content
 
   if (!content) {
-    throw new Error('Empty LLM response for attribution')
+    const hasReasoning = !!(message?.reasoning_content || message?.reasoning)
+    const finishReason = data.choices?.[0]?.finish_reason
+    throw new Error(
+      `Empty LLM response for attribution` +
+      (hasReasoning && finishReason === 'length'
+        ? ` — reasoning model exhausted max_tokens (${ATTRIBUTION_MAX_TOKENS}) on thinking. Increase SPEAKER_ATTRIBUTION_MAX_TOKENS.`
+        : ` (finish_reason=${finishReason}, has_reasoning=${hasReasoning})`)
+    )
   }
 
   // Parse response — handle both raw array and {attributions: [...]} wrapper

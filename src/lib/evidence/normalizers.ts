@@ -75,20 +75,47 @@ export function normalizeMeetingArtifact(input: {
     },
   }
 
-  const evidenceItems = input.segments.map((segment, index) => ({
-    sequenceNo: index + 1,
-    authorName: segment.speaker ?? null,
-    happenedAt: segment.created_at ?? null,
-    text: segment.text.trim(),
-    sourceAnchor: `segment:${segment.id}`,
-    artifactChannel: 'meeting' as const,
-    metadata: {
-      meetingId: input.meeting.id,
-      segmentId: segment.id,
-      startTime: segment.start_time ?? null,
-      endTime: segment.end_time ?? null,
-    },
-  }))
+  // Compute absolute timestamps from meeting start + segment offset (seconds).
+  // Falls back to created_at only if both scheduled_start and start_time are missing.
+  const meetingStartMs = input.meeting.scheduled_start
+    ? new Date(input.meeting.scheduled_start).getTime()
+    : null
+
+  // Detect broken speaker diarization: if every segment has the same speaker
+  // string (often all participant names concatenated), treat speaker as unknown.
+  const uniqueSpeakers = new Set(
+    input.segments.map(s => s.speaker?.trim()).filter(Boolean)
+  )
+  const speakerIsBroken = uniqueSpeakers.size <= 1 && input.segments.length > 1
+
+  const evidenceItems = input.segments.map((segment, index) => {
+    // Compute real timestamp from meeting start + start_time offset
+    let happenedAt: string | null = null
+    if (meetingStartMs && typeof segment.start_time === 'number') {
+      happenedAt = new Date(meetingStartMs + segment.start_time * 1000).toISOString()
+    } else {
+      happenedAt = segment.created_at ?? null
+    }
+
+    // If speaker diarization is broken, null it out rather than propagating
+    // a comma-separated list of all participants
+    const authorName = speakerIsBroken ? null : (segment.speaker ?? null)
+
+    return {
+      sequenceNo: index + 1,
+      authorName,
+      happenedAt,
+      text: segment.text.trim(),
+      sourceAnchor: `segment:${segment.id}`,
+      artifactChannel: 'meeting' as const,
+      metadata: {
+        meetingId: input.meeting.id,
+        segmentId: segment.id,
+        startTime: segment.start_time ?? null,
+        endTime: segment.end_time ?? null,
+      },
+    }
+  })
 
   return { artifact, evidenceItems }
 }

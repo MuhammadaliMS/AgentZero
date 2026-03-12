@@ -388,8 +388,9 @@ Respond with JSON array only. Each object: {"index": <segment_number>, "speaker"
 
   const data = await response.json()
   const usage = data.usage
+  const finishReason = data.choices?.[0]?.finish_reason
   console.log(
-    `[speaker-attribution] LLM response: finish_reason=${data.choices?.[0]?.finish_reason}` +
+    `[speaker-attribution] LLM response: finish_reason=${finishReason}` +
     `, tokens=${usage?.prompt_tokens || '?'}→${usage?.completion_tokens || '?'}`
   )
 
@@ -398,9 +399,14 @@ Respond with JSON array only. Each object: {"index": <segment_number>, "speaker"
   // and the actual answer in content. Handle both.
   const content = message?.content
 
+  // Log raw content for debugging (first 500 chars)
+  const hasReasoning = !!(message?.reasoning_content || message?.reasoning)
+  console.log(
+    `[speaker-attribution] content type=${typeof content}, length=${content?.length ?? 0}` +
+    `, has_reasoning=${hasReasoning}, preview=${(content || '').slice(0, 500)}`
+  )
+
   if (!content) {
-    const hasReasoning = !!(message?.reasoning_content || message?.reasoning)
-    const finishReason = data.choices?.[0]?.finish_reason
     throw new Error(
       `Empty LLM response for attribution` +
       (hasReasoning && finishReason === 'length'

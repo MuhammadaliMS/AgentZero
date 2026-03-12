@@ -37,31 +37,33 @@ export interface AttributionResult {
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────
-// Speaker attribution uses the same NVIDIA/Kimi stack as the evidence pipeline.
+// Speaker attribution uses a fast model (Haiku) by default — reasoning models
+// like Kimi take 140s+ per small prompt, making them impractical for the
+// chunked attribution pattern within Vercel's 300s limit.
 // Override with SPEAKER_ATTRIBUTION_* env vars if needed.
 
-const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || ''
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
+const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || ''
 
 const ATTRIBUTION_API_KEY = process.env.SPEAKER_ATTRIBUTION_API_KEY
-  || NVIDIA_API_KEY
   || OPENROUTER_API_KEY
+  || NVIDIA_API_KEY
 const ATTRIBUTION_BASE_URL = process.env.SPEAKER_ATTRIBUTION_BASE_URL
-  || (ATTRIBUTION_API_KEY === NVIDIA_API_KEY && NVIDIA_API_KEY
-    ? 'https://integrate.api.nvidia.com/v1'
-    : 'https://openrouter.ai/api/v1')
+  || (ATTRIBUTION_API_KEY === OPENROUTER_API_KEY && OPENROUTER_API_KEY
+    ? 'https://openrouter.ai/api/v1'
+    : 'https://integrate.api.nvidia.com/v1')
 const ATTRIBUTION_MODEL = process.env.SPEAKER_ATTRIBUTION_MODEL
-  || (ATTRIBUTION_API_KEY === NVIDIA_API_KEY && NVIDIA_API_KEY
-    ? 'moonshotai/kimi-k2.5'
-    : 'anthropic/claude-haiku-4.5')
+  || (ATTRIBUTION_API_KEY === OPENROUTER_API_KEY && OPENROUTER_API_KEY
+    ? 'anthropic/claude-haiku-4.5'
+    : 'moonshotai/kimi-k2.5')
 const ATTRIBUTION_MAX_TOKENS = Math.max(
-  Number(process.env.SPEAKER_ATTRIBUTION_MAX_TOKENS) || 32768, 4000
+  Number(process.env.SPEAKER_ATTRIBUTION_MAX_TOKENS) || 8192, 4000
 )
 // Per-chunk fetch timeout (ms) — prevents hanging on unresponsive APIs
-const ATTRIBUTION_FETCH_TIMEOUT_MS = Number(process.env.SPEAKER_ATTRIBUTION_TIMEOUT_MS) || 250_000
+const ATTRIBUTION_FETCH_TIMEOUT_MS = Number(process.env.SPEAKER_ATTRIBUTION_TIMEOUT_MS) || 60_000
 
 // Max segments per LLM call (to stay within context limits)
-const CHUNK_SIZE = 40
+const CHUNK_SIZE = 80
 // Overlap between chunks to maintain context across boundaries
 const CHUNK_OVERLAP = 5
 

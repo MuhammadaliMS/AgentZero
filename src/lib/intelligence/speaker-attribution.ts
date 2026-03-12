@@ -373,7 +373,6 @@ Respond with JSON array only. Each object: {"index": <segment_number>, "speaker"
           { role: 'system', content: ATTRIBUTION_SYSTEM_PROMPT },
           { role: 'user', content: userPrompt },
         ],
-        response_format: { type: 'json_object' },
         temperature: 0.1,
         max_tokens: ATTRIBUTION_MAX_TOKENS,
       }),

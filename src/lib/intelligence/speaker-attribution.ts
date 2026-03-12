@@ -58,12 +58,12 @@ const ATTRIBUTION_MAX_TOKENS = Math.max(
   Number(process.env.SPEAKER_ATTRIBUTION_MAX_TOKENS) || 32768, 4000
 )
 // Per-chunk fetch timeout (ms) — prevents hanging on unresponsive APIs
-const ATTRIBUTION_FETCH_TIMEOUT_MS = Number(process.env.SPEAKER_ATTRIBUTION_TIMEOUT_MS) || 90_000
+const ATTRIBUTION_FETCH_TIMEOUT_MS = Number(process.env.SPEAKER_ATTRIBUTION_TIMEOUT_MS) || 250_000
 
 // Max segments per LLM call (to stay within context limits)
-const CHUNK_SIZE = 80
+const CHUNK_SIZE = 40
 // Overlap between chunks to maintain context across boundaries
-const CHUNK_OVERLAP =5
+const CHUNK_OVERLAP = 5
 
 // ─── System Prompt ───────────────────────────────────────────────────────
 

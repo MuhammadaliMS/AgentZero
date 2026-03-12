@@ -3,6 +3,11 @@ import { waitUntil } from '@vercel/functions'
 import { timingSafeEqual } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { processMeeting } from '@/lib/intelligence/meeting-processor'
+import {
+  computeMeetingDurationCapSeconds,
+  getAbsurdRecordingReason,
+  isGuardrailFailure,
+} from '@/lib/intelligence/meeting-guardrails'
 import { sendMeetingNotification } from '@/lib/intelligence/meeting-notification'
 
 export const runtime = 'nodejs'
@@ -62,7 +67,7 @@ export async function POST(request: NextRequest) {
   // Verify meeting exists
   const { data: meeting, error: meetingErr } = await admin
     .from('meetings')
-    .select('id, status, org_id')
+    .select('id, status, org_id, scheduled_start, scheduled_end, actual_start, actual_end, duration_seconds, error_message, retry_count')
     .eq('id', body.meeting_id)
     .single()
 
@@ -72,6 +77,53 @@ export async function POST(request: NextRequest) {
 
   switch (body.event) {
     case 'recording_complete': {
+      if (meeting.status === 'completed' || meeting.status === 'skipped') {
+        return NextResponse.json({
+          ok: true,
+          status: meeting.status,
+          message: 'Ignoring duplicate recording_complete for terminal meeting.',
+        })
+      }
+
+      if (meeting.status === 'failed' && isGuardrailFailure(meeting.error_message)) {
+        return NextResponse.json({
+          ok: true,
+          status: 'failed',
+          message: 'Ignoring late recording_complete for guardrail-failed meeting.',
+        })
+      }
+
+      const absurdReason = getAbsurdRecordingReason(meeting, body.duration_seconds ?? null)
+      if (absurdReason) {
+        const capSeconds = computeMeetingDurationCapSeconds(meeting)
+        const actualStartMs = meeting.actual_start ? Date.parse(meeting.actual_start) : NaN
+        const clampedEndMs = Number.isFinite(actualStartMs)
+          ? actualStartMs + capSeconds * 1000
+          : Date.now()
+
+        await admin
+          .from('meetings')
+          .update({
+            status: 'failed',
+            actual_end: new Date(clampedEndMs).toISOString(),
+            duration_seconds: Number.isFinite(actualStartMs)
+              ? capSeconds
+              : Math.min(capSeconds, body.duration_seconds ?? capSeconds),
+            error_message: absurdReason,
+            skip_reason: 'Recording session exceeded the allowed duration',
+            retry_count: typeof meeting.retry_count === 'number' ? meeting.retry_count + 1 : 1,
+          })
+          .eq('id', body.meeting_id)
+
+        console.error(`[webhook/meeting-completed] Guardrail rejected recording for ${body.meeting_id}: ${absurdReason}`)
+
+        return NextResponse.json({
+          ok: false,
+          status: 'failed',
+          message: 'Recording exceeded the allowed duration and was rejected.',
+        }, { status: 422 })
+      }
+
       // Bot left the meeting, audio recorded. Update metadata.
       await admin
         .from('meetings')
@@ -94,6 +146,22 @@ export async function POST(request: NextRequest) {
     }
 
     case 'transcription_complete': {
+      if (meeting.status === 'completed' || meeting.status === 'skipped') {
+        return NextResponse.json({
+          ok: true,
+          status: meeting.status,
+          message: 'Ignoring duplicate transcription_complete for terminal meeting.',
+        })
+      }
+
+      if (meeting.status === 'failed' && isGuardrailFailure(meeting.error_message)) {
+        return NextResponse.json({
+          ok: true,
+          status: 'failed',
+          message: 'Ignoring late transcription_complete for guardrail-failed meeting.',
+        })
+      }
+
       // Verify transcript segments actually exist before triggering summarization
       const { count: segmentCount } = await admin
         .from('transcript_segments')

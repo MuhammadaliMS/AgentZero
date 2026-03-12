@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 import { timingSafeEqual } from 'crypto'
-import { processAllPendingMeetings } from '@/lib/intelligence/meeting-processor'
+import { expireStaleMeetings, processAllPendingMeetings } from '@/lib/intelligence/meeting-processor'
 import { sendMeetingNotification } from '@/lib/intelligence/meeting-notification'
 import { logCronRun, type ExecutionStep } from '@/lib/observability/cron-logger'
 
@@ -39,10 +39,12 @@ export async function GET(request: NextRequest) {
 
 async function runMeetingSummarizeBackground() {
   await logCronRun({ worker: 'meeting-summarize' }, async () => {
+    const staleCleanup = await expireStaleMeetings()
+
     // 1. Process all pending meetings
     const { processed, succeeded, failed, results } = await processAllPendingMeetings()
 
-    if (processed === 0) {
+    if (processed === 0 && staleCleanup.expired === 0) {
       return { summary: 'No pending meetings to process' }
     }
 
@@ -79,10 +81,9 @@ async function runMeetingSummarizeBackground() {
     }
 
     return {
-      summary: `Processed ${processed} meetings: ${succeeded} succeeded, ${failed} failed, ${notified} notified`,
-      metrics: { processed, succeeded, failed, notified },
+      summary: `Processed ${processed} meetings: ${succeeded} succeeded, ${failed} failed, ${notified} notified, ${staleCleanup.expired} stale expired`,
+      metrics: { processed, succeeded, failed, notified, staleExpired: staleCleanup.expired },
       steps,
     }
   })
 }
-

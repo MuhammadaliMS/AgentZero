@@ -12,6 +12,11 @@ import { isFeatureEnabled } from '@/lib/evidence/flags'
 import { enqueueEvidenceJob, triggerEvidenceJobProcessor } from '@/lib/evidence/jobs'
 import { resolvePersonEntity } from '@/lib/graph/entity-resolver'
 import { attributeSpeakersIfNeeded } from '@/lib/intelligence/speaker-attribution'
+import {
+  computeMeetingDurationCapSeconds,
+  getStaleMeetingDecision,
+  sanitizeTranscriptSegments,
+} from '@/lib/intelligence/meeting-guardrails'
 import type { Json } from '@/types/database'
 
 // ─── Types ───────────────────────────────────────────────────────────────
@@ -193,9 +198,40 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
       }
     }
 
-    const fullTranscript = assembleTranscript(segments)
-    const durationMinutes = segments.length > 0
-      ? Math.round(((segments[segments.length - 1].end_time ?? 0) - (segments[0].start_time ?? 0)) / 60)
+    const sanitizedTranscript = sanitizeTranscriptSegments(segments)
+    const analysisSegments = sanitizedTranscript.usableSegments
+
+    if (!sanitizedTranscript.usable) {
+      const qualityMessage = [
+        'Transcript failed quality validation',
+        `${sanitizedTranscript.usableSegments.length} usable`,
+        `${sanitizedTranscript.droppedSegments.length} dropped`,
+        sanitizedTranscript.droppedReasons.length > 0
+          ? `reasons: ${Array.from(new Set(sanitizedTranscript.droppedReasons)).join(', ')}`
+          : null,
+      ].filter(Boolean).join(' — ')
+
+      await markFailed(supabase, meetingId, qualityMessage)
+      return {
+        meetingId,
+        status: 'failed',
+        actionItemsCount: 0,
+        decisionsCount: 0,
+        durationMs: Date.now() - startTime,
+        error: qualityMessage,
+      }
+    }
+
+    if (sanitizedTranscript.droppedSegments.length > 0) {
+      console.warn(
+        `[meeting-processor] Dropped ${sanitizedTranscript.droppedSegments.length}/${segments.length} transcript segments for ${meetingId} ` +
+        `(${Array.from(new Set(sanitizedTranscript.droppedReasons)).join(', ')})`
+      )
+    }
+
+    const fullTranscript = assembleTranscript(analysisSegments)
+    const durationMinutes = analysisSegments.length > 0
+      ? Math.round(((analysisSegments[analysisSegments.length - 1].end_time ?? 0) - (analysisSegments[0].start_time ?? 0)) / 60)
       : 0
 
     // 5. Build LLM prompt
@@ -275,7 +311,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
         due_date: item.due_date || null,
         priority: item.priority || 'P2',
         context_quote: item.context_quote || null,
-        context_timestamp: findTimestampForQuote(item.context_quote, segments),
+        context_timestamp: findTimestampForQuote(item.context_quote, analysisSegments),
         status: 'open' as const,
       }))
 
@@ -292,7 +328,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
         decided_by: d.decided_by || null,
         stakeholders: (d.stakeholders || []) as unknown as Json,
         context_quote: d.context_quote || null,
-        context_timestamp: findTimestampForQuote(d.context_quote, segments),
+        context_timestamp: findTimestampForQuote(d.context_quote, analysisSegments),
       }))
 
       await supabase.from('meeting_decisions').insert(decisionRows)
@@ -321,7 +357,7 @@ export async function processMeeting(meetingId: string): Promise<ProcessingResul
           source: {
             kind: 'meeting',
             meeting,
-            segments,
+            segments: analysisSegments as unknown as Record<string, unknown>[],
             summary: {
               tldr: summaryResult.tldr,
               executive_summary: summaryResult.executive_summary,
@@ -753,6 +789,63 @@ async function markFailed(
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+export async function expireStaleMeetings(now = new Date()): Promise<{
+  expired: number
+  affectedMeetingIds: string[]
+}> {
+  const supabase = createAdminClient() as any // meeting tables not in generated types yet
+
+  const { data: activeMeetings } = await supabase
+    .from('meetings')
+    .select('id, title, status, scheduled_start, scheduled_end, actual_start, actual_end, updated_at, duration_seconds, transcript_ready, summary_ready, skip_reason, retry_count')
+    .in('status', ['scheduled', 'joining', 'recording', 'transcribing', 'processing'])
+    .order('scheduled_start', { ascending: true })
+    .limit(100)
+
+  if (!activeMeetings || activeMeetings.length === 0) {
+    return { expired: 0, affectedMeetingIds: [] }
+  }
+
+  const affectedMeetingIds: string[] = []
+
+  for (const meeting of activeMeetings) {
+    const decision = getStaleMeetingDecision(meeting, now)
+    if (!decision) continue
+
+    const update: Record<string, unknown> = {
+      status: decision.status,
+      error_message: decision.reason,
+      skip_reason: decision.skipReason ?? meeting.skip_reason ?? null,
+      retry_count: typeof meeting.retry_count === 'number' ? meeting.retry_count + 1 : 1,
+    }
+
+    if (decision.setActualEnd) {
+      const actualStartMs = meeting.actual_start ? Date.parse(meeting.actual_start) : NaN
+      const capSeconds = computeMeetingDurationCapSeconds(meeting)
+      const clampedEndMs = Number.isFinite(actualStartMs)
+        ? Math.min(now.getTime(), actualStartMs + capSeconds * 1000)
+        : now.getTime()
+
+      update.actual_end = new Date(clampedEndMs).toISOString()
+      update.duration_seconds = Number.isFinite(actualStartMs)
+        ? Math.max(0, Math.round((clampedEndMs - actualStartMs) / 1000))
+        : Math.min(capSeconds, meeting.duration_seconds ?? capSeconds)
+    }
+
+    await supabase
+      .from('meetings')
+      .update(update)
+      .eq('id', meeting.id)
+
+    affectedMeetingIds.push(meeting.id)
+  }
+
+  return {
+    expired: affectedMeetingIds.length,
+    affectedMeetingIds,
+  }
 }
 
 // ─── Batch Processor (for cron) ──────────────────────────────────────────

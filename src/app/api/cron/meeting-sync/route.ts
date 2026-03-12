@@ -3,6 +3,7 @@ import { waitUntil } from '@vercel/functions'
 import { timingSafeEqual } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { TokenManager } from '@/lib/integrations/token-manager'
+import { expireStaleMeetings } from '@/lib/intelligence/meeting-processor'
 import { logCronRun } from '@/lib/observability/cron-logger'
 
 export const runtime = 'nodejs'
@@ -66,6 +67,7 @@ interface BotConfig {
 async function runMeetingSyncBackground() {
   await logCronRun({ worker: 'meeting-sync' }, async () => {
     const admin = createAdminClient() as any // meeting tables not in generated types yet
+    const staleCleanup = await expireStaleMeetings()
 
     // Get all orgs with connected calendar
     const { data: orgs } = await admin
@@ -94,8 +96,8 @@ async function runMeetingSyncBackground() {
     }
 
     return {
-      summary: `Synced ${synced}/${orgIds.length} orgs (${failed} failed)`,
-      metrics: { orgs: orgIds.length, synced, failed },
+      summary: `Synced ${synced}/${orgIds.length} orgs (${failed} failed, ${staleCleanup.expired} stale expired)`,
+      metrics: { orgs: orgIds.length, synced, failed, staleExpired: staleCleanup.expired },
     }
   })
 }

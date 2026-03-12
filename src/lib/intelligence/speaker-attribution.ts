@@ -55,7 +55,7 @@ const ATTRIBUTION_MODEL = process.env.SPEAKER_ATTRIBUTION_MODEL
     ? 'moonshotai/kimi-k2.5'
     : 'anthropic/claude-haiku-4.5')
 const ATTRIBUTION_MAX_TOKENS = Math.max(
-  Number(process.env.SPEAKER_ATTRIBUTION_MAX_TOKENS) || 16384, 4000
+  Number(process.env.SPEAKER_ATTRIBUTION_MAX_TOKENS) || 32768, 4000
 )
 // Per-chunk fetch timeout (ms) — prevents hanging on unresponsive APIs
 const ATTRIBUTION_FETCH_TIMEOUT_MS = Number(process.env.SPEAKER_ATTRIBUTION_TIMEOUT_MS) || 90_000
@@ -290,12 +290,16 @@ async function runChunkedAttribution(
 
   // Merge results — for overlap regions, prefer later chunks (more context)
   const allAttributions: SpeakerAttribution[] = []
+  let succeeded = 0
   for (const result of results) {
     if (result.status === 'rejected') {
-      console.error(`[speaker-attribution] Chunk failed:`, result.reason?.message || result.reason)
+      const errMsg = result.reason?.message || String(result.reason)
+      console.error(`[speaker-attribution] Chunk failed: ${errMsg}`)
       continue
     }
-    const { start, attrs } = result.value
+    succeeded++
+    const { start, end, attrs } = result.value
+    console.log(`[speaker-attribution] Chunk ${start}-${end}: ${attrs.length} attributions`)
     const isFirstChunk = start === 0
     for (const attr of attrs) {
       const existing = allAttributions.find(a => a.index === attr.index)
@@ -308,6 +312,7 @@ async function runChunkedAttribution(
     }
   }
 
+  console.log(`[speaker-attribution] ${succeeded}/${results.length} chunks succeeded, ${allAttributions.length} total attributions`)
   return allAttributions
 }
 

@@ -265,40 +265,46 @@ async function runChunkedAttribution(
   participants: string[],
   meetingTitle: string
 ): Promise<SpeakerAttribution[]> {
-  const allAttributions: SpeakerAttribution[] = []
-
-  // Process in chunks with overlap
+  // Build chunk descriptors
+  const chunks: { start: number; end: number; isFirst: boolean }[] = []
   for (let start = 0; start < segments.length; start += CHUNK_SIZE - CHUNK_OVERLAP) {
     const end = Math.min(start + CHUNK_SIZE, segments.length)
-    const chunk = segments.slice(start, end)
-    const isFirstChunk = start === 0
+    chunks.push({ start, end, isFirst: start === 0 })
+  }
 
-    try {
-      const chunkAttributions = await callAttributionLLM(
-        chunk,
+  console.log(`[speaker-attribution] Processing ${chunks.length} chunks in parallel`)
+
+  // Fire all chunks in parallel — Kimi reasoning takes ~60s per chunk,
+  // so sequential processing would exceed Vercel's 300s maxDuration.
+  const results = await Promise.allSettled(
+    chunks.map(({ start, end, isFirst }) =>
+      callAttributionLLM(
+        segments.slice(start, end),
         start,
         participants,
         meetingTitle,
-        isFirstChunk
-      )
+        isFirst
+      ).then(attrs => ({ start, end, attrs }))
+    )
+  )
 
-      // For overlap region, prefer the later chunk's attribution
-      // (it has more preceding context)
-      for (const attr of chunkAttributions) {
-        const existing = allAttributions.find(a => a.index === attr.index)
-        if (!existing) {
-          allAttributions.push(attr)
-        } else if (!isFirstChunk && attr.confidence > existing.confidence) {
-          existing.speaker = attr.speaker
-          existing.confidence = attr.confidence
-        }
+  // Merge results — for overlap regions, prefer later chunks (more context)
+  const allAttributions: SpeakerAttribution[] = []
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      console.error(`[speaker-attribution] Chunk failed:`, result.reason?.message || result.reason)
+      continue
+    }
+    const { start, attrs } = result.value
+    const isFirstChunk = start === 0
+    for (const attr of attrs) {
+      const existing = allAttributions.find(a => a.index === attr.index)
+      if (!existing) {
+        allAttributions.push(attr)
+      } else if (!isFirstChunk && attr.confidence > existing.confidence) {
+        existing.speaker = attr.speaker
+        existing.confidence = attr.confidence
       }
-    } catch (err) {
-      console.error(
-        `[speaker-attribution] Chunk ${start}-${end} failed:`,
-        (err as Error).message
-      )
-      // Continue with other chunks
     }
   }
 

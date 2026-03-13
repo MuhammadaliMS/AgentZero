@@ -80,6 +80,7 @@ import {
 } from '@/lib/intelligence/focus-profile'
 import {
   buildFocusInitiativeDrafts,
+  reconcileInitiativeState,
   selectRelevantInitiatives,
   type InitiativeDraft,
   type InitiativeRecord,
@@ -1385,10 +1386,11 @@ async function upsertInitiativesFromChiefContext(
   nowIso: string
 ): Promise<InitiativeRecord[]> {
   const supabase = createUntypedAdminClient()
+  const existing = await fetchInitiatives(supabase, orgId)
   const drafts = buildFocusInitiativeDrafts({
     now: nowIso,
     focusProfile: gatherResult.focusProfile,
-    existingInitiatives: gatherResult.activeInitiatives,
+    existingInitiatives: existing,
     activeOutcomes: gatherResult.activeOutcomes,
     recentArtifacts: gatherResult.recentSourceArtifacts,
     topEntities: gatherResult.topEntities.map(entity => ({
@@ -1398,30 +1400,75 @@ async function upsertInitiativesFromChiefContext(
     })),
   })
 
-  if (drafts.length === 0) {
-    return fetchInitiatives(supabase, orgId)
+  const combined = [
+    ...existing,
+    ...drafts.map((draft, index) => materializeInitiativeDraft(orgId, draft, index)),
+  ]
+
+  const reconciled = combined.map((initiative) => reconcileInitiativeState({
+    now: nowIso,
+    initiative,
+    activeClaims: gatherResult.activeClaims.map(claim => ({
+      id: claim.id,
+      predicate: claim.predicate,
+      objectValue: claim.objectValue,
+      updatedAt: claim.updatedAt,
+    })),
+    activeCommitments: gatherResult.activeCommitments.map(commitment => ({
+      id: commitment.id,
+      title: commitment.title,
+      status: commitment.status,
+      priority: commitment.priority,
+      dueDate: commitment.dueDate,
+      updatedAt: commitment.updatedAt,
+    })),
+    decisionThreads: gatherResult.decisionThreads.map(thread => ({
+      id: thread.id,
+      title: thread.title,
+      status: thread.status,
+      updatedAt: thread.updatedAt,
+    })),
+    activeNarratives: gatherResult.activeNarratives.map(narrative => ({
+      id: narrative.id,
+      title: narrative.title,
+      summary: narrative.summary,
+      updatedAt: narrative.updatedAt,
+    })),
+    recentArtifacts: gatherResult.recentSourceArtifacts.map(artifact => ({
+      id: artifact.id,
+      title: artifact.title,
+      channel: artifact.channel,
+      startedAt: artifact.startedAt,
+    })),
+  }))
+
+  if (reconciled.length === 0) {
+    return existing
   }
 
-  const rows = drafts.map(draft => ({
+  const rows = reconciled.map(initiative => ({
     org_id: orgId,
-    title: draft.title,
-    goal: draft.goal,
-    scope: draft.scope,
-    status: draft.status,
-    phase: draft.phase,
-    success_criteria: draft.successCriteria,
-    current_hypothesis: draft.currentHypothesis,
-    open_questions: draft.openQuestions,
-    known_risks: draft.knownRisks,
-    dependencies: draft.dependencies,
-    stakeholders: draft.stakeholders,
-    linked_entity_ids: draft.linkedEntityIds,
-    latest_summary: draft.latestSummary,
-    next_milestone: draft.nextMilestone,
-    next_review_at: draft.nextReviewAt,
-    last_signal_at: draft.lastSignalAt,
-    last_reconciled_at: nowIso,
-    source: draft.source,
+    title: initiative.title,
+    goal: initiative.goal,
+    scope: initiative.scope,
+    status: initiative.status,
+    phase: initiative.phase,
+    success_criteria: initiative.successCriteria,
+    current_hypothesis: initiative.currentHypothesis,
+    open_questions: initiative.openQuestions,
+    known_risks: initiative.knownRisks,
+    dependencies: initiative.dependencies,
+    stakeholders: initiative.stakeholders,
+    linked_entity_ids: initiative.linkedEntityIds,
+    linked_claim_ids: initiative.linkedClaimIds,
+    linked_commitment_ids: initiative.linkedCommitmentIds,
+    linked_decision_thread_ids: initiative.linkedDecisionThreadIds,
+    latest_summary: initiative.latestSummary,
+    next_milestone: initiative.nextMilestone,
+    next_review_at: initiative.nextReviewAt,
+    last_signal_at: initiative.lastSignalAt,
+    last_reconciled_at: initiative.lastReconciledAt ?? nowIso,
+    source: initiative.source ?? 'chief_loop',
   }))
 
   await supabase

@@ -26,6 +26,11 @@ export interface IntelligenceInitiativeEntry {
   riskCount: number
 }
 
+interface InitiativeLike {
+  title: string
+  latestSummary: string | null
+}
+
 const CHANNEL_LABELS: Record<string, string> = {
   meeting: 'meeting',
   email: 'email',
@@ -181,4 +186,44 @@ export function describeInitiativeState(entry: IntelligenceInitiativeEntry): str
   if (entry.riskCount > 0) parts.push(`${entry.riskCount} risk${entry.riskCount === 1 ? '' : 's'}`)
 
   return parts.join(' · ')
+}
+
+export function explainInitiativePriority(entry: IntelligenceInitiativeEntry, now: string = new Date().toISOString()): string {
+  const reasons: string[] = []
+  const nowMs = new Date(now).getTime()
+
+  if (entry.status === 'blocked') reasons.push('It is currently blocked.')
+  if (entry.status === 'active') reasons.push('It is active work.')
+  if (entry.nextReviewAt && new Date(entry.nextReviewAt).getTime() <= nowMs) {
+    reasons.push('It is due for review now.')
+  }
+  if (entry.nextMilestone) reasons.push(`Next milestone: ${entry.nextMilestone}.`)
+  if (entry.openQuestionCount > 0) reasons.push(`There ${entry.openQuestionCount === 1 ? 'is' : 'are'} ${entry.openQuestionCount} open question${entry.openQuestionCount === 1 ? '' : 's'}.`)
+  if (entry.riskCount > 0) reasons.push(`There ${entry.riskCount === 1 ? 'is' : 'are'} ${entry.riskCount} known risk${entry.riskCount === 1 ? '' : 's'}.`)
+
+  return reasons.join(' ') || 'This initiative was selected because it matches recent signals.'
+}
+
+export function findRelatedDocsForInitiative<T extends IntelligenceVaultEntryPoint>(
+  initiative: InitiativeLike,
+  documents: T[],
+  limit: number = 6
+): T[] {
+  const tokens = normalizeTokens(`${initiative.title} ${initiative.latestSummary ?? ''}`)
+
+  return [...documents]
+    .filter(document => {
+      const haystack = normalizeTokens(`${document.title} ${document.path}`)
+      return tokens.some(token => haystack.includes(token))
+    })
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, limit)
+}
+
+function normalizeTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(token => token.length > 2)
 }

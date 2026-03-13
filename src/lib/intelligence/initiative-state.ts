@@ -1,4 +1,5 @@
 import type { ChiefFocusProfile } from '@/lib/intelligence/focus-profile'
+import type { IntelligenceVaultEntryPoint } from '@/lib/evidence/intelligence-ui'
 
 export type InitiativeStatus = 'active' | 'waiting' | 'blocked' | 'closed' | 'archived'
 export type InitiativePhase =
@@ -82,6 +83,36 @@ interface MinimalEntity {
   entityType: string
 }
 
+interface MinimalClaim {
+  id: string
+  predicate: string
+  objectValue: string | null
+  updatedAt: string
+}
+
+interface MinimalCommitment {
+  id: string
+  title: string
+  status: string
+  priority: string
+  dueDate: string | null
+  updatedAt: string
+}
+
+interface MinimalDecisionThread {
+  id: string
+  title: string
+  status: string
+  updatedAt: string
+}
+
+interface MinimalNarrative {
+  id: string
+  title: string
+  summary: string
+  updatedAt: string
+}
+
 interface RelevantInitiativesInput {
   initiatives: InitiativeRecord[]
   signalTexts: string[]
@@ -115,6 +146,19 @@ function scoreTextOverlap(haystack: string, needles: string[]): number {
   }
 
   return score
+}
+
+function matchesInitiativeText(initiative: InitiativeRecord, candidateText: string): boolean {
+  const initiativeTokens = tokenize([
+    initiative.title,
+    initiative.goal,
+    initiative.scope,
+    initiative.latestSummary,
+    ...initiative.openQuestions,
+    ...initiative.knownRisks,
+  ].join(' '))
+
+  return scoreTextOverlap(candidateText, initiativeTokens) > 0
 }
 
 export function deriveInitiativePhase(input: {
@@ -236,4 +280,96 @@ export function buildFocusInitiativeDrafts(input: {
         source: 'chief_loop' as const,
       }
     })
+}
+
+export function reconcileInitiativeState(input: {
+  now: string
+  initiative: InitiativeRecord
+  activeClaims: MinimalClaim[]
+  activeCommitments: MinimalCommitment[]
+  decisionThreads: MinimalDecisionThread[]
+  activeNarratives: MinimalNarrative[]
+  recentArtifacts: MinimalArtifact[]
+}): InitiativeRecord {
+  const matchingClaims = input.activeClaims.filter(claim =>
+    matchesInitiativeText(input.initiative, `${claim.predicate} ${claim.objectValue ?? ''}`)
+  )
+  const matchingCommitments = input.activeCommitments.filter(commitment =>
+    matchesInitiativeText(input.initiative, `${commitment.title} ${commitment.status} ${commitment.priority}`)
+  )
+  const matchingDecisionThreads = input.decisionThreads.filter(thread =>
+    matchesInitiativeText(input.initiative, `${thread.title} ${thread.status}`)
+  )
+  const matchingNarratives = input.activeNarratives.filter(narrative =>
+    matchesInitiativeText(input.initiative, `${narrative.title} ${narrative.summary}`)
+  )
+  const matchingArtifacts = input.recentArtifacts.filter(artifact =>
+    matchesInitiativeText(input.initiative, `${artifact.title} ${artifact.channel}`)
+  )
+
+  const commitmentRiskLines = matchingCommitments
+    .filter(commitment => ['at_risk', 'overdue'].includes(commitment.status))
+    .map(commitment => `${commitment.title} is ${commitment.status.replace(/_/g, ' ')}.`)
+
+  const openQuestions = [
+    ...input.initiative.openQuestions,
+    ...matchingDecisionThreads
+      .filter(thread => thread.status === 'open')
+      .map(thread => `Resolve decision thread: ${thread.title}`),
+  ]
+
+  const knownRisks = [
+    ...input.initiative.knownRisks,
+    ...commitmentRiskLines,
+  ]
+
+  const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)))
+  const latestSummary = [
+    matchingNarratives[0]?.summary,
+    matchingArtifacts[0] ? `Recent ${matchingArtifacts[0].channel} activity: ${matchingArtifacts[0].title}.` : null,
+    matchingCommitments[0] ? `Current work: ${matchingCommitments[0].title} [${matchingCommitments[0].status}].` : null,
+  ].filter(Boolean).join(' ').trim() || input.initiative.latestSummary
+
+  const status: InitiativeStatus =
+    matchingCommitments.some(commitment => commitment.status === 'overdue') ? 'blocked'
+    : matchingCommitments.some(commitment => commitment.status === 'at_risk') ? 'waiting'
+    : input.initiative.status
+
+  const phase = deriveInitiativePhase({
+    activeCommitmentCount: matchingCommitments.filter(commitment => commitment.status === 'active').length,
+    blockedCommitmentCount: matchingCommitments.filter(commitment => ['at_risk', 'overdue'].includes(commitment.status)).length,
+    hasRecentSignal: matchingArtifacts.length > 0 || matchingClaims.length > 0,
+    hasSuccessCriteria: input.initiative.successCriteria.length > 0,
+    openQuestionCount: unique(openQuestions).length,
+    previousPhase: input.initiative.phase,
+  })
+
+  return {
+    ...input.initiative,
+    status,
+    phase,
+    linkedClaimIds: unique([...input.initiative.linkedClaimIds, ...matchingClaims.map(claim => claim.id)]),
+    linkedCommitmentIds: unique([...input.initiative.linkedCommitmentIds, ...matchingCommitments.map(commitment => commitment.id)]),
+    linkedDecisionThreadIds: unique([...input.initiative.linkedDecisionThreadIds, ...matchingDecisionThreads.map(thread => thread.id)]),
+    openQuestions: unique(openQuestions).slice(0, 6),
+    knownRisks: unique(knownRisks).slice(0, 6),
+    latestSummary: latestSummary ?? null,
+    nextMilestone: matchingCommitments[0]?.title ?? input.initiative.nextMilestone,
+    lastSignalAt: matchingArtifacts[0]?.startedAt ?? matchingClaims[0]?.updatedAt ?? input.initiative.lastSignalAt,
+    lastReconciledAt: input.now,
+    nextReviewAt: new Date(new Date(input.now).getTime() + (status === 'blocked' ? 2 : 6) * 60 * 60 * 1000).toISOString(),
+  }
+}
+
+export function findInitiativeRelatedDocuments(input: {
+  initiative: InitiativeRecord
+  documents: IntelligenceVaultEntryPoint[]
+  limit?: number
+}): IntelligenceVaultEntryPoint[] {
+  const limit = input.limit ?? 6
+
+  return input.documents
+    .filter(document => matchesInitiativeText(input.initiative, `${document.title} ${document.path}`))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, limit)
 }

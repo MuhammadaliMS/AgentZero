@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   describeInitiativeState,
   dedupeEntryPoints,
+  explainInitiativePriority,
+  findRelatedDocsForInitiative,
   flattenVaultDocumentPaths,
   groupEntryPointsByFreshness,
   labelDocumentType,
@@ -195,5 +197,57 @@ describe('describeInitiativeState', () => {
       openQuestionCount: 2,
       riskCount: 1,
     })).toBe('execution · active · next: Send estimate · 2 open questions · 1 risk')
+  })
+})
+
+describe('explainInitiativePriority', () => {
+  it('explains why an initiative is on top of the stack', () => {
+    const explanation = explainInitiativePriority({
+      id: 'crane',
+      title: 'Crane estimation',
+      status: 'blocked',
+      phase: 'execution',
+      nextMilestone: 'Send estimate',
+      nextReviewAt: '2026-03-13T07:00:00.000Z',
+      lastSignalAt: null,
+      latestSummary: null,
+      openQuestionCount: 2,
+      riskCount: 1,
+    }, '2026-03-13T07:30:00.000Z')
+
+    expect(explanation).toContain('blocked')
+    expect(explanation).toContain('due for review')
+    expect(explanation).toContain('Send estimate')
+  })
+})
+
+describe('findRelatedDocsForInitiative', () => {
+  it('matches vault docs to initiative title and summary', () => {
+    const docs = findRelatedDocsForInitiative(
+      {
+        title: 'Crane estimation',
+        latestSummary: 'Working with Crane Ventures on the estimate package.',
+      },
+      [
+        {
+          path: 'Narratives/Accounts/crane-ventures.md',
+          title: 'Crane Ventures',
+          documentType: 'narrative',
+          updatedAt: '2026-03-13T08:10:00.000Z',
+          lastSourceUpdateAt: null,
+        },
+        {
+          path: 'Knowledge/Organizations/axari.md',
+          title: 'Axari',
+          documentType: 'entity',
+          updatedAt: '2026-03-13T08:05:00.000Z',
+          lastSourceUpdateAt: null,
+        },
+      ]
+    )
+
+    expect(docs).toEqual([
+      expect.objectContaining({ title: 'Crane Ventures' }),
+    ])
   })
 })

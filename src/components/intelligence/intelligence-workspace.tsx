@@ -29,6 +29,8 @@ import { createClient } from '@/lib/supabase/client'
 import { type VaultTreeNode } from '@/lib/evidence/vault'
 import {
   dedupeEntryPoints,
+  explainInitiativePriority,
+  findRelatedDocsForInitiative,
   describeInitiativeState,
   groupEntryPointsByFreshness,
   labelDocumentType,
@@ -552,6 +554,18 @@ export function IntelligenceWorkspace() {
     [entryPoints]
   )
 
+  const allVaultDocs = useMemo(
+    () => dedupeEntryPoints([
+      ...(entryPoints?.accounts ?? []),
+      ...(entryPoints?.relationships ?? []),
+      ...(entryPoints?.meetings ?? []),
+      ...(entryPoints?.work ?? []),
+      ...(entryPoints?.jumpBackIn ?? []),
+      ...(entryPoints?.recentlyChanged ?? []),
+    ]),
+    [entryPoints]
+  )
+
   const linkedWork = useMemo(
     () => (document?.links ?? []).filter((link) => ['commitment', 'decision_thread'].includes(link.linkKind)),
     [document]
@@ -580,6 +594,11 @@ export function IntelligenceWorkspace() {
   const selectedInitiative = useMemo(
     () => initiatives.find((initiative) => initiative.id === selectedInitiativeId) ?? null,
     [initiatives, selectedInitiativeId]
+  )
+
+  const initiativeRelatedDocs = useMemo(
+    () => selectedInitiative ? findRelatedDocsForInitiative(selectedInitiative, allVaultDocs) : [],
+    [allVaultDocs, selectedInitiative]
   )
 
   async function saveManualSection(key: string) {
@@ -854,6 +873,16 @@ export function IntelligenceWorkspace() {
                     <p className="text-sm text-muted-foreground">{describeInitiativeState(selectedInitiative)}</p>
                   </div>
 
+                  <div className="mt-6 rounded-2xl border border-border/50 bg-muted/20 p-4">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <History className="h-4 w-4 text-primary" />
+                      Why this is prioritized
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {explainInitiativePriority(selectedInitiative)}
+                    </p>
+                  </div>
+
                   <div className="mt-6 grid gap-4 md:grid-cols-2">
                     <section className="rounded-2xl border border-border/50 p-4">
                       <h3 className="text-base font-medium">Current state</h3>
@@ -871,6 +900,27 @@ export function IntelligenceWorkspace() {
                         <p className="mt-2 text-sm text-muted-foreground">
                           {selectedInitiative.nextMilestone ?? 'No milestone set yet'}
                         </p>
+                      </div>
+                    </section>
+                    <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">Related vault docs</h3>
+                      <div className="mt-3 space-y-2">
+                        {initiativeRelatedDocs.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No related docs linked yet.</p>
+                        ) : (
+                          initiativeRelatedDocs.map((doc) => (
+                            <button
+                              key={doc.path}
+                              onClick={() => openDocument(doc.path)}
+                              className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                            >
+                              <p className="truncate text-sm font-medium">{doc.title}</p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {labelDocumentType(doc.documentType)} · {timeAgo(doc.updatedAt)}
+                              </p>
+                            </button>
+                          ))
+                        )}
                       </div>
                     </section>
                   </div>
@@ -1030,96 +1080,129 @@ export function IntelligenceWorkspace() {
           ) : (
             <>
               {selectedInitiative && (
-                <Card className="border-border/50">
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <Workflow className="h-4 w-4 text-primary" />
-                      Changed since last review
-                    </div>
-                    <p className="mt-4 text-sm text-muted-foreground">
-                      {selectedInitiative.latestSummary ?? 'No change summary yet.'}
-                    </p>
-                  </CardContent>
-                </Card>
+                <>
+                  <Card className="border-border/50">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Workflow className="h-4 w-4 text-primary" />
+                        Changed since last review
+                      </div>
+                      <p className="mt-4 text-sm text-muted-foreground">
+                        {selectedInitiative.latestSummary ?? 'No change summary yet.'}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-border/50">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Link2 className="h-4 w-4 text-primary" />
+                        Initiative docs
+                      </div>
+                      <div className="mt-4 space-y-2">
+                        {initiativeRelatedDocs.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No related docs yet.</p>
+                        ) : (
+                          initiativeRelatedDocs.map((doc) => (
+                            <button
+                              key={doc.path}
+                              onClick={() => openDocument(doc.path)}
+                              className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                            >
+                              <p className="truncate text-sm font-medium">{doc.title}</p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {labelDocumentType(doc.documentType)} · {timeAgo(doc.updatedAt)}
+                              </p>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </>
               )}
-              <Card className="border-border/50">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <Link2 className="h-4 w-4 text-primary" />
-                    Linked context
-                  </div>
-                  <div className="mt-4 space-y-2">
-                    {linkedContext.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No linked context yet.</p>
-                    ) : (
-                      linkedContext.map((link) => (
-                        <button
-                          key={`${link.linkKind}-${link.targetId}`}
-                          onClick={() => link.targetPath && openDocument(link.targetPath)}
-                          className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="truncate text-sm font-medium">{link.targetLabel ?? link.targetId}</p>
-                            <Badge variant="secondary" className="text-[10px]">
-                              {link.targetType ?? link.linkKind}
-                            </Badge>
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+              {!selectedInitiative && (
+                <>
+                  <Card className="border-border/50">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Link2 className="h-4 w-4 text-primary" />
+                        Linked context
+                      </div>
+                      <div className="mt-4 space-y-2">
+                        {linkedContext.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No linked context yet.</p>
+                        ) : (
+                          linkedContext.map((link) => (
+                            <button
+                              key={`${link.linkKind}-${link.targetId}`}
+                              onClick={() => link.targetPath && openDocument(link.targetPath)}
+                              className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="truncate text-sm font-medium">{link.targetLabel ?? link.targetId}</p>
+                                <Badge variant="secondary" className="text-[10px]">
+                                  {link.targetType ?? link.linkKind}
+                                </Badge>
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
 
-              <Card className="border-border/50">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <BrainCircuit className="h-4 w-4 text-primary" />
-                    Work connected to this
-                  </div>
-                  <div className="mt-4 space-y-2">
-                    {linkedWork.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No linked action items or decisions yet.</p>
-                    ) : (
-                      linkedWork.map((link) => (
-                        <button
-                          key={`${link.linkKind}-${link.targetId}`}
-                          onClick={() => link.targetPath && openDocument(link.targetPath)}
-                          className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="truncate text-sm font-medium">{link.targetLabel ?? link.targetId}</p>
-                            <Badge variant="secondary" className="text-[10px]">
-                              {link.targetType ?? labelDocumentType(link.linkKind)}
-                            </Badge>
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+                  <Card className="border-border/50">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <BrainCircuit className="h-4 w-4 text-primary" />
+                        Work connected to this
+                      </div>
+                      <div className="mt-4 space-y-2">
+                        {linkedWork.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No linked action items or decisions yet.</p>
+                        ) : (
+                          linkedWork.map((link) => (
+                            <button
+                              key={`${link.linkKind}-${link.targetId}`}
+                              onClick={() => link.targetPath && openDocument(link.targetPath)}
+                              className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="truncate text-sm font-medium">{link.targetLabel ?? link.targetId}</p>
+                                <Badge variant="secondary" className="text-[10px]">
+                                  {link.targetType ?? labelDocumentType(link.linkKind)}
+                                </Badge>
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
 
-              <Card className="border-border/50">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <CalendarDays className="h-4 w-4 text-primary" />
-                    Sources used in this doc
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {citedSources.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No source chips yet.</p>
-                    ) : (
-                      citedSources.map((label) => (
-                        <Badge key={label} variant="secondary" className="gap-1">
-                          <FileClock className="h-3 w-3" />
-                          {label}
-                        </Badge>
-                      ))
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+                  <Card className="border-border/50">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <CalendarDays className="h-4 w-4 text-primary" />
+                        Sources used in this doc
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {citedSources.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No source chips yet.</p>
+                        ) : (
+                          citedSources.map((label) => (
+                            <Badge key={label} variant="secondary" className="gap-1">
+                              <FileClock className="h-3 w-3" />
+                              {label}
+                            </Badge>
+                          ))
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </>
+              )}
 
               <Card className="border-border/50">
                 <CardContent className="p-4">

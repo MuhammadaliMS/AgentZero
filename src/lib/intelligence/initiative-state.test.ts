@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   buildFocusInitiativeDrafts,
   deriveInitiativePhase,
+  findInitiativeRelatedDocuments,
+  reconcileInitiativeState,
   selectRelevantInitiatives,
   type InitiativeRecord,
 } from '@/lib/intelligence/initiative-state'
@@ -149,5 +151,141 @@ describe('buildFocusInitiativeDrafts', () => {
     expect(drafts[0]?.title).toBe('Crane Ventures')
     expect(drafts[0]?.linkedEntityIds).toEqual(['entity-crane'])
     expect(drafts[0]?.latestSummary).toContain('Crane')
+  })
+})
+
+describe('reconcileInitiativeState', () => {
+  it('links matching work objects and refreshes summary, risks, and phase', () => {
+    const reconciled = reconcileInitiativeState({
+      now: '2026-03-13T07:00:00.000Z',
+      initiative: {
+        id: 'initiative-1',
+        orgId: 'org-1',
+        title: 'Crane estimation',
+        goal: 'Advance Crane estimation work',
+        scope: null,
+        status: 'active',
+        phase: 'planning',
+        successCriteria: ['Estimate sent'],
+        currentHypothesis: null,
+        openQuestions: [],
+        knownRisks: [],
+        dependencies: [],
+        stakeholders: [],
+        linkedEntityIds: [],
+        linkedClaimIds: [],
+        linkedCommitmentIds: [],
+        linkedDecisionThreadIds: [],
+        latestSummary: null,
+        nextMilestone: null,
+        nextReviewAt: null,
+        lastSignalAt: null,
+        lastReconciledAt: null,
+        source: 'chief_loop',
+        updatedAt: null,
+      },
+      activeClaims: [
+        {
+          id: 'claim-1',
+          predicate: 'works_on',
+          objectValue: 'Crane estimate',
+          updatedAt: '2026-03-13T06:20:00.000Z',
+        },
+      ],
+      activeCommitments: [
+        {
+          id: 'commitment-1',
+          title: 'Send Crane estimate',
+          status: 'at_risk',
+          priority: 'high',
+          dueDate: '2026-03-14',
+          updatedAt: '2026-03-13T06:30:00.000Z',
+        },
+      ],
+      decisionThreads: [
+        {
+          id: 'decision-1',
+          title: 'Crane pricing approach',
+          status: 'open',
+          updatedAt: '2026-03-13T06:40:00.000Z',
+        },
+      ],
+      activeNarratives: [
+        {
+          id: 'narrative-1',
+          title: 'Crane <> KeyValue',
+          summary: 'Crane is pushing toward an estimate and scoping package.',
+          updatedAt: '2026-03-13T06:50:00.000Z',
+        },
+      ],
+      recentArtifacts: [
+        {
+          id: 'artifact-1',
+          title: 'Crane <> KeyValue',
+          channel: 'meeting',
+          startedAt: '2026-03-13T05:00:00.000Z',
+        },
+      ],
+    })
+
+    expect(reconciled.linkedClaimIds).toEqual(['claim-1'])
+    expect(reconciled.linkedCommitmentIds).toEqual(['commitment-1'])
+    expect(reconciled.linkedDecisionThreadIds).toEqual(['decision-1'])
+    expect(reconciled.knownRisks[0]).toContain('Send Crane estimate')
+    expect(reconciled.openQuestions[0]).toContain('Crane pricing approach')
+    expect(reconciled.phase).toBe('waiting')
+    expect(reconciled.latestSummary).toContain('Crane')
+  })
+})
+
+describe('findInitiativeRelatedDocuments', () => {
+  it('returns initiative-relevant docs in freshness order', () => {
+    const related = findInitiativeRelatedDocuments({
+      initiative: {
+        id: 'initiative-1',
+        orgId: 'org-1',
+        title: 'Crane estimation',
+        goal: 'Advance Crane estimation work',
+        scope: null,
+        status: 'active',
+        phase: 'execution',
+        successCriteria: [],
+        currentHypothesis: null,
+        openQuestions: [],
+        knownRisks: [],
+        dependencies: [],
+        stakeholders: [],
+        linkedEntityIds: [],
+        linkedClaimIds: [],
+        linkedCommitmentIds: [],
+        linkedDecisionThreadIds: [],
+        latestSummary: null,
+        nextMilestone: null,
+        nextReviewAt: null,
+        lastSignalAt: null,
+        lastReconciledAt: null,
+        source: 'chief_loop',
+        updatedAt: null,
+      },
+      documents: [
+        {
+          path: 'Narratives/Accounts/crane-ventures.md',
+          title: 'Crane Ventures',
+          documentType: 'narrative',
+          updatedAt: '2026-03-13T06:50:00.000Z',
+          lastSourceUpdateAt: null,
+        },
+        {
+          path: 'Knowledge/Organizations/axari.md',
+          title: 'Axari',
+          documentType: 'entity',
+          updatedAt: '2026-03-13T06:30:00.000Z',
+          lastSourceUpdateAt: null,
+        },
+      ],
+    })
+
+    expect(related).toHaveLength(1)
+    expect(related[0]?.title).toBe('Crane Ventures')
   })
 })

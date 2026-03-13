@@ -80,6 +80,7 @@ import {
 } from '@/lib/intelligence/focus-profile'
 import {
   buildFocusInitiativeDrafts,
+  findInitiativeRelatedDocuments,
   materializeInitiativeDecision,
   reconcileInitiativeState,
   selectRelevantInitiatives,
@@ -220,6 +221,7 @@ interface VaultDocContext {
   summary: string | null
   manualSectionSummaries: string[]
   updatedAt: string
+  lastSourceUpdateAt: string | null
 }
 
 // ─── Main Entry ───────────────────────────────────────────────────────────
@@ -963,6 +965,36 @@ async function phaseGather(
 
     r.activeInitiatives = scopedInitiatives
 
+    if (r.activeInitiatives.length > 0 && r.vaultContext.length > 0) {
+      const relatedDocs = new Map<string, VaultDocContext>()
+      const candidateDocs = r.vaultContext.map((doc) => ({
+        path: doc.path,
+        title: doc.title,
+        documentType: doc.documentType,
+        updatedAt: doc.updatedAt,
+        lastSourceUpdateAt: doc.lastSourceUpdateAt,
+      }))
+
+      for (const initiative of r.activeInitiatives.slice(0, 6)) {
+        for (const relatedDoc of findInitiativeRelatedDocuments({
+          initiative,
+          documents: candidateDocs,
+          limit: 4,
+        })) {
+          const fullDoc = r.vaultContext.find((doc) => doc.path === relatedDoc.path)
+          if (fullDoc) {
+            relatedDocs.set(fullDoc.path, fullDoc)
+          }
+        }
+      }
+
+      if (relatedDocs.size > 0) {
+        r.vaultContext = [...relatedDocs.values()]
+          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+          .slice(0, 12)
+      }
+    }
+
     r.totalSignals = r.recentEmails.length + r.recentSlackMessages.length +
       r.recentInsights.length + r.recentFindings.length + r.todayEvents.length +
       r.recentSourceArtifacts.length
@@ -1279,7 +1311,7 @@ async function fetchVaultContextDocs(
 ): Promise<VaultDocContext[]> {
   const { data } = await supabase
     .from('vault_documents')
-    .select('id, path, title, document_type, sections, manual_sections, updated_at')
+    .select('id, path, title, document_type, sections, manual_sections, updated_at, last_source_update_at')
     .eq('org_id', orgId)
     .order('updated_at', { ascending: false })
     .limit(20)
@@ -1302,6 +1334,7 @@ async function fetchVaultContextDocs(
         .filter(Boolean)
         .slice(0, 3),
       updatedAt: String(row.updated_at ?? ''),
+      lastSourceUpdateAt: typeof row.last_source_update_at === 'string' ? row.last_source_update_at : null,
     }
   })
 }

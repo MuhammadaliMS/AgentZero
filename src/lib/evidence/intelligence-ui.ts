@@ -11,6 +11,8 @@ export interface IntelligenceVaultEntryPoint {
   documentType: string
   updatedAt: string
   lastSourceUpdateAt: string | null
+  summary?: string | null
+  manualSectionSummaries?: string[]
 }
 
 export interface IntelligenceInitiativeEntry {
@@ -21,7 +23,9 @@ export interface IntelligenceInitiativeEntry {
   nextMilestone: string | null
   nextReviewAt: string | null
   lastSignalAt: string | null
+  lastReconciledAt?: string | null
   latestSummary: string | null
+  currentHypothesis?: string | null
   openQuestionCount: number
   riskCount: number
 }
@@ -218,6 +222,41 @@ export function findRelatedDocsForInitiative<T extends IntelligenceVaultEntryPoi
     })
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, limit)
+}
+
+export function findChangedDocsForInitiative<T extends IntelligenceVaultEntryPoint>(
+  initiative: Pick<IntelligenceInitiativeEntry, 'lastReconciledAt' | 'lastSignalAt'>,
+  documents: T[],
+  limit: number = 4
+): T[] {
+  const baseline = initiative.lastReconciledAt ?? initiative.lastSignalAt
+  const changed = [...documents]
+    .filter((doc) => !baseline || doc.updatedAt > baseline)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+
+  return changed.slice(0, limit)
+}
+
+export function summarizeInitiativeManualContext(
+  documents: IntelligenceVaultEntryPoint[],
+  limit: number = 4
+): string[] {
+  const snippets: string[] = []
+  const seen = new Set<string>()
+
+  for (const doc of documents) {
+    for (const snippet of doc.manualSectionSummaries ?? []) {
+      const trimmed = snippet.trim()
+      if (!trimmed) continue
+      const key = trimmed.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      snippets.push(trimmed)
+      if (snippets.length >= limit) return snippets
+    }
+  }
+
+  return snippets
 }
 
 function normalizeTokens(text: string): string[] {

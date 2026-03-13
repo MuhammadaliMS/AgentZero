@@ -30,11 +30,13 @@ import { type VaultTreeNode } from '@/lib/evidence/vault'
 import {
   dedupeEntryPoints,
   explainInitiativePriority,
+  findChangedDocsForInitiative,
   findRelatedDocsForInitiative,
   describeInitiativeState,
   groupEntryPointsByFreshness,
   labelDocumentType,
   prioritizeInitiatives,
+  summarizeInitiativeManualContext,
   type IntelligenceInitiativeEntry,
   type IntelligenceVaultEntryPoint,
 } from '@/lib/evidence/intelligence-ui'
@@ -449,7 +451,7 @@ export function IntelligenceWorkspace() {
           }),
           supabase
             .from('initiatives')
-            .select('id, title, status, phase, next_milestone, next_review_at, last_signal_at, latest_summary, open_questions, known_risks')
+            .select('id, title, status, phase, next_milestone, next_review_at, last_signal_at, last_reconciled_at, latest_summary, current_hypothesis, open_questions, known_risks')
             .in('status', ['active', 'waiting', 'blocked'])
             .order('updated_at', { ascending: false }),
           supabase
@@ -483,7 +485,9 @@ export function IntelligenceWorkspace() {
               nextMilestone: typeof row.next_milestone === 'string' ? row.next_milestone : null,
               nextReviewAt: typeof row.next_review_at === 'string' ? row.next_review_at : null,
               lastSignalAt: typeof row.last_signal_at === 'string' ? row.last_signal_at : null,
+              lastReconciledAt: typeof row.last_reconciled_at === 'string' ? row.last_reconciled_at : null,
               latestSummary: typeof row.latest_summary === 'string' ? row.latest_summary : null,
+              currentHypothesis: typeof row.current_hypothesis === 'string' ? row.current_hypothesis : null,
               openQuestionCount: Array.isArray(row.open_questions) ? row.open_questions.length : 0,
               riskCount: Array.isArray(row.known_risks) ? row.known_risks.length : 0,
             }))
@@ -599,6 +603,16 @@ export function IntelligenceWorkspace() {
   const initiativeRelatedDocs = useMemo(
     () => selectedInitiative ? findRelatedDocsForInitiative(selectedInitiative, allVaultDocs) : [],
     [allVaultDocs, selectedInitiative]
+  )
+
+  const changedDocsForInitiative = useMemo(
+    () => selectedInitiative ? findChangedDocsForInitiative(selectedInitiative, initiativeRelatedDocs) : [],
+    [initiativeRelatedDocs, selectedInitiative]
+  )
+
+  const initiativeManualContext = useMemo(
+    () => summarizeInitiativeManualContext(initiativeRelatedDocs),
+    [initiativeRelatedDocs]
   )
 
   async function saveManualSection(key: string) {
@@ -889,6 +903,12 @@ export function IntelligenceWorkspace() {
                       <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
                         {selectedInitiative.latestSummary ?? 'No initiative summary yet. The chief will fill this in as signals accumulate.'}
                       </p>
+                      {selectedInitiative.currentHypothesis && (
+                        <div className="mt-4 rounded-xl border border-border/50 bg-muted/20 p-3">
+                          <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Current hypothesis</p>
+                          <p className="mt-2 text-sm text-muted-foreground">{selectedInitiative.currentHypothesis}</p>
+                        </div>
+                      )}
                     </section>
                     <section className="rounded-2xl border border-border/50 p-4">
                       <h3 className="text-base font-medium">Next review</h3>
@@ -900,6 +920,30 @@ export function IntelligenceWorkspace() {
                         <p className="mt-2 text-sm text-muted-foreground">
                           {selectedInitiative.nextMilestone ?? 'No milestone set yet'}
                         </p>
+                      </div>
+                    </section>
+                    <section className="rounded-2xl border border-border/50 p-4 md:col-span-2">
+                      <h3 className="text-base font-medium">Changed since last review</h3>
+                      <div className="mt-3 space-y-2">
+                        {changedDocsForInitiative.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No linked vault docs changed after the last initiative checkpoint yet.</p>
+                        ) : (
+                          changedDocsForInitiative.map((doc) => (
+                            <button
+                              key={doc.path}
+                              onClick={() => openDocument(doc.path)}
+                              className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="truncate text-sm font-medium">{doc.title}</p>
+                                <span className="text-xs text-muted-foreground">{timeAgo(doc.updatedAt)}</span>
+                              </div>
+                              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                                {doc.summary ?? `${labelDocumentType(doc.documentType)} updated.`}
+                              </p>
+                            </button>
+                          ))
+                        )}
                       </div>
                     </section>
                     <section className="rounded-2xl border border-border/50 p-4">
@@ -919,6 +963,20 @@ export function IntelligenceWorkspace() {
                                 {labelDocumentType(doc.documentType)} · {timeAgo(doc.updatedAt)}
                               </p>
                             </button>
+                          ))
+                        )}
+                      </div>
+                    </section>
+                    <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">Manual context from vault</h3>
+                      <div className="mt-3 space-y-2">
+                        {initiativeManualContext.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No manual notes or hypotheses have been linked into this initiative yet.</p>
+                        ) : (
+                          initiativeManualContext.map((snippet, index) => (
+                            <div key={`${index}-${snippet.slice(0, 24)}`} className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
+                              {snippet}
+                            </div>
                           ))
                         )}
                       </div>

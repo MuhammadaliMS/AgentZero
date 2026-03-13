@@ -4,11 +4,13 @@ import {
   describeInitiativeState,
   dedupeEntryPoints,
   explainInitiativePriority,
+  findChangedDocsForInitiative,
   findRelatedDocsForInitiative,
   flattenVaultDocumentPaths,
   groupEntryPointsByFreshness,
   labelDocumentType,
   prioritizeInitiatives,
+  summarizeInitiativeManualContext,
   summarizeArtifactChannels,
   type IntelligenceInitiativeEntry,
   type IntelligenceVaultEntryPoint,
@@ -235,6 +237,8 @@ describe('findRelatedDocsForInitiative', () => {
           documentType: 'narrative',
           updatedAt: '2026-03-13T08:10:00.000Z',
           lastSourceUpdateAt: null,
+          summary: 'Crane is progressing through scoping.',
+          manualSectionSummaries: ['User wants to keep this relationship warm.'],
         },
         {
           path: 'Knowledge/Organizations/axari.md',
@@ -242,12 +246,79 @@ describe('findRelatedDocsForInitiative', () => {
           documentType: 'entity',
           updatedAt: '2026-03-13T08:05:00.000Z',
           lastSourceUpdateAt: null,
+          summary: null,
+          manualSectionSummaries: [],
         },
       ]
     )
 
     expect(docs).toEqual([
       expect.objectContaining({ title: 'Crane Ventures' }),
+    ])
+  })
+})
+
+describe('findChangedDocsForInitiative', () => {
+  it('prefers docs updated after the last initiative review point', () => {
+    const docs = findChangedDocsForInitiative(
+      {
+        lastSignalAt: '2026-03-13T07:00:00.000Z',
+        lastReconciledAt: '2026-03-13T07:30:00.000Z',
+      },
+      [
+        {
+          path: 'Narratives/Accounts/crane-ventures.md',
+          title: 'Crane Ventures',
+          documentType: 'narrative',
+          updatedAt: '2026-03-13T08:10:00.000Z',
+          lastSourceUpdateAt: null,
+        },
+        {
+          path: 'Sources/Meetings/old.md',
+          title: 'Older meeting',
+          documentType: 'source_artifact',
+          updatedAt: '2026-03-13T07:10:00.000Z',
+          lastSourceUpdateAt: null,
+        },
+      ]
+    )
+
+    expect(docs).toHaveLength(1)
+    expect(docs[0]?.title).toBe('Crane Ventures')
+  })
+})
+
+describe('summarizeInitiativeManualContext', () => {
+  it('collects deduped manual context snippets from related docs', () => {
+    const snippets = summarizeInitiativeManualContext([
+      {
+        path: 'Narratives/Accounts/crane-ventures.md',
+        title: 'Crane Ventures',
+        documentType: 'narrative',
+        updatedAt: '2026-03-13T08:10:00.000Z',
+        lastSourceUpdateAt: null,
+        manualSectionSummaries: [
+          'User wants to keep this relationship warm.',
+          'Need a cleaner screen-sharing flow.',
+        ],
+      },
+      {
+        path: 'Work/Action Items/crane-estimate.md',
+        title: 'Crane estimate',
+        documentType: 'commitment',
+        updatedAt: '2026-03-13T08:15:00.000Z',
+        lastSourceUpdateAt: null,
+        manualSectionSummaries: [
+          'User wants to keep this relationship warm.',
+          'Commercials need sign-off.',
+        ],
+      },
+    ])
+
+    expect(snippets).toEqual([
+      'User wants to keep this relationship warm.',
+      'Need a cleaner screen-sharing flow.',
+      'Commercials need sign-off.',
     ])
   })
 })

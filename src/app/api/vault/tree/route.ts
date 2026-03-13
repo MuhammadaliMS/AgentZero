@@ -11,7 +11,7 @@ export async function GET() {
     const { orgId, admin } = await getAuthenticatedEvidenceContext()
     const { data, error } = await admin
       .from('vault_documents')
-      .select('path, title, document_type, updated_at, last_source_update_at')
+      .select('path, title, document_type, updated_at, last_source_update_at, sections, manual_sections')
       .eq('org_id', orgId)
       .order('path', { ascending: true })
 
@@ -20,13 +20,28 @@ export async function GET() {
     }
 
     const documents = ((data ?? []) as Array<Record<string, unknown>>)
-      .map((row) => ({
-        path: String(row.path ?? ''),
-        title: String(row.title ?? ''),
-        documentType: String(row.document_type ?? ''),
-        updatedAt: String(row.updated_at ?? ''),
-        lastSourceUpdateAt: typeof row.last_source_update_at === 'string' ? row.last_source_update_at : null,
-      }))
+      .map((row) => {
+        const sections = Array.isArray(row.sections)
+          ? row.sections as Array<Record<string, unknown>>
+          : []
+        const summarySection = sections.find((section) =>
+          section.kind === 'summary' || section.kind === 'narrative' || section.kind === 'changes'
+        )
+        const manualSections = (row.manual_sections ?? {}) as Record<string, { content?: string }>
+
+        return {
+          path: String(row.path ?? ''),
+          title: String(row.title ?? ''),
+          documentType: String(row.document_type ?? ''),
+          updatedAt: String(row.updated_at ?? ''),
+          lastSourceUpdateAt: typeof row.last_source_update_at === 'string' ? row.last_source_update_at : null,
+          summary: typeof summarySection?.content === 'string' ? summarySection.content : null,
+          manualSectionSummaries: Object.values(manualSections)
+            .map((section) => typeof section?.content === 'string' ? section.content.trim() : '')
+            .filter(Boolean)
+            .slice(0, 3),
+        }
+      })
       .filter((row) => row.path.length > 0)
     const paths = documents.map((row) => row.path)
     const recentlyChanged = [...documents]

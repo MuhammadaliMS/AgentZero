@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildFocusInitiativeDrafts,
+  deriveInitiativeArtifactLinks,
   deriveInitiativePhase,
   findInitiativeRelatedDocuments,
   materializeInitiativeDecision,
@@ -189,6 +190,7 @@ describe('reconcileInitiativeState', () => {
       activeClaims: [
         {
           id: 'claim-1',
+          artifactId: 'artifact-1',
           predicate: 'works_on',
           objectValue: 'Crane estimate',
           updatedAt: '2026-03-13T06:20:00.000Z',
@@ -237,6 +239,77 @@ describe('reconcileInitiativeState', () => {
     expect(reconciled.openQuestions[0]).toContain('Crane pricing approach')
     expect(reconciled.phase).toBe('waiting')
     expect(reconciled.latestSummary).toContain('Crane')
+  })
+})
+
+describe('deriveInitiativeArtifactLinks', () => {
+  it('derives stable source links from linked claims and matching artifacts', () => {
+    const links = deriveInitiativeArtifactLinks({
+      initiatives: [
+        {
+          id: 'initiative-1',
+          orgId: 'org-1',
+          title: 'Crane estimation',
+          goal: 'Advance Crane estimation work',
+          scope: null,
+          status: 'active',
+          phase: 'execution',
+          successCriteria: [],
+          currentHypothesis: null,
+          openQuestions: [],
+          knownRisks: [],
+          dependencies: [],
+          stakeholders: [],
+          linkedEntityIds: [],
+          linkedClaimIds: ['claim-1'],
+          linkedCommitmentIds: [],
+          linkedDecisionThreadIds: [],
+          latestSummary: 'Working through the Crane estimate package.',
+          nextMilestone: 'Send estimate',
+          nextReviewAt: null,
+          lastSignalAt: null,
+          lastReconciledAt: null,
+          source: 'chief_loop',
+          updatedAt: null,
+        },
+      ],
+      activeClaims: [
+        {
+          id: 'claim-1',
+          artifactId: 'artifact-1',
+          predicate: 'works_on',
+          objectValue: 'Crane estimate',
+          updatedAt: '2026-03-13T06:20:00.000Z',
+        },
+      ],
+      recentArtifacts: [
+        {
+          id: 'artifact-1',
+          title: 'Crane <> KeyValue',
+          channel: 'meeting',
+          startedAt: '2026-03-13T05:00:00.000Z',
+        },
+        {
+          id: 'artifact-2',
+          title: 'Crane estimate follow-up',
+          channel: 'email',
+          startedAt: '2026-03-13T06:00:00.000Z',
+        },
+      ],
+    })
+
+    expect(links).toEqual([
+      expect.objectContaining({
+        initiativeId: 'initiative-1',
+        artifactId: 'artifact-1',
+        linkReason: 'claim+signal',
+      }),
+      expect.objectContaining({
+        initiativeId: 'initiative-1',
+        artifactId: 'artifact-2',
+        linkReason: 'signal',
+      }),
+    ])
   })
 })
 

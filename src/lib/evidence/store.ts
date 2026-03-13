@@ -13,7 +13,7 @@ import type {
   VaultSection,
 } from '@/lib/evidence/types'
 import type { MutationBundle } from '@/lib/evidence/schema'
-import type { InitiativeRecord } from '@/lib/intelligence/initiative-state'
+import type { InitiativeArtifactLink, InitiativeRecord } from '@/lib/intelligence/initiative-state'
 import { selectEvidenceForEmbedding } from '@/lib/evidence/selection'
 import { selectVaultDocumentsToPrune } from '@/lib/evidence/vault-rebuild'
 import {
@@ -1142,6 +1142,130 @@ export async function fetchEvidenceItemsByIds(
     .in('id', evidenceItemIds)
 
   return (data ?? []).map(mapEvidenceItem)
+}
+
+export async function replaceInitiativeArtifactLinks(
+  supabase: AdminClient,
+  input: {
+    orgId: string
+    initiativeIds: string[]
+    links: InitiativeArtifactLink[]
+  }
+): Promise<void> {
+  const initiativeIds = [...new Set(input.initiativeIds.filter(Boolean))]
+  if (initiativeIds.length === 0) return
+
+  const { error: deleteError } = await supabase
+    .from('initiative_artifact_links')
+    .delete()
+    .eq('org_id', input.orgId)
+    .in('initiative_id', initiativeIds)
+
+  if (deleteError) {
+    throw new Error(`Failed to clear initiative artifact links: ${deleteError.message}`)
+  }
+
+  const rows = input.links
+    .filter((link) => initiativeIds.includes(link.initiativeId))
+    .map((link) => ({
+      org_id: input.orgId,
+      initiative_id: link.initiativeId,
+      artifact_id: link.artifactId,
+      link_reason: link.linkReason,
+      link_source: 'chief_loop',
+      updated_at: new Date().toISOString(),
+    }))
+
+  if (rows.length === 0) return
+
+  const { error: insertError } = await supabase
+    .from('initiative_artifact_links')
+    .upsert(rows, { onConflict: 'org_id,initiative_id,artifact_id' })
+
+  if (insertError) {
+    throw new Error(`Failed to upsert initiative artifact links: ${insertError.message}`)
+  }
+}
+
+export async function fetchInitiativesForArtifacts(
+  supabase: AdminClient,
+  orgId: string,
+  artifactIds: string[]
+): Promise<Map<string, Array<{
+  id: string
+  title: string
+  status: string
+  phase: string
+  nextMilestone: string | null
+  latestSummary: string | null
+}>>> {
+  const uniqueArtifactIds = [...new Set(artifactIds.filter(Boolean))]
+  const result = new Map<string, Array<{
+    id: string
+    title: string
+    status: string
+    phase: string
+    nextMilestone: string | null
+    latestSummary: string | null
+  }>>()
+
+  if (uniqueArtifactIds.length === 0) return result
+
+  const { data: linkRows, error: linkError } = await supabase
+    .from('initiative_artifact_links')
+    .select('artifact_id, initiative_id')
+    .eq('org_id', orgId)
+    .in('artifact_id', uniqueArtifactIds)
+
+  if (linkError) {
+    throw new Error(`Failed to fetch initiative artifact links: ${linkError.message}`)
+  }
+
+  const initiativeIds = [...new Set(((linkRows ?? []) as Array<Record<string, unknown>>)
+    .map((row) => stringFromUnknown(row.initiative_id))
+    .filter(Boolean))]
+
+  if (initiativeIds.length === 0) return result
+
+  const { data: initiativeRows, error: initiativeError } = await supabase
+    .from('initiatives')
+    .select('id, title, status, phase, next_milestone, latest_summary')
+    .eq('org_id', orgId)
+    .in('id', initiativeIds)
+
+  if (initiativeError) {
+    throw new Error(`Failed to fetch impacted initiatives: ${initiativeError.message}`)
+  }
+
+  const initiativesById = new Map(
+    ((initiativeRows ?? []) as Array<Record<string, unknown>>).map((row) => [
+      stringFromUnknown(row.id),
+      {
+        id: stringFromUnknown(row.id),
+        title: stringFromUnknown(row.title),
+        status: stringFromUnknown(row.status),
+        phase: stringFromUnknown(row.phase),
+        nextMilestone: nullableString(row.next_milestone),
+        latestSummary: nullableString(row.latest_summary),
+      },
+    ])
+  )
+
+  for (const row of (linkRows ?? []) as Array<Record<string, unknown>>) {
+    const artifactId = stringFromUnknown(row.artifact_id)
+    const initiativeId = stringFromUnknown(row.initiative_id)
+    const initiative = initiativesById.get(initiativeId)
+    if (!artifactId || !initiative) continue
+    const existing = result.get(artifactId) ?? []
+    existing.push(initiative)
+    result.set(artifactId, existing)
+  }
+
+  for (const [artifactId, initiatives] of result.entries()) {
+    result.set(artifactId, initiatives.sort((left, right) => left.title.localeCompare(right.title)))
+  }
+
+  return result
 }
 
 async function pruneStaleVaultDocuments(

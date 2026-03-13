@@ -561,6 +561,54 @@ describe('buildEvidenceFeed', () => {
       })
     )
   })
+
+  it('prefers persisted initiative links over heuristic matching when present', () => {
+    const feed = buildEvidenceFeed({
+      meetings: [
+        {
+          path: 'Sources/Meetings/axari.md',
+          title: 'Axari weekly sync',
+          documentType: 'source_artifact',
+          updatedAt: '2026-03-13T07:00:00.000Z',
+          lastSourceUpdateAt: '2026-03-13T07:00:00.000Z',
+          summary: 'Internal sync notes.',
+          relatedInitiatives: ['Crane estimation'],
+        },
+      ],
+      recentlyChanged: [],
+      work: [],
+      initiatives: [
+        {
+          id: 'axari',
+          title: 'Axari handoff',
+          status: 'active',
+          phase: 'planning',
+          nextMilestone: null,
+          nextReviewAt: null,
+          lastSignalAt: null,
+          latestSummary: 'Axari transition work.',
+          currentHypothesis: null,
+          openQuestionCount: 0,
+          riskCount: 0,
+        },
+        {
+          id: 'crane',
+          title: 'Crane estimation',
+          status: 'active',
+          phase: 'execution',
+          nextMilestone: 'Send estimate package',
+          nextReviewAt: null,
+          lastSignalAt: null,
+          latestSummary: 'Crane estimate package in motion.',
+          currentHypothesis: null,
+          openQuestionCount: 0,
+          riskCount: 0,
+        },
+      ],
+    })
+
+    expect(feed[0]?.relatedInitiatives).toEqual(['Crane estimation'])
+  })
 })
 
 describe('findInitiativesForDocument', () => {

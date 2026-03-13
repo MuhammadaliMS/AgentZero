@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 import { getAuthenticatedEvidenceContext } from '@/lib/evidence/auth'
-import { fetchNamedVaultLinks } from '@/lib/evidence/store'
+import { fetchInitiativesForArtifacts, fetchNamedVaultLinks } from '@/lib/evidence/store'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -71,10 +71,19 @@ export async function GET(request: NextRequest) {
         } => row !== null)
     }
 
+    const frontmatter = document.frontmatter && typeof document.frontmatter === 'object' && !Array.isArray(document.frontmatter)
+      ? document.frontmatter as Record<string, unknown>
+      : {}
+    const artifactId = typeof frontmatter.artifactId === 'string' ? frontmatter.artifactId : null
+    const impactedInitiatives = artifactId
+      ? (await fetchInitiativesForArtifacts(admin, orgId, [artifactId])).get(artifactId) ?? []
+      : []
+
     return NextResponse.json({
       document,
       links,
       backlinks,
+      impactedInitiatives,
       freshness: {
         stalenessReason: document.staleness_reason ?? null,
         lastSourceUpdateAt: document.last_source_update_at ?? null,

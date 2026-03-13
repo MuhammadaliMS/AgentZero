@@ -119,6 +119,14 @@ interface VaultDocumentPayload {
   compare: {
     previousSummary: string | null
   }
+  impactedInitiatives?: Array<{
+    id: string
+    title: string
+    status: string
+    phase: string
+    nextMilestone: string | null
+    latestSummary: string | null
+  }>
 }
 
 interface ChangesResponse {
@@ -941,17 +949,39 @@ export function IntelligenceWorkspace() {
     return typeof leadSection?.content === 'string' ? leadSection.content : null
   }, [document])
 
-  const documentInitiatives = useMemo(
-    () => document ? findInitiativesForDocument(
+  const documentInitiatives = useMemo(() => {
+    if (!document) return []
+
+    const persistedImpacts = (document.impactedInitiatives ?? []).map((impacted) => {
+      const fromWorkspace = initiatives.find((initiative) => initiative.id === impacted.id)
+      return fromWorkspace ?? {
+        id: impacted.id,
+        title: impacted.title,
+        status: impacted.status,
+        phase: impacted.phase,
+        nextMilestone: impacted.nextMilestone,
+        nextReviewAt: null,
+        lastSignalAt: null,
+        latestSummary: impacted.latestSummary,
+        currentHypothesis: null,
+        openQuestionCount: 0,
+        riskCount: 0,
+      }
+    })
+
+    if (persistedImpacts.length > 0) {
+      return persistedImpacts
+    }
+
+    return findInitiativesForDocument(
       {
         title: document.document.title,
         summary: documentLeadSummary,
         path: document.document.path,
       },
       initiatives
-    ) : [],
-    [document, documentLeadSummary, initiatives]
-  )
+    )
+  }, [document, documentLeadSummary, initiatives])
 
   const isAccountDocument = selectedPanel === 'accounts'
     && !!document

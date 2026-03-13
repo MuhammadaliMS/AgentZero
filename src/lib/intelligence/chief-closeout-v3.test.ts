@@ -152,6 +152,7 @@ describe('finalizeChiefLoopCloseout', () => {
     const persistWorkingMemory = vi.fn(async () => {})
     const refreshInitiatives = vi.fn(async () => next)
     const persistWorldModel = vi.fn(async () => {})
+    const persistInitiativeArtifactLinks = vi.fn(async () => {})
     const regenerateVault = vi.fn(async () => ['Narratives/Initiatives/crane-estimation.md'])
     const createAdminClient = vi.fn(() => ({ admin: true }) as never)
 
@@ -170,6 +171,7 @@ describe('finalizeChiefLoopCloseout', () => {
       persistWorkingMemory,
       refreshInitiatives,
       persistWorldModel,
+      persistInitiativeArtifactLinks,
       regenerateVault,
       createAdminClient,
     })
@@ -177,6 +179,7 @@ describe('finalizeChiefLoopCloseout', () => {
     expect(persistWorkingMemory).toHaveBeenCalledOnce()
     expect(refreshInitiatives).toHaveBeenCalledOnce()
     expect(persistWorldModel).toHaveBeenCalledOnce()
+    expect(persistInitiativeArtifactLinks).toHaveBeenCalledOnce()
     expect(regenerateVault).toHaveBeenCalledOnce()
     expect(outcome.worldModelPlan.enabled).toBe(true)
     expect(outcome.worldModelPlan.changedInitiativeIds).toEqual(['initiative-1'])
@@ -195,6 +198,7 @@ describe('finalizeChiefLoopCloseout', () => {
     ]
 
     const regenerateVault = vi.fn(async () => ['Narratives/Initiatives/crane-estimation.md'])
+    const persistInitiativeArtifactLinks = vi.fn(async () => {})
 
     const outcome = await finalizeChiefLoopCloseout({
       supabase: {} as never,
@@ -211,12 +215,14 @@ describe('finalizeChiefLoopCloseout', () => {
       persistWorkingMemory: vi.fn(async () => {}),
       refreshInitiatives: vi.fn(async () => next),
       persistWorldModel: vi.fn(async () => {}),
+      persistInitiativeArtifactLinks,
       regenerateVault,
       createAdminClient: vi.fn(() => ({ admin: true }) as never),
     })
 
     expect(outcome.worldModelPlan.enabled).toBe(false)
     expect(outcome.worldModelPlan.changedInitiativeIds).toEqual(['initiative-1', 'initiative-2'])
+    expect(persistInitiativeArtifactLinks).toHaveBeenCalledOnce()
     expect(regenerateVault).not.toHaveBeenCalled()
   })
 })

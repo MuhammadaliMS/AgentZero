@@ -11,8 +11,10 @@ export interface IntelligenceVaultEntryPoint {
   documentType: string
   updatedAt: string
   lastSourceUpdateAt: string | null
+  artifactId?: string | null
   summary?: string | null
   manualSectionSummaries?: string[]
+  relatedInitiatives?: string[]
 }
 
 export interface IntelligenceInitiativeEntry {
@@ -493,7 +495,9 @@ export function buildEvidenceFeed({
           : entry.summary ?? 'New source evidence arrived and may have changed the chief view.',
         supportingPath: entry.path,
         updatedAt: entry.updatedAt,
-        relatedInitiatives: findInitiativesForDocument(entry, initiatives).map((initiative) => initiative.title),
+        relatedInitiatives: (entry.relatedInitiatives && entry.relatedInitiatives.length > 0)
+          ? entry.relatedInitiatives
+          : findInitiativesForDocument(entry, initiatives).map((initiative) => initiative.title),
       }
     })
     .slice(0, 12)

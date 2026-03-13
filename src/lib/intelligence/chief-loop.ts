@@ -80,6 +80,7 @@ import {
 } from '@/lib/intelligence/focus-profile'
 import {
   buildFocusInitiativeDrafts,
+  deriveInitiativeArtifactLinks,
   findInitiativeRelatedDocuments,
   materializeInitiativeDecision,
   reconcileInitiativeState,
@@ -92,7 +93,10 @@ import {
   buildChiefWorldModel,
   type ChiefWorldModelRecord,
 } from '@/lib/intelligence/world-model'
-import { regenerateVaultDocumentsForInitiatives } from '@/lib/evidence/store'
+import {
+  regenerateVaultDocumentsForInitiatives,
+  replaceInitiativeArtifactLinks,
+} from '@/lib/evidence/store'
 import {
   resolveChiefWorldModelV3Plan,
   type ChiefWorldModelV3Plan,
@@ -1517,6 +1521,7 @@ async function upsertInitiativesFromChiefContext(
     initiative,
     activeClaims: gatherResult.activeClaims.map(claim => ({
       id: claim.id,
+      artifactId: claim.artifactId,
       predicate: claim.predicate,
       objectValue: claim.objectValue,
       updatedAt: claim.updatedAt,
@@ -1598,12 +1603,14 @@ export async function finalizeChiefLoopCloseout(input: {
   persistWorkingMemory?: typeof upsertWorkingMemory
   refreshInitiatives?: typeof upsertInitiativesFromChiefContext
   persistWorldModel?: typeof upsertChiefWorldModelState
+  persistInitiativeArtifactLinks?: typeof replaceInitiativeArtifactLinks
   regenerateVault?: typeof regenerateVaultDocumentsForInitiatives
   createAdminClient?: typeof createUntypedAdminClient
 }): Promise<ChiefCloseoutPersistenceResult> {
   const persistWorkingMemory = deps?.persistWorkingMemory ?? upsertWorkingMemory
   const refreshInitiatives = deps?.refreshInitiatives ?? upsertInitiativesFromChiefContext
   const persistWorldModel = deps?.persistWorldModel ?? upsertChiefWorldModelState
+  const persistInitiativeArtifactLinks = deps?.persistInitiativeArtifactLinks ?? replaceInitiativeArtifactLinks
   const regenerateVault = deps?.regenerateVault ?? regenerateVaultDocumentsForInitiatives
   const createAdminClient = deps?.createAdminClient ?? createUntypedAdminClient
 
@@ -1639,6 +1646,33 @@ export async function finalizeChiefLoopCloseout(input: {
     previous: input.gatherResult.chiefWorldModel,
   })
   await persistWorldModel(input.orgId, worldModel)
+
+  if (worldModelPlan.changedInitiativeIds.length > 0) {
+    const initiativeArtifactLinks = deriveInitiativeArtifactLinks({
+      initiatives: refreshedInitiatives.filter((initiative) =>
+        worldModelPlan.changedInitiativeIds.includes(initiative.id)
+      ),
+      activeClaims: input.gatherResult.activeClaims.map((claim) => ({
+        id: claim.id,
+        artifactId: claim.artifactId,
+        predicate: claim.predicate,
+        objectValue: claim.objectValue,
+        updatedAt: claim.updatedAt,
+      })),
+      recentArtifacts: input.gatherResult.recentSourceArtifacts.map((artifact) => ({
+        id: artifact.id,
+        title: artifact.title,
+        channel: artifact.channel,
+        startedAt: artifact.startedAt,
+      })),
+    })
+
+    await persistInitiativeArtifactLinks(createAdminClient(), {
+      orgId: input.orgId,
+      initiativeIds: worldModelPlan.changedInitiativeIds,
+      links: initiativeArtifactLinks,
+    })
+  }
 
   if (worldModelPlan.enabled && worldModelPlan.changedInitiativeIds.length > 0) {
     await regenerateVault(createAdminClient(), {

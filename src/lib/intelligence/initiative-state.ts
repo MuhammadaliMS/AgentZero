@@ -108,6 +108,7 @@ interface MinimalEntity {
 
 interface MinimalClaim {
   id: string
+  artifactId?: string | null
   predicate: string
   objectValue: string | null
   updatedAt: string
@@ -134,6 +135,12 @@ interface MinimalNarrative {
   title: string
   summary: string
   updatedAt: string
+}
+
+export interface InitiativeArtifactLink {
+  initiativeId: string
+  artifactId: string
+  linkReason: 'claim' | 'signal' | 'claim+signal'
 }
 
 interface RelevantInitiativesInput {
@@ -389,6 +396,52 @@ export function reconcileInitiativeState(input: {
     lastReconciledAt: input.now,
     nextReviewAt: new Date(new Date(input.now).getTime() + (status === 'blocked' ? 2 : 6) * 60 * 60 * 1000).toISOString(),
   }
+}
+
+export function deriveInitiativeArtifactLinks(input: {
+  initiatives: InitiativeRecord[]
+  activeClaims: MinimalClaim[]
+  recentArtifacts: MinimalArtifact[]
+}): InitiativeArtifactLink[] {
+  const links = new Map<string, InitiativeArtifactLink>()
+
+  for (const initiative of input.initiatives) {
+    const claimArtifactIds = new Set(
+      input.activeClaims
+        .filter((claim) =>
+          initiative.linkedClaimIds.includes(claim.id)
+          || matchesInitiativeText(initiative, `${claim.predicate} ${claim.objectValue ?? ''}`)
+        )
+        .map((claim) => claim.artifactId)
+        .filter((artifactId): artifactId is string => Boolean(artifactId))
+    )
+
+    const signalArtifactIds = new Set(
+      input.recentArtifacts
+        .filter((artifact) => matchesInitiativeText(initiative, `${artifact.title} ${artifact.channel}`))
+        .map((artifact) => artifact.id)
+        .filter((artifactId): artifactId is string => Boolean(artifactId))
+    )
+
+    const artifactIds = new Set([...claimArtifactIds, ...signalArtifactIds])
+    for (const artifactId of artifactIds) {
+      const key = `${initiative.id}:${artifactId}`
+      const hasClaim = claimArtifactIds.has(artifactId)
+      const hasSignal = signalArtifactIds.has(artifactId)
+      links.set(key, {
+        initiativeId: initiative.id,
+        artifactId,
+        linkReason: hasClaim && hasSignal ? 'claim+signal' : hasClaim ? 'claim' : 'signal',
+      })
+    }
+  }
+
+  return [...links.values()].sort((left, right) => {
+    if (left.initiativeId !== right.initiativeId) {
+      return left.initiativeId.localeCompare(right.initiativeId)
+    }
+    return left.artifactId.localeCompare(right.artifactId)
+  })
 }
 
 export function materializeInitiativeDecision(input: {

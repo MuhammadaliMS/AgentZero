@@ -57,6 +57,20 @@ export interface IntelligenceNowSummary {
   evidenceUsed: IntelligenceVaultEntryPoint[]
 }
 
+export interface IntelligenceAccountWorkspaceSummary {
+  featuredAccounts: IntelligenceVaultEntryPoint[]
+  relationshipDocs: IntelligenceVaultEntryPoint[]
+  recentAccountChanges: IntelligenceVaultEntryPoint[]
+}
+
+export interface IntelligenceEvidenceEntry {
+  title: string
+  kind: string
+  summary: string
+  supportingPath: string
+  updatedAt: string
+}
+
 interface InitiativeLike {
   title: string
   latestSummary: string | null
@@ -406,6 +420,73 @@ export function buildIntelligenceNowSummary({
     recentSources,
     evidenceUsed,
   }
+}
+
+export function buildAccountWorkspaceSummary({
+  accounts,
+  relationships,
+  recentlyChanged,
+}: {
+  accounts: IntelligenceVaultEntryPoint[]
+  relationships: IntelligenceVaultEntryPoint[]
+  recentlyChanged: IntelligenceVaultEntryPoint[]
+}): IntelligenceAccountWorkspaceSummary {
+  const featuredAccounts = dedupeEntryPoints(accounts)
+    .sort((left, right) => {
+      const leftNarrativeBoost = left.documentType === 'narrative' ? 1 : 0
+      const rightNarrativeBoost = right.documentType === 'narrative' ? 1 : 0
+      if (rightNarrativeBoost !== leftNarrativeBoost) return rightNarrativeBoost - leftNarrativeBoost
+      return right.updatedAt.localeCompare(left.updatedAt)
+    })
+    .slice(0, 8)
+
+  const relationshipDocs = dedupeEntryPoints(relationships).slice(0, 8)
+  const accountPaths = new Set(featuredAccounts.map((entry) => entry.path))
+  const relationshipPaths = new Set(relationshipDocs.map((entry) => entry.path))
+  const recentAccountChanges = dedupeEntryPoints(recentlyChanged)
+    .filter((entry) => accountPaths.has(entry.path) || relationshipPaths.has(entry.path))
+    .slice(0, 8)
+
+  return {
+    featuredAccounts,
+    relationshipDocs,
+    recentAccountChanges,
+  }
+}
+
+export function buildEvidenceFeed({
+  meetings,
+  recentlyChanged,
+  work,
+}: {
+  meetings: IntelligenceVaultEntryPoint[]
+  recentlyChanged: IntelligenceVaultEntryPoint[]
+  work: IntelligenceVaultEntryPoint[]
+}): IntelligenceEvidenceEntry[] {
+  const changedWorkByTitle = new Map(
+    dedupeEntryPoints(work).map((entry) => [entry.title.trim().toLowerCase(), entry])
+  )
+
+  return dedupeEntryPoints([...meetings, ...recentlyChanged])
+    .filter((entry) => entry.documentType === 'source_artifact' || entry.path.startsWith('Sources/'))
+    .map((entry) => {
+      const relatedWork = [...changedWorkByTitle.values()].find((workEntry) => {
+        const sourceTokens = normalizeTokens(`${entry.title} ${entry.summary ?? ''}`)
+        const workTokens = normalizeTokens(`${workEntry.title} ${workEntry.summary ?? ''}`)
+        return sourceTokens.some((token) => workTokens.includes(token))
+      })
+
+      return {
+        title: entry.title,
+        kind: labelDocumentType(entry.documentType),
+        summary: relatedWork
+          ? `${entry.summary ?? 'New source evidence arrived.'} This also touched ${relatedWork.title}.`
+          : entry.summary ?? 'New source evidence arrived and may have changed the chief view.',
+        supportingPath: entry.path,
+        updatedAt: entry.updatedAt,
+      }
+    })
+    .slice(0, 12)
 }
 
 function normalizeTokens(text: string): string[] {

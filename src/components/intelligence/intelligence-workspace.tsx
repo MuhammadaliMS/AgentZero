@@ -29,6 +29,8 @@ import { DailyView } from '@/components/command-center/daily-view'
 import { createClient } from '@/lib/supabase/client'
 import { type VaultTreeNode } from '@/lib/evidence/vault'
 import {
+  buildAccountWorkspaceSummary,
+  buildEvidenceFeed,
   buildIntelligenceNowSummary,
   dedupeEntryPoints,
   explainInitiativePriority,
@@ -136,7 +138,7 @@ interface ChiefWorldModelPayload {
   } | null
 }
 
-type WorkspacePanel = 'today' | 'initiatives' | 'accounts' | 'meetings' | 'work' | 'raw'
+type WorkspacePanel = 'today' | 'initiatives' | 'accounts' | 'evidence' | 'work' | 'raw'
 
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return 'Unknown'
@@ -554,6 +556,95 @@ function IntelligenceHome({
   )
 }
 
+function AccountSpotlight({
+  title,
+  subtitle,
+  entries,
+  onOpen,
+}: {
+  title: string
+  subtitle: string
+  entries: IntelligenceVaultEntryPoint[]
+  onOpen: (path: string) => void
+}) {
+  return (
+    <Card className="border-border/50">
+      <CardContent className="p-5">
+        <div>
+          <h3 className="text-base font-semibold">{title}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+        </div>
+        <div className="mt-4 space-y-2">
+          {entries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nothing here yet.</p>
+          ) : (
+            entries.map((entry) => (
+              <button
+                key={entry.path}
+                onClick={() => onOpen(entry.path)}
+                className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-3 text-left hover:bg-muted/40"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="truncate text-sm font-medium">{entry.title}</p>
+                  <Badge variant="secondary" className="text-[10px]">
+                    {labelDocumentType(entry.documentType)}
+                  </Badge>
+                </div>
+                <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                  {entry.summary ?? `${labelDocumentType(entry.documentType)} updated ${timeAgo(entry.updatedAt)}.`}
+                </p>
+              </button>
+            ))
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function EvidenceFeedCard({
+  title,
+  subtitle,
+  items,
+  onOpen,
+}: {
+  title: string
+  subtitle: string
+  items: Array<{ title: string; kind: string; summary: string; supportingPath: string; updatedAt: string }>
+  onOpen: (path: string) => void
+}) {
+  return (
+    <Card className="border-border/50">
+      <CardContent className="p-5">
+        <div>
+          <h3 className="text-base font-semibold">{title}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+        </div>
+        <div className="mt-4 space-y-2">
+          {items.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No evidence events have changed the world model yet.</p>
+          ) : (
+            items.map((item) => (
+              <button
+                key={`${item.supportingPath}-${item.updatedAt}`}
+                onClick={() => onOpen(item.supportingPath)}
+                className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-3 text-left hover:bg-muted/40"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="truncate text-sm font-medium">{item.title}</p>
+                  <Badge variant="secondary" className="text-[10px]">{item.kind}</Badge>
+                </div>
+                <p className="mt-2 line-clamp-3 text-xs leading-5 text-muted-foreground">{item.summary}</p>
+                <p className="mt-2 text-[11px] text-muted-foreground">{timeAgo(item.updatedAt)}</p>
+              </button>
+            ))
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export function IntelligenceWorkspace() {
   const supabase = useMemo(() => createClient() as any, [])
 
@@ -714,6 +805,15 @@ export function IntelligenceWorkspace() {
     [entryPoints]
   )
 
+  const accountWorkspace = useMemo(
+    () => buildAccountWorkspaceSummary({
+      accounts: entryPoints?.accounts ?? [],
+      relationships: entryPoints?.relationships ?? [],
+      recentlyChanged: entryPoints?.recentlyChanged ?? [],
+    }),
+    [entryPoints]
+  )
+
   const allVaultDocs = useMemo(
     () => dedupeEntryPoints([
       ...(entryPoints?.accounts ?? []),
@@ -781,6 +881,15 @@ export function IntelligenceWorkspace() {
       operationalMemory: chiefWorldModel?.operationalMemory ?? null,
     }),
     [chiefWorldModel, entryPoints, initiatives]
+  )
+
+  const evidenceFeed = useMemo(
+    () => buildEvidenceFeed({
+      meetings: entryPoints?.meetings ?? [],
+      recentlyChanged: entryPoints?.recentlyChanged ?? [],
+      work: entryPoints?.work ?? [],
+    }),
+    [entryPoints]
   )
 
   async function saveManualSection(key: string) {
@@ -879,14 +988,22 @@ export function IntelligenceWorkspace() {
             />
           </>
         )
-      case 'meetings':
+      case 'evidence':
         return (
-          <SidebarEntryList
-            title="Meeting docs"
-            entries={entryPoints?.meetings ?? []}
-            selectedPath={selectedPath}
-            onSelect={openDocument}
-          />
+          <>
+            <SidebarEntryList
+              title="Recent source records"
+              entries={entryPoints?.meetings ?? []}
+              selectedPath={selectedPath}
+              onSelect={openDocument}
+            />
+            <SidebarEntryList
+              title="Changed from evidence"
+              entries={(entryPoints?.recentlyChanged ?? []).filter((entry) => entry.documentType === 'source_artifact' || entry.path.startsWith('Sources/'))}
+              selectedPath={selectedPath}
+              onSelect={openDocument}
+            />
+          </>
         )
       case 'work':
         return (
@@ -939,7 +1056,7 @@ export function IntelligenceWorkspace() {
     }
   })()
 
-  const showHome = !selectedPath && !selectedInitiative
+  const showPanelLanding = !selectedPath && !selectedInitiative
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-8 sm:px-6 sm:py-10">
@@ -954,7 +1071,7 @@ export function IntelligenceWorkspace() {
               One place to understand what matters now.
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
-              Start with today, then drill into accounts, meetings, and work. The graph stays underneath, but this page should feel like your operating workspace instead of a debug console.
+              Start with today, then drill into initiatives, accounts, evidence, and work. The graph stays underneath, but this page should feel like your operating workspace instead of a debug console.
             </p>
           </div>
 
@@ -994,7 +1111,7 @@ export function IntelligenceWorkspace() {
                 ['today', 'Today'],
                 ['initiatives', 'Initiatives'],
                 ['accounts', 'Accounts'],
-                ['meetings', 'Meetings'],
+                ['evidence', 'Evidence'],
                 ['work', 'Work'],
                 ['raw', 'Raw vault'],
               ].map(([value, label]) => (
@@ -1029,7 +1146,7 @@ export function IntelligenceWorkspace() {
                 <div className="flex h-[78vh] items-center justify-center text-sm text-muted-foreground">
                   Loading intelligence workspace…
                 </div>
-              ) : showHome ? (
+              ) : showPanelLanding && selectedPanel === 'today' ? (
                 <IntelligenceHome
                   jumpBackIn={entryPoints?.jumpBackIn ?? []}
                   initiatives={initiatives}
@@ -1041,6 +1158,78 @@ export function IntelligenceWorkspace() {
                     setSelectedInitiativeId(initiativeId)
                   }}
                 />
+              ) : showPanelLanding && selectedPanel === 'accounts' ? (
+                <div className="space-y-6 p-6">
+                  <Card className="border-primary/15 bg-primary/[0.03] shadow-none">
+                    <CardContent className="p-6">
+                      <h2 className="text-2xl font-semibold tracking-tight">Accounts and relationships</h2>
+                      <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+                        Use this view to understand account state, relationship movement, and where current work is attached.
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <AccountSpotlight
+                      title="Active account dossiers"
+                      subtitle="The accounts with the freshest narratives and org docs."
+                      entries={accountWorkspace.featuredAccounts}
+                      onOpen={openDocument}
+                    />
+                    <AccountSpotlight
+                      title="Relationship stories"
+                      subtitle="Cross-company docs that explain how relationships are evolving."
+                      entries={accountWorkspace.relationshipDocs}
+                      onOpen={openDocument}
+                    />
+                    <AccountSpotlight
+                      title="Recently changed account context"
+                      subtitle="The account docs that changed most recently."
+                      entries={accountWorkspace.recentAccountChanges}
+                      onOpen={openDocument}
+                    />
+                    <HomeSection
+                      title="Jump back in"
+                      subtitle="The fastest narratives and briefs to reopen before working an account."
+                      entries={entryPoints?.jumpBackIn ?? []}
+                      onOpen={openDocument}
+                    />
+                  </div>
+                </div>
+              ) : showPanelLanding && selectedPanel === 'evidence' ? (
+                <div className="space-y-6 p-6">
+                  <Card className="border-primary/15 bg-primary/[0.03] shadow-none">
+                    <CardContent className="p-6">
+                      <h2 className="text-2xl font-semibold tracking-tight">Evidence and explainability</h2>
+                      <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+                        This is the “why” layer. Open it to see which meetings, threads, and source records actually changed the chief’s view.
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.85fr)]">
+                    <EvidenceFeedCard
+                      title="What changed the world model"
+                      subtitle="Recent source records and the impact they had on work or narratives."
+                      items={evidenceFeed}
+                      onOpen={openDocument}
+                    />
+                    <div className="space-y-6">
+                      <HomeSection
+                        title="Recent source records"
+                        subtitle="Meetings and source docs worth opening directly."
+                        entries={entryPoints?.meetings ?? []}
+                        onOpen={openDocument}
+                      />
+                      <HomeSection
+                        title="Docs regenerated from evidence"
+                        subtitle="The narratives, briefs, and work docs that moved because of recent source changes."
+                        entries={entryPoints?.recentlyChanged ?? []}
+                        onOpen={openDocument}
+                      />
+                    </div>
+                  </div>
+                </div>
               ) : selectedInitiative ? (
                 <div className="p-6">
                   <div className="flex flex-col gap-3 border-b border-border/50 pb-5">
@@ -1243,7 +1432,7 @@ export function IntelligenceWorkspace() {
         </Card>
 
         <div className="space-y-6">
-          {showHome ? (
+          {showPanelLanding && selectedPanel === 'today' ? (
             <>
               <Card className="border-border/50">
                 <CardContent className="p-4">
@@ -1306,6 +1495,86 @@ export function IntelligenceWorkspace() {
                           <p className="mt-1 text-xs text-muted-foreground">
                             {entry.summary ?? `${labelDocumentType(entry.documentType)} updated.`}
                           </p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          ) : showPanelLanding && selectedPanel === 'accounts' ? (
+            <>
+              <Card className="border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Link2 className="h-4 w-4 text-primary" />
+                    How to read accounts
+                  </div>
+                  <div className="mt-4 space-y-3 text-sm text-muted-foreground">
+                    <p>Use account narratives to understand relationship status and what changed recently.</p>
+                    <p>Open relationship docs when work spans multiple companies or stakeholders.</p>
+                    <p>Use the connected docs in the center pane to jump into the actual evidence and work behind the story.</p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <History className="h-4 w-4 text-primary" />
+                    Recent account movement
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {accountWorkspace.recentAccountChanges.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No account docs changed recently.</p>
+                    ) : (
+                      accountWorkspace.recentAccountChanges.map((entry) => (
+                        <button
+                          key={entry.path}
+                          onClick={() => openDocument(entry.path)}
+                          className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                        >
+                          <p className="truncate text-sm font-medium">{entry.title}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{timeAgo(entry.updatedAt)}</p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          ) : showPanelLanding && selectedPanel === 'evidence' ? (
+            <>
+              <Card className="border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <FileClock className="h-4 w-4 text-primary" />
+                    How to read evidence
+                  </div>
+                  <div className="mt-4 space-y-3 text-sm text-muted-foreground">
+                    <p>Each evidence item is a source record that changed the chief’s state.</p>
+                    <p>Open a source to inspect the meeting, thread, or message that triggered an update.</p>
+                    <p>Then compare it with the regenerated docs to see how the chief translated that signal into action.</p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Workflow className="h-4 w-4 text-primary" />
+                    Recent evidence impact
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {evidenceFeed.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No evidence impact captured yet.</p>
+                    ) : (
+                      evidenceFeed.slice(0, 6).map((item) => (
+                        <button
+                          key={`${item.supportingPath}-${item.updatedAt}-rail`}
+                          onClick={() => openDocument(item.supportingPath)}
+                          className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                        >
+                          <p className="truncate text-sm font-medium">{item.title}</p>
+                          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.summary}</p>
                         </button>
                       ))
                     )}

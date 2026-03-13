@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildAccountWorkspaceSummary,
+  buildEvidenceFeed,
   buildIntelligenceNowSummary,
   describeInitiativeState,
   dedupeEntryPoints,
@@ -441,5 +443,103 @@ describe('buildIntelligenceNowSummary', () => {
       recentSources: [],
       evidenceUsed: [],
     })
+  })
+})
+
+describe('buildAccountWorkspaceSummary', () => {
+  it('prioritizes account narratives and keeps recent account changes scoped', () => {
+    const summary = buildAccountWorkspaceSummary({
+      accounts: [
+        {
+          path: 'Knowledge/Organizations/keyvalue.md',
+          title: 'KeyValue Systems',
+          documentType: 'entity',
+          updatedAt: '2026-03-13T06:00:00.000Z',
+          lastSourceUpdateAt: null,
+        },
+        {
+          path: 'Narratives/Accounts/crane-ventures.md',
+          title: 'Crane Ventures',
+          documentType: 'narrative',
+          updatedAt: '2026-03-13T07:00:00.000Z',
+          lastSourceUpdateAt: null,
+        },
+      ],
+      relationships: [
+        {
+          path: 'Narratives/Relationships/crane-keyvalue.md',
+          title: 'Crane <> KeyValue',
+          documentType: 'narrative',
+          updatedAt: '2026-03-13T07:05:00.000Z',
+          lastSourceUpdateAt: null,
+        },
+      ],
+      recentlyChanged: [
+        {
+          path: 'Narratives/Relationships/crane-keyvalue.md',
+          title: 'Crane <> KeyValue',
+          documentType: 'narrative',
+          updatedAt: '2026-03-13T07:05:00.000Z',
+          lastSourceUpdateAt: null,
+        },
+        {
+          path: 'Work/Action Items/send-estimate.md',
+          title: 'Send estimate',
+          documentType: 'commitment',
+          updatedAt: '2026-03-13T07:10:00.000Z',
+          lastSourceUpdateAt: null,
+        },
+      ],
+    })
+
+    expect(summary.featuredAccounts[0]?.title).toBe('Crane Ventures')
+    expect(summary.relationshipDocs[0]?.title).toBe('Crane <> KeyValue')
+    expect(summary.recentAccountChanges).toEqual([
+      expect.objectContaining({ title: 'Crane <> KeyValue' }),
+    ])
+  })
+})
+
+describe('buildEvidenceFeed', () => {
+  it('builds an explainability feed from source docs and touched work', () => {
+    const feed = buildEvidenceFeed({
+      meetings: [
+        {
+          path: 'Sources/Meetings/crane.md',
+          title: 'Crane <> KeyValue',
+          documentType: 'source_artifact',
+          updatedAt: '2026-03-13T07:00:00.000Z',
+          lastSourceUpdateAt: '2026-03-13T07:00:00.000Z',
+          summary: 'Meeting expanded estimate scope.',
+        },
+      ],
+      recentlyChanged: [
+        {
+          path: 'Sources/Meetings/crane.md',
+          title: 'Crane <> KeyValue',
+          documentType: 'source_artifact',
+          updatedAt: '2026-03-13T07:00:00.000Z',
+          lastSourceUpdateAt: '2026-03-13T07:00:00.000Z',
+          summary: 'Meeting expanded estimate scope.',
+        },
+      ],
+      work: [
+        {
+          path: 'Work/Action Items/send-estimate.md',
+          title: 'Send estimate package',
+          documentType: 'commitment',
+          updatedAt: '2026-03-13T07:02:00.000Z',
+          lastSourceUpdateAt: null,
+          summary: 'Estimate package is now at risk.',
+        },
+      ],
+    })
+
+    expect(feed[0]).toEqual(
+      expect.objectContaining({
+        title: 'Crane <> KeyValue',
+        supportingPath: 'Sources/Meetings/crane.md',
+      })
+    )
   })
 })

@@ -93,7 +93,10 @@ import {
   type ChiefWorldModelRecord,
 } from '@/lib/intelligence/world-model'
 import { regenerateVaultDocumentsForInitiatives } from '@/lib/evidence/store'
-import { resolveChiefWorldModelV3Plan } from '@/lib/intelligence/chief-world-model-v3'
+import {
+  resolveChiefWorldModelV3Plan,
+  type ChiefWorldModelV3Plan,
+} from '@/lib/intelligence/chief-world-model-v3'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -358,43 +361,15 @@ export async function runChiefLoopForOrg(
   let carryForward: string | null = null
   if (gatherResult) {
     try {
-      const workingMemory = buildWorkingMemory(result, thinkDecisions, gatherResult)
-      await upsertWorkingMemory(supabase, orgId, workingMemory)
-      const refreshedInitiatives = await upsertInitiativesFromChiefContext(orgId, gatherResult, now.toISOString())
-      const worldModelPlan = resolveChiefWorldModelV3Plan({
-        orgSettings: gatherResult.orgSettings,
-        previousInitiatives: gatherResult.activeInitiatives,
-        nextInitiatives: refreshedInitiatives,
+      const closeout = await finalizeChiefLoopCloseout({
+        supabase,
+        orgId,
+        nowIso: now.toISOString(),
+        result,
+        decisions: thinkDecisions,
+        gatherResult,
       })
-      const worldModel = buildChiefWorldModel({
-        now: now.toISOString(),
-        initiatives: refreshedInitiatives,
-        activeCommitments: gatherResult.activeCommitments,
-        decisionThreads: gatherResult.decisionThreads,
-        activeNarratives: gatherResult.activeNarratives.map(narrative => ({
-          id: narrative.id,
-          title: narrative.title,
-          summary: narrative.summary,
-        })),
-        changedArtifacts: gatherResult.recentSourceArtifacts.slice(0, 10).map(artifact => ({
-          id: artifact.id,
-          title: artifact.title,
-          channel: artifact.channel,
-        })),
-        updatedInitiativeIds: worldModelPlan.changedInitiativeIds,
-        previous: gatherResult.chiefWorldModel,
-      })
-      await upsertChiefWorldModelState(orgId, worldModel)
-      if (worldModelPlan.enabled && worldModelPlan.changedInitiativeIds.length > 0) {
-        await regenerateVaultDocumentsForInitiatives(createUntypedAdminClient(), {
-          orgId,
-          initiatives: refreshedInitiatives,
-          changedInitiativeIds: worldModelPlan.changedInitiativeIds,
-          changedAt: now.toISOString(),
-        })
-      }
-      // Derive carry_forward TEXT for lease audit trail (backward compat)
-      carryForward = workingMemory.runningSummary.slice(0, 2000)
+      carryForward = closeout.carryForward
     } catch (error) {
       console.error('[ChiefLoop] working memory build/persist error:', error)
       // Fallback: build legacy carry-forward
@@ -1603,6 +1578,83 @@ async function upsertChiefWorldModelState(
       changed_since_last_run: worldModel.changedSinceLastRun,
       version: worldModel.version,
     }, { onConflict: 'org_id' })
+}
+
+export interface ChiefCloseoutPersistenceResult {
+  carryForward: string
+  refreshedInitiatives: InitiativeRecord[]
+  worldModel: ChiefWorldModelRecord
+  worldModelPlan: ChiefWorldModelV3Plan
+}
+
+export async function finalizeChiefLoopCloseout(input: {
+  supabase: SupabaseClient
+  orgId: string
+  nowIso: string
+  result: ChiefLoopResult
+  decisions: ChiefDecision[]
+  gatherResult: GatherResult
+}, deps?: {
+  persistWorkingMemory?: typeof upsertWorkingMemory
+  refreshInitiatives?: typeof upsertInitiativesFromChiefContext
+  persistWorldModel?: typeof upsertChiefWorldModelState
+  regenerateVault?: typeof regenerateVaultDocumentsForInitiatives
+  createAdminClient?: typeof createUntypedAdminClient
+}): Promise<ChiefCloseoutPersistenceResult> {
+  const persistWorkingMemory = deps?.persistWorkingMemory ?? upsertWorkingMemory
+  const refreshInitiatives = deps?.refreshInitiatives ?? upsertInitiativesFromChiefContext
+  const persistWorldModel = deps?.persistWorldModel ?? upsertChiefWorldModelState
+  const regenerateVault = deps?.regenerateVault ?? regenerateVaultDocumentsForInitiatives
+  const createAdminClient = deps?.createAdminClient ?? createUntypedAdminClient
+
+  const workingMemory = buildWorkingMemory(input.result, input.decisions, input.gatherResult)
+  await persistWorkingMemory(input.supabase, input.orgId, workingMemory)
+
+  const refreshedInitiatives = await refreshInitiatives(
+    input.orgId,
+    input.gatherResult,
+    input.nowIso
+  )
+  const worldModelPlan = resolveChiefWorldModelV3Plan({
+    orgSettings: input.gatherResult.orgSettings,
+    previousInitiatives: input.gatherResult.activeInitiatives,
+    nextInitiatives: refreshedInitiatives,
+  })
+  const worldModel = buildChiefWorldModel({
+    now: input.nowIso,
+    initiatives: refreshedInitiatives,
+    activeCommitments: input.gatherResult.activeCommitments,
+    decisionThreads: input.gatherResult.decisionThreads,
+    activeNarratives: input.gatherResult.activeNarratives.map((narrative) => ({
+      id: narrative.id,
+      title: narrative.title,
+      summary: narrative.summary,
+    })),
+    changedArtifacts: input.gatherResult.recentSourceArtifacts.slice(0, 10).map((artifact) => ({
+      id: artifact.id,
+      title: artifact.title,
+      channel: artifact.channel,
+    })),
+    updatedInitiativeIds: worldModelPlan.changedInitiativeIds,
+    previous: input.gatherResult.chiefWorldModel,
+  })
+  await persistWorldModel(input.orgId, worldModel)
+
+  if (worldModelPlan.enabled && worldModelPlan.changedInitiativeIds.length > 0) {
+    await regenerateVault(createAdminClient(), {
+      orgId: input.orgId,
+      initiatives: refreshedInitiatives,
+      changedInitiativeIds: worldModelPlan.changedInitiativeIds,
+      changedAt: input.nowIso,
+    })
+  }
+
+  return {
+    carryForward: workingMemory.runningSummary.slice(0, 2000),
+    refreshedInitiatives,
+    worldModel,
+    worldModelPlan,
+  }
 }
 
 /** Build structured working memory from this run's results (no LLM) */

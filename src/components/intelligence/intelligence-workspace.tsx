@@ -29,8 +29,11 @@ import { createClient } from '@/lib/supabase/client'
 import { type VaultTreeNode } from '@/lib/evidence/vault'
 import {
   dedupeEntryPoints,
+  describeInitiativeState,
   groupEntryPointsByFreshness,
   labelDocumentType,
+  prioritizeInitiatives,
+  type IntelligenceInitiativeEntry,
   type IntelligenceVaultEntryPoint,
 } from '@/lib/evidence/intelligence-ui'
 
@@ -39,6 +42,7 @@ interface WorkspaceStats {
   claims: number
   commitments: number
   narratives: number
+  initiatives: number
 }
 
 interface VaultTreeResponse {
@@ -119,7 +123,14 @@ interface ChangesResponse {
   }>
 }
 
-type WorkspacePanel = 'today' | 'accounts' | 'meetings' | 'work' | 'raw'
+interface ChiefWorldModelPayload {
+  operationalMemory?: {
+    urgentCommitments?: Array<{ title: string; status: string }>
+    blockedInitiatives?: Array<{ title: string; reason: string }>
+  } | null
+}
+
+type WorkspacePanel = 'today' | 'initiatives' | 'accounts' | 'meetings' | 'work' | 'raw'
 
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return 'Unknown'
@@ -298,13 +309,17 @@ function IntelligenceHome({
   recentlyChanged,
   meetings,
   work,
+  initiatives,
   onOpenDocument,
+  onOpenInitiative,
 }: {
   jumpBackIn: IntelligenceVaultEntryPoint[]
   recentlyChanged: IntelligenceVaultEntryPoint[]
   meetings: IntelligenceVaultEntryPoint[]
   work: IntelligenceVaultEntryPoint[]
+  initiatives: IntelligenceInitiativeEntry[]
   onOpenDocument: (path: string) => void
+  onOpenInitiative: (initiativeId: string) => void
 }) {
   return (
     <div className="space-y-6 p-6">
@@ -326,6 +341,18 @@ function IntelligenceHome({
       </Card>
 
       <div className="grid gap-6 xl:grid-cols-2">
+        <HomeSection
+          title="Initiatives"
+          subtitle="Long-horizon work the chief is actively tracking."
+          entries={initiatives.slice(0, 5).map((initiative) => ({
+            path: `initiative:${initiative.id}`,
+            title: initiative.title,
+            documentType: 'initiative',
+            updatedAt: initiative.lastSignalAt ?? initiative.nextReviewAt ?? new Date().toISOString(),
+            lastSourceUpdateAt: initiative.lastSignalAt,
+          }))}
+          onOpen={(path) => onOpenInitiative(path.replace('initiative:', ''))}
+        />
         <HomeSection
           title="Jump back in"
           subtitle="The most useful briefs and narratives to resume work quickly."
@@ -376,12 +403,20 @@ export function IntelligenceWorkspace() {
   const [tree, setTree] = useState<VaultTreeNode[]>([])
   const [entryPoints, setEntryPoints] = useState<VaultTreeResponse['entryPoints'] | null>(null)
   const [changes, setChanges] = useState<ChangesResponse['changes']>([])
+  const [initiatives, setInitiatives] = useState<IntelligenceInitiativeEntry[]>([])
+  const [selectedInitiativeId, setSelectedInitiativeId] = useState<string | null>(null)
+  const [chiefWorldModel, setChiefWorldModel] = useState<ChiefWorldModelPayload | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [document, setDocument] = useState<VaultDocumentPayload | null>(null)
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [selectedPanel, setSelectedPanel] = useState<WorkspacePanel>('today')
   const [manualDrafts, setManualDrafts] = useState<Record<string, string>>({})
   const [savingSectionKey, setSavingSectionKey] = useState<string | null>(null)
+
+  function openDocument(path: string) {
+    setSelectedInitiativeId(null)
+    setSelectedPath(path)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -394,10 +429,13 @@ export function IntelligenceWorkspace() {
         const [
           treeRes,
           changesRes,
+          initiativesRes,
+          worldModelRes,
           vaultDocsCountRes,
           claimsCountRes,
           commitmentsCountRes,
           narrativesCountRes,
+          initiativesCountRes,
         ] = await Promise.all([
           fetch('/api/vault/tree').then(async (response) => {
             if (!response.ok) throw new Error('Failed to load vault tree')
@@ -407,10 +445,20 @@ export function IntelligenceWorkspace() {
             if (!response.ok) throw new Error('Failed to load vault changes')
             return response.json() as Promise<ChangesResponse>
           }),
+          supabase
+            .from('initiatives')
+            .select('id, title, status, phase, next_milestone, next_review_at, last_signal_at, latest_summary, open_questions, known_risks')
+            .in('status', ['active', 'waiting', 'blocked'])
+            .order('updated_at', { ascending: false }),
+          supabase
+            .from('chief_world_model')
+            .select('operational_memory')
+            .maybeSingle(),
           supabase.from('vault_documents').select('id', { count: 'exact', head: true }),
           supabase.from('claims').select('id', { count: 'exact', head: true }).eq('status', 'active'),
           supabase.from('commitments').select('id', { count: 'exact', head: true }).in('status', ['active', 'at_risk', 'overdue']),
           supabase.from('vault_documents').select('id', { count: 'exact', head: true }).eq('document_type', 'narrative'),
+          supabase.from('initiatives').select('id', { count: 'exact', head: true }).in('status', ['active', 'waiting', 'blocked']),
         ])
 
         if (!cancelled) {
@@ -424,12 +472,30 @@ export function IntelligenceWorkspace() {
             recentlyChanged: dedupeEntryPoints(treeRes.entryPoints.recentlyChanged),
           })
           setChanges(changesRes.changes)
+          setInitiatives(prioritizeInitiatives(
+            ((initiativesRes.data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+              id: String(row.id ?? ''),
+              title: String(row.title ?? ''),
+              status: String(row.status ?? 'active'),
+              phase: String(row.phase ?? 'discovery'),
+              nextMilestone: typeof row.next_milestone === 'string' ? row.next_milestone : null,
+              nextReviewAt: typeof row.next_review_at === 'string' ? row.next_review_at : null,
+              lastSignalAt: typeof row.last_signal_at === 'string' ? row.last_signal_at : null,
+              latestSummary: typeof row.latest_summary === 'string' ? row.latest_summary : null,
+              openQuestionCount: Array.isArray(row.open_questions) ? row.open_questions.length : 0,
+              riskCount: Array.isArray(row.known_risks) ? row.known_risks.length : 0,
+            }))
+          ))
+          setChiefWorldModel((worldModelRes.data?.operational_memory ?? null) ? {
+            operationalMemory: worldModelRes.data?.operational_memory as ChiefWorldModelPayload['operationalMemory'],
+          } : null)
           setExpandedFolders(new Set(treeRes.tree.map((node) => node.path)))
           setStats({
             vaultDocs: vaultDocsCountRes.count ?? 0,
             claims: claimsCountRes.count ?? 0,
             commitments: commitmentsCountRes.count ?? 0,
             narratives: narrativesCountRes.count ?? 0,
+            initiatives: initiativesCountRes.count ?? 0,
           })
         }
       } catch (loadError) {
@@ -511,6 +577,11 @@ export function IntelligenceWorkspace() {
     return items
   }, [document])
 
+  const selectedInitiative = useMemo(
+    () => initiatives.find((initiative) => initiative.id === selectedInitiativeId) ?? null,
+    [initiatives, selectedInitiativeId]
+  )
+
   async function saveManualSection(key: string) {
     if (!document) return
     setSavingSectionKey(key)
@@ -550,6 +621,40 @@ export function IntelligenceWorkspace() {
 
   const leftRailContent = (() => {
     switch (selectedPanel) {
+      case 'initiatives':
+        return (
+          <div>
+            <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">Active initiatives</p>
+            <div className="space-y-1.5">
+              {initiatives.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No active initiatives yet.</p>
+              ) : (
+                initiatives.map((initiative) => (
+                  <button
+                    key={initiative.id}
+                    onClick={() => {
+                      setSelectedInitiativeId(initiative.id)
+                      setSelectedPath(null)
+                    }}
+                    className={`w-full rounded-xl border px-3 py-2 text-left transition-colors ${
+                      selectedInitiativeId === initiative.id
+                        ? 'border-primary/40 bg-primary/5'
+                        : 'border-border/50 bg-card/80 hover:bg-muted/40'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="truncate text-sm font-medium">{initiative.title}</p>
+                      <Badge variant="secondary" className="text-[10px]">
+                        {initiative.phase}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{describeInitiativeState(initiative)}</p>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )
       case 'accounts':
         return (
           <>
@@ -557,19 +662,19 @@ export function IntelligenceWorkspace() {
               title="Fresh account docs"
               entries={groupedAccounts.fresh}
               selectedPath={selectedPath}
-              onSelect={setSelectedPath}
+              onSelect={openDocument}
             />
             <SidebarEntryList
               title="Relationship docs"
               entries={entryPoints?.relationships ?? []}
               selectedPath={selectedPath}
-              onSelect={setSelectedPath}
+              onSelect={openDocument}
             />
             <SidebarEntryList
               title="Older account docs"
               entries={groupedAccounts.older}
               selectedPath={selectedPath}
-              onSelect={setSelectedPath}
+              onSelect={openDocument}
             />
           </>
         )
@@ -579,7 +684,7 @@ export function IntelligenceWorkspace() {
             title="Meeting docs"
             entries={entryPoints?.meetings ?? []}
             selectedPath={selectedPath}
-            onSelect={setSelectedPath}
+            onSelect={openDocument}
           />
         )
       case 'work':
@@ -588,7 +693,7 @@ export function IntelligenceWorkspace() {
             title="Action items, decisions & briefs"
             entries={entryPoints?.work ?? []}
             selectedPath={selectedPath}
-            onSelect={setSelectedPath}
+            onSelect={openDocument}
           />
         )
       case 'raw':
@@ -609,7 +714,7 @@ export function IntelligenceWorkspace() {
                 return next
               })
             }}
-            onSelectDocument={setSelectedPath}
+            onSelectDocument={openDocument}
           />
         )
       case 'today':
@@ -620,20 +725,20 @@ export function IntelligenceWorkspace() {
               title="Jump back in"
               entries={entryPoints?.jumpBackIn ?? []}
               selectedPath={selectedPath}
-              onSelect={setSelectedPath}
+              onSelect={openDocument}
             />
             <SidebarEntryList
               title="Recent movement"
               entries={entryPoints?.recentlyChanged ?? []}
               selectedPath={selectedPath}
-              onSelect={setSelectedPath}
+              onSelect={openDocument}
             />
           </>
         )
     }
   })()
 
-  const showHome = !selectedPath
+  const showHome = !selectedPath && !selectedInitiative
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-8 sm:px-6 sm:py-10">
@@ -653,12 +758,12 @@ export function IntelligenceWorkspace() {
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              { label: 'Vault docs', value: stats?.vaultDocs ?? 0, icon: BookOpen },
-              { label: 'Active claims', value: stats?.claims ?? 0, icon: Workflow },
-              { label: 'Open work', value: stats?.commitments ?? 0, icon: BrainCircuit },
-              { label: 'Narratives', value: stats?.narratives ?? 0, icon: RefreshCw },
-            ].map((stat) => {
+              {[
+                { label: 'Vault docs', value: stats?.vaultDocs ?? 0, icon: BookOpen },
+                { label: 'Active claims', value: stats?.claims ?? 0, icon: Workflow },
+                { label: 'Initiatives', value: stats?.initiatives ?? 0, icon: BrainCircuit },
+                { label: 'Open work', value: stats?.commitments ?? 0, icon: RefreshCw },
+              ].map((stat) => {
               const Icon = stat.icon
               return (
                 <div key={stat.label} className="rounded-2xl border border-border/50 bg-muted/20 px-4 py-3">
@@ -686,6 +791,7 @@ export function IntelligenceWorkspace() {
             <div className="flex flex-wrap gap-2">
               {[
                 ['today', 'Today'],
+                ['initiatives', 'Initiatives'],
                 ['accounts', 'Accounts'],
                 ['meetings', 'Meetings'],
                 ['work', 'Work'],
@@ -698,7 +804,10 @@ export function IntelligenceWorkspace() {
                   className="rounded-full"
                   onClick={() => {
                     setSelectedPanel(value as WorkspacePanel)
-                    if (value === 'today') setSelectedPath(null)
+                    if (value === 'today') {
+                      setSelectedPath(null)
+                      setSelectedInitiativeId(null)
+                    }
                   }}
                 >
                   {label}
@@ -725,8 +834,47 @@ export function IntelligenceWorkspace() {
                   recentlyChanged={entryPoints?.recentlyChanged ?? []}
                   meetings={entryPoints?.meetings ?? []}
                   work={entryPoints?.work ?? []}
-                  onOpenDocument={setSelectedPath}
+                  initiatives={initiatives}
+                  onOpenDocument={openDocument}
+                  onOpenInitiative={(initiativeId) => {
+                    setSelectedPanel('initiatives')
+                    setSelectedPath(null)
+                    setSelectedInitiativeId(initiativeId)
+                  }}
                 />
+              ) : selectedInitiative ? (
+                <div className="p-6">
+                  <div className="flex flex-col gap-3 border-b border-border/50 pb-5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">Initiative</Badge>
+                      <Badge variant="outline">{selectedInitiative.phase}</Badge>
+                      <Badge variant="outline">{selectedInitiative.status}</Badge>
+                    </div>
+                    <h2 className="text-2xl font-semibold tracking-tight">{selectedInitiative.title}</h2>
+                    <p className="text-sm text-muted-foreground">{describeInitiativeState(selectedInitiative)}</p>
+                  </div>
+
+                  <div className="mt-6 grid gap-4 md:grid-cols-2">
+                    <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">Current state</h3>
+                      <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
+                        {selectedInitiative.latestSummary ?? 'No initiative summary yet. The chief will fill this in as signals accumulate.'}
+                      </p>
+                    </section>
+                    <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">Next review</h3>
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        {selectedInitiative.nextReviewAt ? formatDateTime(selectedInitiative.nextReviewAt) : 'No review scheduled'}
+                      </p>
+                      <div className="mt-4">
+                        <h4 className="text-sm font-medium">Next milestone</h4>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {selectedInitiative.nextMilestone ?? 'No milestone set yet'}
+                        </p>
+                      </div>
+                    </section>
+                  </div>
+                </div>
               ) : !document ? (
                 <div className="flex h-[78vh] items-center justify-center text-sm text-muted-foreground">
                   Select a document from the left.
@@ -831,6 +979,7 @@ export function IntelligenceWorkspace() {
                   </div>
                   <div className="mt-4 space-y-3 text-sm text-muted-foreground">
                     <p>Use <span className="font-medium text-foreground">Today</span> for what needs attention now.</p>
+                    <p>Use <span className="font-medium text-foreground">Initiatives</span> to track long-horizon work the chief is actively advancing.</p>
                     <p>Use <span className="font-medium text-foreground">Accounts</span> when you want the storyline for a company or relationship.</p>
                     <p>Use <span className="font-medium text-foreground">Meetings</span> for raw meeting source docs and notes.</p>
                     <p>Use <span className="font-medium text-foreground">Work</span> for action items, decisions, and briefs.</p>
@@ -860,9 +1009,39 @@ export function IntelligenceWorkspace() {
                   </div>
                 </CardContent>
               </Card>
+
+              <Card className="border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Workflow className="h-4 w-4 text-primary" />
+                    Chief world model
+                  </div>
+                  <div className="mt-4 space-y-3 text-sm text-muted-foreground">
+                    <p>
+                      Urgent commitments: {chiefWorldModel?.operationalMemory?.urgentCommitments?.length ?? 0}
+                    </p>
+                    <p>
+                      Blocked initiatives: {chiefWorldModel?.operationalMemory?.blockedInitiatives?.length ?? 0}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
             </>
           ) : (
             <>
+              {selectedInitiative && (
+                <Card className="border-border/50">
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Workflow className="h-4 w-4 text-primary" />
+                      Changed since last review
+                    </div>
+                    <p className="mt-4 text-sm text-muted-foreground">
+                      {selectedInitiative.latestSummary ?? 'No change summary yet.'}
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
               <Card className="border-border/50">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-sm font-medium">
@@ -876,7 +1055,7 @@ export function IntelligenceWorkspace() {
                       linkedContext.map((link) => (
                         <button
                           key={`${link.linkKind}-${link.targetId}`}
-                          onClick={() => link.targetPath && setSelectedPath(link.targetPath)}
+                          onClick={() => link.targetPath && openDocument(link.targetPath)}
                           className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
                         >
                           <div className="flex items-center justify-between gap-3">
@@ -905,7 +1084,7 @@ export function IntelligenceWorkspace() {
                       linkedWork.map((link) => (
                         <button
                           key={`${link.linkKind}-${link.targetId}`}
-                          onClick={() => link.targetPath && setSelectedPath(link.targetPath)}
+                          onClick={() => link.targetPath && openDocument(link.targetPath)}
                           className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
                         >
                           <div className="flex items-center justify-between gap-3">
@@ -955,7 +1134,7 @@ export function IntelligenceWorkspace() {
                       document?.backlinks.map((backlink) => (
                         <button
                           key={`${backlink.documentId}-${backlink.path}`}
-                          onClick={() => setSelectedPath(backlink.path)}
+                          onClick={() => openDocument(backlink.path)}
                           className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
                         >
                           <p className="truncate text-sm font-medium">{backlink.title}</p>

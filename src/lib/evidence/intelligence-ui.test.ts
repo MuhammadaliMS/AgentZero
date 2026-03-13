@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  describeInitiativeState,
   dedupeEntryPoints,
   flattenVaultDocumentPaths,
   groupEntryPointsByFreshness,
   labelDocumentType,
+  prioritizeInitiatives,
   summarizeArtifactChannels,
+  type IntelligenceInitiativeEntry,
   type IntelligenceVaultEntryPoint,
   type IntelligenceVaultTreeNode,
 } from '@/lib/evidence/intelligence-ui'
@@ -139,5 +142,58 @@ describe('labelDocumentType', () => {
     expect(labelDocumentType('decision_thread')).toBe('Decision')
     expect(labelDocumentType('commitment')).toBe('Action item')
     expect(labelDocumentType('brief')).toBe('Brief')
+    expect(labelDocumentType('initiative')).toBe('Initiative')
+  })
+})
+
+describe('prioritizeInitiatives', () => {
+  it('surfaces blocked or due initiatives ahead of stale background work', () => {
+    const entries: IntelligenceInitiativeEntry[] = [
+      {
+        id: 'axari',
+        title: 'Axari internal platform',
+        status: 'active',
+        phase: 'planning',
+        nextMilestone: 'Spec review',
+        nextReviewAt: '2026-03-20T08:00:00.000Z',
+        lastSignalAt: '2026-03-10T08:00:00.000Z',
+        latestSummary: 'Background work',
+        openQuestionCount: 0,
+        riskCount: 0,
+      },
+      {
+        id: 'crane',
+        title: 'Crane estimation',
+        status: 'blocked',
+        phase: 'execution',
+        nextMilestone: 'Send estimate',
+        nextReviewAt: '2026-03-13T07:00:00.000Z',
+        lastSignalAt: '2026-03-13T06:30:00.000Z',
+        latestSummary: 'Waiting on the estimate package',
+        openQuestionCount: 1,
+        riskCount: 1,
+      },
+    ]
+
+    const ranked = prioritizeInitiatives(entries, '2026-03-13T07:30:00.000Z')
+
+    expect(ranked[0]?.id).toBe('crane')
+  })
+})
+
+describe('describeInitiativeState', () => {
+  it('summarizes the phase, milestone, and unresolved work', () => {
+    expect(describeInitiativeState({
+      id: 'crane',
+      title: 'Crane estimation',
+      status: 'active',
+      phase: 'execution',
+      nextMilestone: 'Send estimate',
+      nextReviewAt: null,
+      lastSignalAt: null,
+      latestSummary: null,
+      openQuestionCount: 2,
+      riskCount: 1,
+    })).toBe('execution · active · next: Send estimate · 2 open questions · 1 risk')
   })
 })

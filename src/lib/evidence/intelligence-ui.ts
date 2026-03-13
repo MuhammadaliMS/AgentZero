@@ -13,6 +13,19 @@ export interface IntelligenceVaultEntryPoint {
   lastSourceUpdateAt: string | null
 }
 
+export interface IntelligenceInitiativeEntry {
+  id: string
+  title: string
+  status: string
+  phase: string
+  nextMilestone: string | null
+  nextReviewAt: string | null
+  lastSignalAt: string | null
+  latestSummary: string | null
+  openQuestionCount: number
+  riskCount: number
+}
+
 const CHANNEL_LABELS: Record<string, string> = {
   meeting: 'meeting',
   email: 'email',
@@ -123,7 +136,49 @@ export function labelDocumentType(documentType: string): string {
       return 'Brief'
     case 'narrative':
       return 'Narrative'
+    case 'initiative':
+      return 'Initiative'
     default:
       return documentType.replace(/_/g, ' ')
   }
+}
+
+export function prioritizeInitiatives(
+  entries: IntelligenceInitiativeEntry[],
+  now: string = new Date().toISOString()
+): IntelligenceInitiativeEntry[] {
+  const nowMs = new Date(now).getTime()
+
+  return [...entries].sort((left, right) => {
+    const score = (entry: IntelligenceInitiativeEntry): number => {
+      const reviewScore = entry.nextReviewAt && new Date(entry.nextReviewAt).getTime() <= nowMs ? 6 : 0
+      const statusScore =
+        entry.status === 'blocked' ? 5
+        : entry.status === 'active' ? 4
+        : entry.status === 'waiting' ? 2
+        : 0
+      const phaseScore = entry.phase === 'execution' ? 3 : entry.phase === 'planning' ? 2 : 1
+      const freshnessScore = entry.lastSignalAt
+        ? Math.max(0, 3 - Math.floor((nowMs - new Date(entry.lastSignalAt).getTime()) / 86_400_000))
+        : 0
+      const riskScore = Math.min(entry.riskCount, 3)
+      const questionScore = Math.min(entry.openQuestionCount, 2)
+      return reviewScore + statusScore + phaseScore + freshnessScore + riskScore + questionScore
+    }
+
+    const rightScore = score(right)
+    const leftScore = score(left)
+    if (rightScore !== leftScore) return rightScore - leftScore
+    return (right.lastSignalAt ?? right.nextReviewAt ?? '').localeCompare(left.lastSignalAt ?? left.nextReviewAt ?? '')
+  })
+}
+
+export function describeInitiativeState(entry: IntelligenceInitiativeEntry): string {
+  const parts = [`${entry.phase} · ${entry.status}`]
+
+  if (entry.nextMilestone) parts.push(`next: ${entry.nextMilestone}`)
+  if (entry.openQuestionCount > 0) parts.push(`${entry.openQuestionCount} open question${entry.openQuestionCount === 1 ? '' : 's'}`)
+  if (entry.riskCount > 0) parts.push(`${entry.riskCount} risk${entry.riskCount === 1 ? '' : 's'}`)
+
+  return parts.join(' · ')
 }

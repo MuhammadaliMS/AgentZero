@@ -18,6 +18,8 @@ import { generateEmbedding } from '@/lib/openai/client'
 import { WebClient } from '@slack/web-api'
 import type { WorkerViews } from '@/lib/intelligence/brief-synthesizer'
 import type { ChiefFocusProfile } from '@/lib/intelligence/focus-profile'
+import type { InitiativeRecord } from '@/lib/intelligence/initiative-state'
+import type { ChiefWorldModelRecord } from '@/lib/intelligence/world-model'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -121,6 +123,66 @@ export interface ChiefAnalystInput {
     confidence: number
     createdAt: string
   }>
+
+  activeClaims: Array<{
+    id: string
+    artifactId: string | null
+    claimKind: string
+    predicate: string
+    objectValue: string | null
+    subjectEntityId: string
+    objectEntityId: string | null
+    updatedAt: string
+  }>
+
+  activeCommitments: Array<{
+    id: string
+    title: string
+    status: string
+    priority: string
+    dueDate: string | null
+    updatedAt: string
+    linkedEntityIds: string[]
+  }>
+
+  decisionThreads: Array<{
+    id: string
+    title: string
+    status: string
+    relatedEntityIds: string[]
+    updatedAt: string
+  }>
+
+  activeNarratives: Array<{
+    id: string
+    title: string
+    narrativeType: string
+    summary: string
+    relatedEntityIds: string[]
+    updatedAt: string
+  }>
+
+  recentSourceArtifacts: Array<{
+    id: string
+    title: string
+    channel: string
+    startedAt: string | null
+    endedAt: string | null
+    updatedAt: string
+  }>
+
+  vaultContext: Array<{
+    id: string
+    path: string
+    title: string
+    documentType: string
+    summary: string | null
+    manualSectionSummaries: string[]
+    updatedAt: string
+  }>
+
+  activeInitiatives: InitiativeRecord[]
+  chiefWorldModel?: ChiefWorldModelRecord | null
 
   workerViews: WorkerViews
   connectedIntegrations: string[]
@@ -1022,6 +1084,27 @@ ${input.focusProfile.instructions ? `Additional guidance: ${input.focusProfile.i
 Treat deprioritized work as background noise unless it creates urgent risk, directly blocks focused work, or requires explicit offboarding/cleanup.`)
   }
 
+  if (input.activeInitiatives.length > 0) {
+    sections.push(`## ACTIVE INITIATIVES
+${input.activeInitiatives.map(initiative => [
+  `- ${initiative.title} [${initiative.phase}/${initiative.status}]`,
+  `  Goal: ${initiative.goal}`,
+  initiative.latestSummary ? `  Summary: ${initiative.latestSummary}` : null,
+  initiative.nextMilestone ? `  Next milestone: ${initiative.nextMilestone}` : null,
+  initiative.openQuestions.length > 0 ? `  Open questions: ${initiative.openQuestions.slice(0, 3).join('; ')}` : null,
+  initiative.knownRisks.length > 0 ? `  Risks: ${initiative.knownRisks.slice(0, 2).join('; ')}` : null,
+].filter(Boolean).join('\n')).join('\n')}`)
+  }
+
+  if (input.chiefWorldModel) {
+    const urgent = input.chiefWorldModel.operationalMemory.urgentCommitments.slice(0, 5)
+    const blocked = input.chiefWorldModel.operationalMemory.blockedInitiatives.slice(0, 5)
+    sections.push(`## CHIEF WORLD MODEL
+Version: ${input.chiefWorldModel.version}
+${urgent.length > 0 ? `Urgent commitments:\n${urgent.map(item => `- ${item.title} [${item.status}]`).join('\n')}` : 'Urgent commitments: none'}
+${blocked.length > 0 ? `Blocked initiatives:\n${blocked.map(item => `- ${item.title}: ${item.reason}`).join('\n')}` : 'Blocked initiatives: none'}`)
+  }
+
   // QW1: Carry-forward context from previous run
   if (input.previousCarryForward) {
     sections.push(`## PREVIOUS RUN SUMMARY
@@ -1133,6 +1216,41 @@ ${o.steps.map(s => `  - [${s.status}] Step ${s.stepOrder}: ${s.description}${s.o
     sections.push('\n## RECENT MEMORIES')
     for (const m of input.recentMemories) {
       sections.push(`- [${m.category}] ${m.subject}: ${m.content.substring(0, 200)} (confidence: ${m.confidence}, created: ${m.createdAt})`)
+    }
+  }
+
+  if (input.activeCommitments.length > 0) {
+    sections.push('\n## ACTIVE COMMITMENTS')
+    for (const commitment of input.activeCommitments.slice(0, 15)) {
+      sections.push(`- ${commitment.title} [${commitment.status}/${commitment.priority}]${commitment.dueDate ? ` due ${commitment.dueDate}` : ''} (updated: ${commitment.updatedAt})`)
+    }
+  }
+
+  if (input.decisionThreads.length > 0) {
+    sections.push('\n## DECISION THREADS')
+    for (const thread of input.decisionThreads.slice(0, 10)) {
+      sections.push(`- ${thread.title} [${thread.status}] (updated: ${thread.updatedAt})`)
+    }
+  }
+
+  if (input.activeNarratives.length > 0) {
+    sections.push('\n## ACTIVE NARRATIVES')
+    for (const narrative of input.activeNarratives.slice(0, 10)) {
+      sections.push(`- ${narrative.title} [${narrative.narrativeType}] — ${narrative.summary.slice(0, 220)} (updated: ${narrative.updatedAt})`)
+    }
+  }
+
+  if (input.recentSourceArtifacts.length > 0) {
+    sections.push('\n## RECENT SOURCE ARTIFACTS')
+    for (const artifact of input.recentSourceArtifacts.slice(0, 12)) {
+      sections.push(`- ${artifact.title} [${artifact.channel}]${artifact.startedAt ? ` (${artifact.startedAt})` : ''}`)
+    }
+  }
+
+  if (input.vaultContext.length > 0) {
+    sections.push('\n## VAULT CONTEXT')
+    for (const doc of input.vaultContext.slice(0, 10)) {
+      sections.push(`- ${doc.title} [${doc.documentType}] at ${doc.path}${doc.summary ? ` — ${doc.summary.slice(0, 180)}` : ''}${doc.manualSectionSummaries.length > 0 ? ` | manual: ${doc.manualSectionSummaries.slice(0, 2).join(' / ')}` : ''}`)
     }
   }
 

@@ -27,7 +27,7 @@
  * Never throws — catches per-phase errors and continues.
  */
 
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient, createUntypedAdminClient } from '@/lib/supabase/admin'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // Brief synthesizer (zero-LLM org context)
@@ -78,6 +78,16 @@ import {
   extractChiefFocusProfile,
   type ChiefFocusProfile,
 } from '@/lib/intelligence/focus-profile'
+import {
+  buildFocusInitiativeDrafts,
+  selectRelevantInitiatives,
+  type InitiativeDraft,
+  type InitiativeRecord,
+} from '@/lib/intelligence/initiative-state'
+import {
+  buildChiefWorldModel,
+  type ChiefWorldModelRecord,
+} from '@/lib/intelligence/world-model'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -150,6 +160,63 @@ export interface WorkingMemory {
   decisionLog: DecisionLogEntry[]
   accuracyStats: Record<string, { avg: number; count: number; trend: 'improving' | 'stable' | 'declining' }>
   version: number
+}
+
+interface ActiveClaimContext {
+  id: string
+  artifactId: string | null
+  claimKind: string
+  predicate: string
+  objectValue: string | null
+  subjectEntityId: string
+  objectEntityId: string | null
+  updatedAt: string
+}
+
+interface ActiveCommitmentContext {
+  id: string
+  title: string
+  status: string
+  priority: string
+  dueDate: string | null
+  updatedAt: string
+  linkedEntityIds: string[]
+}
+
+interface DecisionThreadContext {
+  id: string
+  title: string
+  status: string
+  relatedEntityIds: string[]
+  updatedAt: string
+}
+
+interface NarrativeContext {
+  id: string
+  title: string
+  narrativeType: string
+  summary: string
+  relatedEntityIds: string[]
+  updatedAt: string
+}
+
+interface SourceArtifactContext {
+  id: string
+  title: string
+  channel: string
+  startedAt: string | null
+  endedAt: string | null
+  updatedAt: string
+}
+
+interface VaultDocContext {
+  id: string
+  path: string
+  title: string
+  documentType: string
+  summary: string | null
+  manualSectionSummaries: string[]
+  updatedAt: string
 }
 
 // ─── Main Entry ───────────────────────────────────────────────────────────
@@ -286,6 +353,25 @@ export async function runChiefLoopForOrg(
     try {
       const workingMemory = buildWorkingMemory(result, thinkDecisions, gatherResult)
       await upsertWorkingMemory(supabase, orgId, workingMemory)
+      const refreshedInitiatives = await upsertInitiativesFromChiefContext(orgId, gatherResult, now.toISOString())
+      const worldModel = buildChiefWorldModel({
+        now: now.toISOString(),
+        initiatives: refreshedInitiatives,
+        activeCommitments: gatherResult.activeCommitments,
+        decisionThreads: gatherResult.decisionThreads,
+        activeNarratives: gatherResult.activeNarratives.map(narrative => ({
+          id: narrative.id,
+          title: narrative.title,
+          summary: narrative.summary,
+        })),
+        changedArtifacts: gatherResult.recentSourceArtifacts.slice(0, 10).map(artifact => ({
+          id: artifact.id,
+          title: artifact.title,
+          channel: artifact.channel,
+        })),
+        previous: gatherResult.chiefWorldModel,
+      })
+      await upsertChiefWorldModelState(orgId, worldModel)
       // Derive carry_forward TEXT for lease audit trail (backward compat)
       carryForward = workingMemory.runningSummary.slice(0, 2000)
     } catch (error) {
@@ -449,6 +535,14 @@ interface GatherResult {
   proceduralMemories: Array<{ id: string; triggerPattern: string; successfulApproach: string; successRate: number }>
   workingMemory: WorkingMemory | null
   focusProfile: ChiefFocusProfile
+  activeClaims: ActiveClaimContext[]
+  activeCommitments: ActiveCommitmentContext[]
+  decisionThreads: DecisionThreadContext[]
+  activeNarratives: NarrativeContext[]
+  recentSourceArtifacts: SourceArtifactContext[]
+  vaultContext: VaultDocContext[]
+  activeInitiatives: InitiativeRecord[]
+  chiefWorldModel: ChiefWorldModelRecord | null
   // Feature 7: Decision accuracy stats (last 30 days)
   decisionAccuracy: Record<string, { avg: number; count: number }> | null
 }
@@ -478,10 +572,19 @@ async function phaseGather(
     proceduralMemories: [],
     workingMemory: null,
     focusProfile: extractChiefFocusProfile(null),
+    activeClaims: [],
+    activeCommitments: [],
+    decisionThreads: [],
+    activeNarratives: [],
+    recentSourceArtifacts: [],
+    vaultContext: [],
+    activeInitiatives: [],
+    chiefWorldModel: null,
     decisionAccuracy: null,
   }
 
   try {
+    const untypedSupabase = createUntypedAdminClient()
     // All fetches in parallel — independent data sources
     const [
       orgData,
@@ -498,6 +601,14 @@ async function phaseGather(
       calendarEvents,
       proceduralMems,
       workingMem,
+      activeClaims,
+      activeCommitments,
+      decisionThreads,
+      activeNarratives,
+      recentSourceArtifacts,
+      vaultContext,
+      activeInitiatives,
+      chiefWorldModel,
       accuracyStats,
       _evalCount,
     ] = await Promise.all([
@@ -604,6 +715,46 @@ async function phaseGather(
         return null as WorkingMemory | null
       }),
 
+      fetchActiveClaims(untypedSupabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] active claims fetch error:', e)
+        return [] as ActiveClaimContext[]
+      }),
+
+      fetchActiveCommitments(untypedSupabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] commitments fetch error:', e)
+        return [] as ActiveCommitmentContext[]
+      }),
+
+      fetchDecisionThreads(untypedSupabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] decision thread fetch error:', e)
+        return [] as DecisionThreadContext[]
+      }),
+
+      fetchActiveNarratives(untypedSupabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] narratives fetch error:', e)
+        return [] as NarrativeContext[]
+      }),
+
+      fetchRecentSourceArtifacts(untypedSupabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] source artifact fetch error:', e)
+        return [] as SourceArtifactContext[]
+      }),
+
+      fetchVaultContextDocs(untypedSupabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] vault context fetch error:', e)
+        return [] as VaultDocContext[]
+      }),
+
+      fetchInitiatives(untypedSupabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] initiatives fetch error:', e)
+        return [] as InitiativeRecord[]
+      }),
+
+      fetchChiefWorldModel(untypedSupabase, orgId).catch(e => {
+        console.error('[ChiefLoop:gather] chief world model fetch error:', e)
+        return null as ChiefWorldModelRecord | null
+      }),
+
       // Feature 7: Decision accuracy stats (last 30 days)
       fetchAccuracyStats(supabase, orgId).catch(e => {
         console.error('[ChiefLoop:gather] accuracy stats fetch error:', e)
@@ -627,6 +778,13 @@ async function phaseGather(
     r.connectedIntegrations = integrations
     r.proceduralMemories = proceduralMems
     r.workingMemory = workingMem
+    r.activeClaims = activeClaims
+    r.activeCommitments = activeCommitments
+    r.decisionThreads = decisionThreads
+    r.activeNarratives = activeNarratives
+    r.recentSourceArtifacts = recentSourceArtifacts
+    r.vaultContext = vaultContext
+    r.chiefWorldModel = chiefWorldModel
     r.decisionAccuracy = accuracyStats
 
     // Map DB rows to typed arrays
@@ -734,8 +892,77 @@ async function phaseGather(
       r.focusProfile
     ).items
 
+    r.activeClaims = applyChiefFocusToItems(
+      r.activeClaims,
+      claim => `${claim.predicate} ${claim.objectValue ?? ''}`,
+      r.focusProfile
+    ).items
+
+    r.activeCommitments = applyChiefFocusToItems(
+      r.activeCommitments,
+      commitment => `${commitment.title} ${commitment.status} ${commitment.priority}`,
+      r.focusProfile
+    ).items
+
+    r.decisionThreads = applyChiefFocusToItems(
+      r.decisionThreads,
+      thread => `${thread.title} ${thread.status}`,
+      r.focusProfile
+    ).items
+
+    r.activeNarratives = applyChiefFocusToItems(
+      r.activeNarratives,
+      narrative => `${narrative.title} ${narrative.summary} ${narrative.narrativeType}`,
+      r.focusProfile
+    ).items
+
+    r.recentSourceArtifacts = applyChiefFocusToItems(
+      r.recentSourceArtifacts,
+      artifact => `${artifact.title} ${artifact.channel}`,
+      r.focusProfile
+    ).items
+
+    r.vaultContext = applyChiefFocusToItems(
+      r.vaultContext,
+      doc => `${doc.title} ${doc.path} ${doc.summary ?? ''} ${doc.manualSectionSummaries.join(' ')}`,
+      r.focusProfile
+    ).items
+
+    const initiativeSignalTexts = [
+      ...r.recentEmails.map(email => `${email.subject} ${email.snippet}`),
+      ...r.recentSlackMessages.map(message => `${message.channel} ${message.text}`),
+      ...r.todayEvents.map(event => event.summary),
+      ...r.recentInsights.map(insight => insight.summary),
+      ...r.recentFindings.map(finding => `${finding.title} ${finding.description}`),
+      ...r.recentSourceArtifacts.map(artifact => artifact.title),
+    ]
+
+    const draftInitiatives = buildFocusInitiativeDrafts({
+      now: now.toISOString(),
+      focusProfile: r.focusProfile,
+      existingInitiatives: activeInitiatives,
+      activeOutcomes: r.activeOutcomes,
+      recentArtifacts: r.recentSourceArtifacts,
+      topEntities: r.topEntities.map(entity => ({
+        id: entity.id,
+        name: entity.name,
+        entityType: entity.entityType,
+      })),
+    }).map((draft, index) => materializeInitiativeDraft(orgId, draft, index))
+
+    const scopedInitiatives = selectRelevantInitiatives({
+      initiatives: [...activeInitiatives, ...draftInitiatives],
+      signalTexts: initiativeSignalTexts,
+      focusTopics: r.focusProfile.priorityTopics,
+      now: now.toISOString(),
+      limit: 8,
+    })
+
+    r.activeInitiatives = scopedInitiatives
+
     r.totalSignals = r.recentEmails.length + r.recentSlackMessages.length +
-      r.recentInsights.length + r.recentFindings.length + r.todayEvents.length
+      r.recentInsights.length + r.recentFindings.length + r.todayEvents.length +
+      r.recentSourceArtifacts.length
 
   } catch (error) {
     console.error('[ChiefLoop:gather] Error:', error)
@@ -884,6 +1111,342 @@ async function fetchWorkingMemory(
     accuracyStats: (row.accuracy_stats ?? {}) as WorkingMemory['accuracyStats'],
     version: row.version ?? 1,
   }
+}
+
+function materializeInitiativeDraft(
+  orgId: string,
+  draft: InitiativeDraft,
+  index: number
+): InitiativeRecord {
+  return {
+    id: `draft-${index}-${draft.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    orgId,
+    title: draft.title,
+    goal: draft.goal,
+    scope: draft.scope,
+    status: draft.status,
+    phase: draft.phase,
+    successCriteria: draft.successCriteria,
+    currentHypothesis: draft.currentHypothesis,
+    openQuestions: draft.openQuestions,
+    knownRisks: draft.knownRisks,
+    dependencies: draft.dependencies,
+    stakeholders: draft.stakeholders,
+    linkedEntityIds: draft.linkedEntityIds,
+    linkedClaimIds: [],
+    linkedCommitmentIds: [],
+    linkedDecisionThreadIds: [],
+    latestSummary: draft.latestSummary,
+    nextMilestone: draft.nextMilestone,
+    nextReviewAt: draft.nextReviewAt,
+    lastSignalAt: draft.lastSignalAt,
+    lastReconciledAt: null,
+    source: draft.source,
+    updatedAt: draft.lastSignalAt,
+  }
+}
+
+async function fetchActiveClaims(
+  supabase: ReturnType<typeof createUntypedAdminClient>,
+  orgId: string
+): Promise<ActiveClaimContext[]> {
+  const { data } = await supabase
+    .from('claims')
+    .select('id, artifact_id, claim_kind, predicate, object_value, subject_entity_id, object_entity_id, updated_at')
+    .eq('org_id', orgId)
+    .eq('status', 'active')
+    .is('valid_to', null)
+    .order('updated_at', { ascending: false })
+    .limit(30)
+
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    artifactId: typeof row.artifact_id === 'string' ? row.artifact_id : null,
+    claimKind: String(row.claim_kind ?? 'fact'),
+    predicate: String(row.predicate ?? ''),
+    objectValue: typeof row.object_value === 'string' ? row.object_value : null,
+    subjectEntityId: String(row.subject_entity_id ?? ''),
+    objectEntityId: typeof row.object_entity_id === 'string' ? row.object_entity_id : null,
+    updatedAt: String(row.updated_at ?? ''),
+  }))
+}
+
+async function fetchActiveCommitments(
+  supabase: ReturnType<typeof createUntypedAdminClient>,
+  orgId: string
+): Promise<ActiveCommitmentContext[]> {
+  const { data } = await supabase
+    .from('commitments')
+    .select('id, title, status, priority, due_date, updated_at, related_entity_ids, metadata')
+    .eq('org_id', orgId)
+    .in('status', ['active', 'at_risk', 'overdue'])
+    .order('updated_at', { ascending: false })
+    .limit(20)
+
+  return (data ?? []).map((row: Record<string, unknown>) => {
+    const metadata = (row.metadata ?? {}) as Record<string, unknown>
+    const relatedFromMetadata = Array.isArray(metadata.related_entity_ids)
+      ? metadata.related_entity_ids.filter((value): value is string => typeof value === 'string')
+      : []
+
+    return {
+      id: String(row.id),
+      title: String(row.title ?? ''),
+      status: String(row.status ?? 'active'),
+      priority: String(row.priority ?? 'medium'),
+      dueDate: typeof row.due_date === 'string' ? row.due_date : null,
+      updatedAt: String(row.updated_at ?? ''),
+      linkedEntityIds: Array.isArray(row.related_entity_ids)
+        ? row.related_entity_ids.filter((value): value is string => typeof value === 'string')
+        : relatedFromMetadata,
+    }
+  })
+}
+
+async function fetchDecisionThreads(
+  supabase: ReturnType<typeof createUntypedAdminClient>,
+  orgId: string
+): Promise<DecisionThreadContext[]> {
+  const { data } = await supabase
+    .from('decision_threads')
+    .select('id, title, status, related_entity_ids, updated_at')
+    .eq('org_id', orgId)
+    .order('updated_at', { ascending: false })
+    .limit(20)
+
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    title: String(row.title ?? ''),
+    status: String(row.status ?? 'open'),
+    relatedEntityIds: Array.isArray(row.related_entity_ids)
+      ? row.related_entity_ids.filter((value): value is string => typeof value === 'string')
+      : [],
+    updatedAt: String(row.updated_at ?? ''),
+  }))
+}
+
+async function fetchActiveNarratives(
+  supabase: ReturnType<typeof createUntypedAdminClient>,
+  orgId: string
+): Promise<NarrativeContext[]> {
+  const { data } = await supabase
+    .from('strategic_narratives')
+    .select('id, title, narrative_type, summary, related_entity_ids, updated_at')
+    .eq('org_id', orgId)
+    .in('status', ['active', 'pinned'])
+    .order('updated_at', { ascending: false })
+    .limit(12)
+
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    title: String(row.title ?? ''),
+    narrativeType: String(row.narrative_type ?? 'initiative'),
+    summary: String(row.summary ?? ''),
+    relatedEntityIds: Array.isArray(row.related_entity_ids)
+      ? row.related_entity_ids.filter((value): value is string => typeof value === 'string')
+      : [],
+    updatedAt: String(row.updated_at ?? ''),
+  }))
+}
+
+async function fetchRecentSourceArtifacts(
+  supabase: ReturnType<typeof createUntypedAdminClient>,
+  orgId: string
+): Promise<SourceArtifactContext[]> {
+  const { data } = await supabase
+    .from('source_artifacts')
+    .select('id, title, channel, started_at, ended_at, updated_at')
+    .eq('org_id', orgId)
+    .order('updated_at', { ascending: false })
+    .limit(20)
+
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    title: String(row.title ?? ''),
+    channel: String(row.channel ?? 'unknown'),
+    startedAt: typeof row.started_at === 'string' ? row.started_at : null,
+    endedAt: typeof row.ended_at === 'string' ? row.ended_at : null,
+    updatedAt: String(row.updated_at ?? ''),
+  }))
+}
+
+async function fetchVaultContextDocs(
+  supabase: ReturnType<typeof createUntypedAdminClient>,
+  orgId: string
+): Promise<VaultDocContext[]> {
+  const { data } = await supabase
+    .from('vault_documents')
+    .select('id, path, title, document_type, sections, manual_sections, updated_at')
+    .eq('org_id', orgId)
+    .order('updated_at', { ascending: false })
+    .limit(20)
+
+  return (data ?? []).map((row: Record<string, unknown>) => {
+    const sections = Array.isArray(row.sections)
+      ? row.sections as Array<Record<string, unknown>>
+      : []
+    const manualSections = (row.manual_sections ?? {}) as Record<string, { content?: string }>
+    const summarySection = sections.find(section => section.kind === 'summary' || section.kind === 'narrative')
+
+    return {
+      id: String(row.id),
+      path: String(row.path ?? ''),
+      title: String(row.title ?? ''),
+      documentType: String(row.document_type ?? 'entity'),
+      summary: typeof summarySection?.content === 'string' ? summarySection.content : null,
+      manualSectionSummaries: Object.values(manualSections)
+        .map(section => (typeof section?.content === 'string' ? section.content.trim() : ''))
+        .filter(Boolean)
+        .slice(0, 3),
+      updatedAt: String(row.updated_at ?? ''),
+    }
+  })
+}
+
+async function fetchInitiatives(
+  supabase: ReturnType<typeof createUntypedAdminClient>,
+  orgId: string
+): Promise<InitiativeRecord[]> {
+  const { data } = await supabase
+    .from('initiatives')
+    .select('*')
+    .eq('org_id', orgId)
+    .in('status', ['active', 'waiting', 'blocked'])
+    .order('updated_at', { ascending: false })
+    .limit(20)
+
+  return (data ?? []).map(mapInitiativeRow)
+}
+
+async function fetchChiefWorldModel(
+  supabase: ReturnType<typeof createUntypedAdminClient>,
+  orgId: string
+): Promise<ChiefWorldModelRecord | null> {
+  const { data } = await supabase
+    .from('chief_world_model')
+    .select('*')
+    .eq('org_id', orgId)
+    .maybeSingle()
+
+  if (!data) return null
+
+  return {
+    operationalMemory: (data.operational_memory ?? {
+      urgentCommitments: [],
+      staleDecisions: [],
+      blockedInitiatives: [],
+    }) as ChiefWorldModelRecord['operationalMemory'],
+    narrativeMemory: (data.narrative_memory ?? []) as ChiefWorldModelRecord['narrativeMemory'],
+    executionMemory: (data.execution_memory ?? []) as ChiefWorldModelRecord['executionMemory'],
+    initiativePriorities: (data.initiative_priorities ?? []) as ChiefWorldModelRecord['initiativePriorities'],
+    changedSinceLastRun: (data.changed_since_last_run ?? {
+      artifacts: [],
+      updatedInitiativeIds: [],
+    }) as ChiefWorldModelRecord['changedSinceLastRun'],
+    version: Number(data.version ?? 1),
+  }
+}
+
+function mapInitiativeRow(row: Record<string, unknown>): InitiativeRecord {
+  const stringArray = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : []
+
+  return {
+    id: String(row.id),
+    orgId: String(row.org_id),
+    title: String(row.title ?? ''),
+    goal: String(row.goal ?? ''),
+    scope: typeof row.scope === 'string' ? row.scope : null,
+    status: String(row.status ?? 'active') as InitiativeRecord['status'],
+    phase: String(row.phase ?? 'discovery') as InitiativeRecord['phase'],
+    successCriteria: stringArray(row.success_criteria),
+    currentHypothesis: typeof row.current_hypothesis === 'string' ? row.current_hypothesis : null,
+    openQuestions: stringArray(row.open_questions),
+    knownRisks: stringArray(row.known_risks),
+    dependencies: stringArray(row.dependencies),
+    stakeholders: stringArray(row.stakeholders),
+    linkedEntityIds: stringArray(row.linked_entity_ids),
+    linkedClaimIds: stringArray(row.linked_claim_ids),
+    linkedCommitmentIds: stringArray(row.linked_commitment_ids),
+    linkedDecisionThreadIds: stringArray(row.linked_decision_thread_ids),
+    latestSummary: typeof row.latest_summary === 'string' ? row.latest_summary : null,
+    nextMilestone: typeof row.next_milestone === 'string' ? row.next_milestone : null,
+    nextReviewAt: typeof row.next_review_at === 'string' ? row.next_review_at : null,
+    lastSignalAt: typeof row.last_signal_at === 'string' ? row.last_signal_at : null,
+    lastReconciledAt: typeof row.last_reconciled_at === 'string' ? row.last_reconciled_at : null,
+    source: typeof row.source === 'string' ? row.source : null,
+    updatedAt: typeof row.updated_at === 'string' ? row.updated_at : null,
+  }
+}
+
+async function upsertInitiativesFromChiefContext(
+  orgId: string,
+  gatherResult: GatherResult,
+  nowIso: string
+): Promise<InitiativeRecord[]> {
+  const supabase = createUntypedAdminClient()
+  const drafts = buildFocusInitiativeDrafts({
+    now: nowIso,
+    focusProfile: gatherResult.focusProfile,
+    existingInitiatives: gatherResult.activeInitiatives,
+    activeOutcomes: gatherResult.activeOutcomes,
+    recentArtifacts: gatherResult.recentSourceArtifacts,
+    topEntities: gatherResult.topEntities.map(entity => ({
+      id: entity.id,
+      name: entity.name,
+      entityType: entity.entityType,
+    })),
+  })
+
+  if (drafts.length === 0) {
+    return fetchInitiatives(supabase, orgId)
+  }
+
+  const rows = drafts.map(draft => ({
+    org_id: orgId,
+    title: draft.title,
+    goal: draft.goal,
+    scope: draft.scope,
+    status: draft.status,
+    phase: draft.phase,
+    success_criteria: draft.successCriteria,
+    current_hypothesis: draft.currentHypothesis,
+    open_questions: draft.openQuestions,
+    known_risks: draft.knownRisks,
+    dependencies: draft.dependencies,
+    stakeholders: draft.stakeholders,
+    linked_entity_ids: draft.linkedEntityIds,
+    latest_summary: draft.latestSummary,
+    next_milestone: draft.nextMilestone,
+    next_review_at: draft.nextReviewAt,
+    last_signal_at: draft.lastSignalAt,
+    last_reconciled_at: nowIso,
+    source: draft.source,
+  }))
+
+  await supabase
+    .from('initiatives')
+    .upsert(rows, { onConflict: 'org_id,title' })
+
+  return fetchInitiatives(supabase, orgId)
+}
+
+async function upsertChiefWorldModelState(
+  orgId: string,
+  worldModel: ChiefWorldModelRecord
+): Promise<void> {
+  const supabase = createUntypedAdminClient()
+  await supabase
+    .from('chief_world_model')
+    .upsert({
+      org_id: orgId,
+      operational_memory: worldModel.operationalMemory,
+      narrative_memory: worldModel.narrativeMemory,
+      execution_memory: worldModel.executionMemory,
+      initiative_priorities: worldModel.initiativePriorities,
+      changed_since_last_run: worldModel.changedSinceLastRun,
+      version: worldModel.version,
+    }, { onConflict: 'org_id' })
 }
 
 /** Build structured working memory from this run's results (no LLM) */
@@ -1236,6 +1799,14 @@ async function phaseThink(
       topEntities: gather.topEntities,
       recentRelationships: gather.recentRelationships,
       recentMemories: gather.recentMemories,
+      activeClaims: gather.activeClaims,
+      activeCommitments: gather.activeCommitments,
+      decisionThreads: gather.decisionThreads,
+      activeNarratives: gather.activeNarratives,
+      recentSourceArtifacts: gather.recentSourceArtifacts,
+      vaultContext: gather.vaultContext,
+      activeInitiatives: gather.activeInitiatives,
+      chiefWorldModel: gather.chiefWorldModel,
       workerViews: gather.workerViews ?? emptyWorkerViews,
       connectedIntegrations: gather.connectedIntegrations,
       focusProfile: gather.focusProfile,

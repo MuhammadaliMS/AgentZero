@@ -156,6 +156,13 @@ ${input.focusProfile.deprioritizedTopics.length > 0 ? `Deprioritize unless urgen
 ${input.focusProfile.instructions ? `Guidance: ${input.focusProfile.instructions}` : ''}`)
   }
 
+  if (input.activeInitiatives.length > 0) {
+    sections.push('## ACTIVE INITIATIVES')
+    for (const initiative of input.activeInitiatives.slice(0, 6)) {
+      sections.push(`- ${initiative.title} [${initiative.phase}/${initiative.status}]${initiative.nextMilestone ? ` → ${initiative.nextMilestone}` : ''}`)
+    }
+  }
+
   // Raw email signals
   if (input.recentEmails.length > 0) {
     sections.push('## SIGNALS: EMAILS')
@@ -288,6 +295,27 @@ ${input.focusProfile.instructions ? `Guidance: ${input.focusProfile.instructions
     sections.push(`\n## PREVIOUS RUN SUMMARY\n${input.previousCarryForward}`)
   }
 
+  if (input.activeInitiatives.length > 0) {
+    sections.push('\n## ACTIVE INITIATIVES')
+    for (const initiative of input.activeInitiatives.slice(0, 8)) {
+      sections.push(`- ${initiative.title} [${initiative.phase}/${initiative.status}] — ${initiative.latestSummary ?? initiative.goal}`)
+    }
+  }
+
+  if (input.activeNarratives.length > 0) {
+    sections.push('\n## ACTIVE NARRATIVES')
+    for (const narrative of input.activeNarratives.slice(0, 6)) {
+      sections.push(`- ${narrative.title}: ${narrative.summary.slice(0, 180)}`)
+    }
+  }
+
+  if (input.vaultContext.length > 0) {
+    sections.push('\n## VAULT CONTEXT')
+    for (const doc of input.vaultContext.slice(0, 6)) {
+      sections.push(`- ${doc.title} [${doc.documentType}]${doc.summary ? ` — ${doc.summary.slice(0, 140)}` : ''}`)
+    }
+  }
+
   // Feature 7: Decision accuracy feedback
   if (input.decisionAccuracy && Object.keys(input.decisionAccuracy).length > 0) {
     sections.push('\n## DECISION ACCURACY (last 30 days)')
@@ -369,6 +397,20 @@ Current time: ${input.currentTime} (${input.timezone})
 ${input.focusProfile.priorityTopics.length > 0 ? `Prioritize: ${input.focusProfile.priorityTopics.join(', ')}` : ''}
 ${input.focusProfile.deprioritizedTopics.length > 0 ? `Deprioritize unless urgent or linked to focused work: ${input.focusProfile.deprioritizedTopics.join(', ')}` : ''}
 ${input.focusProfile.instructions ? `Guidance: ${input.focusProfile.instructions}` : ''}`)
+  }
+
+  if (input.activeInitiatives.length > 0) {
+    sections.push('## ACTIVE INITIATIVES')
+    for (const initiative of input.activeInitiatives.slice(0, 8)) {
+      sections.push(`- ${initiative.title} [${initiative.phase}/${initiative.status}]${initiative.nextMilestone ? ` → ${initiative.nextMilestone}` : ''}`)
+    }
+  }
+
+  if (input.activeCommitments.length > 0) {
+    sections.push('\n## ACTIVE COMMITMENTS')
+    for (const commitment of input.activeCommitments.slice(0, 8)) {
+      sections.push(`- ${commitment.title} [${commitment.status}]${commitment.dueDate ? ` due ${commitment.dueDate}` : ''}`)
+    }
   }
 
   // Feature 5: Working memory context for continuity
@@ -478,6 +520,13 @@ Current time: ${input.currentTime} (${input.timezone})
     sections.push('\n## EXISTING RELATIONSHIPS')
     for (const r of input.recentRelationships) {
       sections.push(`- ${r.sourceEntityName} -[${r.relationshipType}]-> ${r.targetEntityName} (confidence: ${r.confidence})`)
+    }
+  }
+
+  if (input.activeInitiatives.length > 0) {
+    sections.push('\n## INITIATIVE CONTEXT')
+    for (const initiative of input.activeInitiatives.slice(0, 6)) {
+      sections.push(`- ${initiative.title}: entities=${initiative.linkedEntityIds.length}, commitments=${initiative.linkedCommitmentIds.length}, decisions=${initiative.linkedDecisionThreadIds.length}`)
     }
   }
 

@@ -209,6 +209,7 @@ export interface ChiefDecision {
     | 'attach_signal'
     | 'branch_replan'
     | 'create_outcome'
+    | 'create_initiative'
     | 'execute_step'
     | 'skip_step'
     | 'block_step'
@@ -217,6 +218,7 @@ export interface ChiefDecision {
     | 'create_entity'
     | 'create_relationship'
     | 'update_entity'
+    | 'update_initiative'
     | 'escalate_blocker'
     | 'defer'
     | 'dismiss'
@@ -844,6 +846,114 @@ export function createChiefAnalystTools(orgId: string) {
     },
   })
 
+  const createInitiativeTool = tool({
+    name: 'create_initiative',
+    description: 'Create a long-horizon initiative when the work spans multiple meetings, commitments, or decisions and should persist across chief loop runs. Use this for focused project or relationship execution, not for one-off inbox tasks.',
+    parameters: z.object({
+      title: z.string().max(200),
+      goal: z.string().max(1000),
+      scope: z.string().max(1000).nullable(),
+      phase: z.enum(['discovery', 'alignment', 'planning', 'execution', 'waiting', 'verification', 'closed']).default('discovery'),
+      status: z.enum(['active', 'waiting', 'blocked', 'closed', 'archived']).default('active'),
+      current_hypothesis: z.string().max(1000).nullable(),
+      success_criteria: z.array(z.string().max(300)).max(10).nullable(),
+      open_questions: z.array(z.string().max(400)).max(10).nullable(),
+      known_risks: z.array(z.string().max(400)).max(10).nullable(),
+      dependencies: z.array(z.string().max(300)).max(10).nullable(),
+      stakeholders: z.array(z.string().max(200)).max(10).nullable(),
+      linked_entity_ids: z.array(z.string().uuid()).max(20).nullable(),
+      linked_claim_ids: z.array(z.string().uuid()).max(20).nullable(),
+      linked_commitment_ids: z.array(z.string().uuid()).max(20).nullable(),
+      linked_decision_thread_ids: z.array(z.string().uuid()).max(20).nullable(),
+      latest_summary: z.string().max(2000).nullable(),
+      next_milestone: z.string().max(500).nullable(),
+      next_review_at: z.string().datetime().nullable(),
+      rationale: z.string().max(1000),
+    }),
+    execute: async (args) => {
+      decisions.push({
+        type: 'create_initiative',
+        payload: {
+          title: args.title,
+          goal: args.goal,
+          scope: args.scope,
+          phase: args.phase,
+          status: args.status,
+          currentHypothesis: args.current_hypothesis,
+          successCriteria: args.success_criteria ?? [],
+          openQuestions: args.open_questions ?? [],
+          knownRisks: args.known_risks ?? [],
+          dependencies: args.dependencies ?? [],
+          stakeholders: args.stakeholders ?? [],
+          linkedEntityIds: args.linked_entity_ids ?? [],
+          linkedClaimIds: args.linked_claim_ids ?? [],
+          linkedCommitmentIds: args.linked_commitment_ids ?? [],
+          linkedDecisionThreadIds: args.linked_decision_thread_ids ?? [],
+          latestSummary: args.latest_summary,
+          nextMilestone: args.next_milestone,
+          nextReviewAt: args.next_review_at,
+        },
+        rationale: args.rationale,
+      })
+      return `Decision recorded: create initiative "${args.title}"`
+    },
+  })
+
+  const updateInitiativeTool = tool({
+    name: 'update_initiative',
+    description: 'Update an existing initiative when priorities, phase, milestone, risks, or open questions changed. Prefer this over creating a new initiative when the work stream already exists.',
+    parameters: z.object({
+      initiative_id: z.string().uuid().nullable(),
+      title: z.string().max(200),
+      goal: z.string().max(1000).nullable(),
+      scope: z.string().max(1000).nullable(),
+      phase: z.enum(['discovery', 'alignment', 'planning', 'execution', 'waiting', 'verification', 'closed']).nullable(),
+      status: z.enum(['active', 'waiting', 'blocked', 'closed', 'archived']).nullable(),
+      current_hypothesis: z.string().max(1000).nullable(),
+      success_criteria: z.array(z.string().max(300)).max(10).nullable(),
+      open_questions: z.array(z.string().max(400)).max(10).nullable(),
+      known_risks: z.array(z.string().max(400)).max(10).nullable(),
+      dependencies: z.array(z.string().max(300)).max(10).nullable(),
+      stakeholders: z.array(z.string().max(200)).max(10).nullable(),
+      linked_entity_ids: z.array(z.string().uuid()).max(20).nullable(),
+      linked_claim_ids: z.array(z.string().uuid()).max(20).nullable(),
+      linked_commitment_ids: z.array(z.string().uuid()).max(20).nullable(),
+      linked_decision_thread_ids: z.array(z.string().uuid()).max(20).nullable(),
+      latest_summary: z.string().max(2000).nullable(),
+      next_milestone: z.string().max(500).nullable(),
+      next_review_at: z.string().datetime().nullable(),
+      rationale: z.string().max(1000),
+    }),
+    execute: async (args) => {
+      decisions.push({
+        type: 'update_initiative',
+        payload: {
+          initiativeId: args.initiative_id,
+          title: args.title,
+          goal: args.goal,
+          scope: args.scope,
+          phase: args.phase,
+          status: args.status,
+          currentHypothesis: args.current_hypothesis,
+          successCriteria: args.success_criteria,
+          openQuestions: args.open_questions,
+          knownRisks: args.known_risks,
+          dependencies: args.dependencies,
+          stakeholders: args.stakeholders,
+          linkedEntityIds: args.linked_entity_ids,
+          linkedClaimIds: args.linked_claim_ids,
+          linkedCommitmentIds: args.linked_commitment_ids,
+          linkedDecisionThreadIds: args.linked_decision_thread_ids,
+          latestSummary: args.latest_summary,
+          nextMilestone: args.next_milestone,
+          nextReviewAt: args.next_review_at,
+        },
+        rationale: args.rationale,
+      })
+      return `Decision recorded: update initiative "${args.title}"`
+    },
+  })
+
   // ── Graph Update Tools (NEW) ──
 
   const createEntityTool = tool({
@@ -994,6 +1104,7 @@ export function createChiefAnalystTools(orgId: string) {
     attachSignalToOutcome, branchReplan, createOutcomeTool,
     executeStepTool, skipStepTool, blockStepTool,
     storeInsight, storeMemoryTool,
+    createInitiativeTool, updateInitiativeTool,
     createEntityTool, createRelationshipTool, updateEntityTool,
     escalateBlockerTool,
     deferTool, dismissTool,
@@ -1087,7 +1198,7 @@ Treat deprioritized work as background noise unless it creates urgent risk, dire
   if (input.activeInitiatives.length > 0) {
     sections.push(`## ACTIVE INITIATIVES
 ${input.activeInitiatives.map(initiative => [
-  `- ${initiative.title} [${initiative.phase}/${initiative.status}]`,
+  `- ${initiative.title} (${initiative.id}) [${initiative.phase}/${initiative.status}]`,
   `  Goal: ${initiative.goal}`,
   initiative.latestSummary ? `  Summary: ${initiative.latestSummary}` : null,
   initiative.nextMilestone ? `  Next milestone: ${initiative.nextMilestone}` : null,
@@ -1266,12 +1377,13 @@ ${o.steps.map(s => `  - [${s.status}] Step ${s.stepOrder}: ${s.description}${s.o
 ## INSTRUCTIONS
 1. Analyze ALL the data above. Use timestamps to judge relevance and freshness.
 2. Use READ tools to dig deeper into anything that needs investigation (read full emails, search Slack, get entity details).
-3. Make DECISIONS: create/update outcomes, replan, store insights, update the knowledge graph.
+3. Make DECISIONS: create/update outcomes, initiatives, replan, store insights, update the knowledge graph.
 4. For each active outcome, assess if steps need changes given new signals — watch for delivery risks, slipping timelines, and cross-team dependencies.
 5. Correlate across data sources — patterns spanning email, Slack, and calendar are high-value. Pay special attention to customer feedback, stakeholder sentiment shifts, and competitive signals.
 6. Update the knowledge graph with entities, relationships, and insights you discover. Track features, customers, and metrics alongside people and projects.
-7. Escalate blockers via escalate_blocker when someone needs to take action or a dependency is stalling.
-8. You have 50 turns — use them wisely. Think deeply before acting.
+7. Use create_initiative or update_initiative when you detect durable multi-step work that should persist across future runs.
+8. Escalate blockers via escalate_blocker when someone needs to take action or a dependency is stalling.
+9. You have 50 turns — use them wisely. Think deeply before acting.
 `)
 
   return sections.join('\n')

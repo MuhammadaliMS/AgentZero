@@ -80,12 +80,14 @@ const TRIAGE_TOOL_NAMES = [
 const ANALYSIS_TOOL_NAMES = [
   ...READ_TOOL_NAMES,
   'store_insight', 'store_memory', 'attach_signal_to_outcome',
+  'create_initiative', 'update_initiative',
 ]
 
 const EXECUTION_TOOL_NAMES = [
   'get_outcome_detail', 'get_entity_detail', 'query_knowledge',
   'create_outcome', 'branch_replan', 'execute_step', 'skip_step', 'block_step',
   'escalate_blocker', 'attach_signal_to_outcome',
+  'create_initiative', 'update_initiative',
 ]
 
 const GRAPH_TOOL_NAMES = [
@@ -159,7 +161,7 @@ ${input.focusProfile.instructions ? `Guidance: ${input.focusProfile.instructions
   if (input.activeInitiatives.length > 0) {
     sections.push('## ACTIVE INITIATIVES')
     for (const initiative of input.activeInitiatives.slice(0, 6)) {
-      sections.push(`- ${initiative.title} [${initiative.phase}/${initiative.status}]${initiative.nextMilestone ? ` → ${initiative.nextMilestone}` : ''}`)
+      sections.push(`- ${initiative.title} (${initiative.id}) [${initiative.phase}/${initiative.status}]${initiative.nextMilestone ? ` → ${initiative.nextMilestone}` : ''}`)
     }
   }
 
@@ -298,7 +300,7 @@ ${input.focusProfile.instructions ? `Guidance: ${input.focusProfile.instructions
   if (input.activeInitiatives.length > 0) {
     sections.push('\n## ACTIVE INITIATIVES')
     for (const initiative of input.activeInitiatives.slice(0, 8)) {
-      sections.push(`- ${initiative.title} [${initiative.phase}/${initiative.status}] — ${initiative.latestSummary ?? initiative.goal}`)
+      sections.push(`- ${initiative.title} (${initiative.id}) [${initiative.phase}/${initiative.status}] — ${initiative.latestSummary ?? initiative.goal}`)
     }
   }
 
@@ -354,6 +356,7 @@ ${input.focusProfile.instructions ? `Guidance: ${input.focusProfile.instructions
 4. Store important context as institutional memory for future reference.
 5. Link signals to existing outcomes when they provide relevant evidence.
 6. Flag cross-team dependencies and delivery risks that could affect upcoming milestones.
+7. Create or update initiatives when the work should persist across future chief runs and needs durable multi-step ownership.
 `)
 
   return sections.join('\n')
@@ -371,6 +374,7 @@ function buildExecutionPrompt(
 - External actions (send email, post Slack) require approval. Use block_step with approval ask.
 - Internal data gathering can auto-execute.
 - Max 3 new outcomes per cycle. Focus on what matters most.
+- Use create_initiative or update_initiative when a workstream needs durable tracking across multiple runs, meetings, or decisions.
 - branch_replan requires material_changes[] — specific structural diffs.
 - Every decision needs a rationale.
 - Minimum confidence for creating an outcome: 0.6
@@ -402,7 +406,7 @@ ${input.focusProfile.instructions ? `Guidance: ${input.focusProfile.instructions
   if (input.activeInitiatives.length > 0) {
     sections.push('## ACTIVE INITIATIVES')
     for (const initiative of input.activeInitiatives.slice(0, 8)) {
-      sections.push(`- ${initiative.title} [${initiative.phase}/${initiative.status}]${initiative.nextMilestone ? ` → ${initiative.nextMilestone}` : ''}`)
+      sections.push(`- ${initiative.title} (${initiative.id}) [${initiative.phase}/${initiative.status}]${initiative.nextMilestone ? ` → ${initiative.nextMilestone}` : ''}`)
     }
   }
 
@@ -526,7 +530,7 @@ Current time: ${input.currentTime} (${input.timezone})
   if (input.activeInitiatives.length > 0) {
     sections.push('\n## INITIATIVE CONTEXT')
     for (const initiative of input.activeInitiatives.slice(0, 6)) {
-      sections.push(`- ${initiative.title}: entities=${initiative.linkedEntityIds.length}, commitments=${initiative.linkedCommitmentIds.length}, decisions=${initiative.linkedDecisionThreadIds.length}`)
+      sections.push(`- ${initiative.title} (${initiative.id}): entities=${initiative.linkedEntityIds.length}, commitments=${initiative.linkedCommitmentIds.length}, decisions=${initiative.linkedDecisionThreadIds.length}`)
     }
   }
 

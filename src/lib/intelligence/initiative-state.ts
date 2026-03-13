@@ -58,6 +58,29 @@ export interface InitiativeDraft {
   source: 'chief_loop'
 }
 
+export interface InitiativeDecisionInput {
+  title: string
+  goal?: string | null
+  scope?: string | null
+  status?: InitiativeStatus | null
+  phase?: InitiativePhase | null
+  successCriteria?: string[] | null
+  currentHypothesis?: string | null
+  openQuestions?: string[] | null
+  knownRisks?: string[] | null
+  dependencies?: string[] | null
+  stakeholders?: string[] | null
+  linkedEntityIds?: string[] | null
+  linkedClaimIds?: string[] | null
+  linkedCommitmentIds?: string[] | null
+  linkedDecisionThreadIds?: string[] | null
+  latestSummary?: string | null
+  nextMilestone?: string | null
+  nextReviewAt?: string | null
+  lastSignalAt?: string | null
+  source?: string | null
+}
+
 interface MinimalOutcome {
   id?: string
   title: string
@@ -159,6 +182,14 @@ function matchesInitiativeText(initiative: InitiativeRecord, candidateText: stri
   ].join(' '))
 
   return scoreTextOverlap(candidateText, initiativeTokens) > 0
+}
+
+function unique(values: Array<string | null | undefined>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value && value.trim()))))
+}
+
+function uniquePreserve(existing: string[], updates?: string[] | null): string[] {
+  return unique([...(existing ?? []), ...(updates ?? [])])
 }
 
 export function deriveInitiativePhase(input: {
@@ -323,7 +354,6 @@ export function reconcileInitiativeState(input: {
     ...commitmentRiskLines,
   ]
 
-  const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)))
   const latestSummary = [
     matchingNarratives[0]?.summary,
     matchingArtifacts[0] ? `Recent ${matchingArtifacts[0].channel} activity: ${matchingArtifacts[0].title}.` : null,
@@ -358,6 +388,69 @@ export function reconcileInitiativeState(input: {
     lastSignalAt: matchingArtifacts[0]?.startedAt ?? matchingClaims[0]?.updatedAt ?? input.initiative.lastSignalAt,
     lastReconciledAt: input.now,
     nextReviewAt: new Date(new Date(input.now).getTime() + (status === 'blocked' ? 2 : 6) * 60 * 60 * 1000).toISOString(),
+  }
+}
+
+export function materializeInitiativeDecision(input: {
+  now: string
+  orgId: string
+  decision: InitiativeDecisionInput
+  existing?: InitiativeRecord | null
+}): InitiativeRecord {
+  const nextReviewAt = input.decision.nextReviewAt
+    ?? input.existing?.nextReviewAt
+    ?? new Date(new Date(input.now).getTime() + 6 * 60 * 60 * 1000).toISOString()
+
+  const base: InitiativeRecord = input.existing ?? {
+    id: crypto.randomUUID(),
+    orgId: input.orgId,
+    title: input.decision.title,
+    goal: input.decision.goal?.trim() || `Advance ${input.decision.title} to completion.`,
+    scope: input.decision.scope ?? null,
+    status: input.decision.status ?? 'active',
+    phase: input.decision.phase ?? 'discovery',
+    successCriteria: unique(input.decision.successCriteria ?? []),
+    currentHypothesis: input.decision.currentHypothesis ?? null,
+    openQuestions: unique(input.decision.openQuestions ?? []),
+    knownRisks: unique(input.decision.knownRisks ?? []),
+    dependencies: unique(input.decision.dependencies ?? []),
+    stakeholders: unique(input.decision.stakeholders ?? []),
+    linkedEntityIds: unique(input.decision.linkedEntityIds ?? []),
+    linkedClaimIds: unique(input.decision.linkedClaimIds ?? []),
+    linkedCommitmentIds: unique(input.decision.linkedCommitmentIds ?? []),
+    linkedDecisionThreadIds: unique(input.decision.linkedDecisionThreadIds ?? []),
+    latestSummary: input.decision.latestSummary ?? null,
+    nextMilestone: input.decision.nextMilestone ?? null,
+    nextReviewAt,
+    lastSignalAt: input.decision.lastSignalAt ?? input.now,
+    lastReconciledAt: input.now,
+    source: input.decision.source ?? 'chief_loop',
+    updatedAt: null,
+  }
+
+  return {
+    ...base,
+    title: input.decision.title || base.title,
+    goal: input.decision.goal?.trim() || base.goal,
+    scope: input.decision.scope !== undefined ? input.decision.scope : base.scope,
+    status: input.decision.status ?? base.status,
+    phase: input.decision.phase ?? base.phase,
+    successCriteria: input.decision.successCriteria ? uniquePreserve(base.successCriteria, input.decision.successCriteria) : base.successCriteria,
+    currentHypothesis: input.decision.currentHypothesis !== undefined ? input.decision.currentHypothesis : base.currentHypothesis,
+    openQuestions: input.decision.openQuestions ? uniquePreserve(base.openQuestions, input.decision.openQuestions).slice(0, 8) : base.openQuestions,
+    knownRisks: input.decision.knownRisks ? uniquePreserve(base.knownRisks, input.decision.knownRisks).slice(0, 8) : base.knownRisks,
+    dependencies: input.decision.dependencies ? uniquePreserve(base.dependencies, input.decision.dependencies) : base.dependencies,
+    stakeholders: input.decision.stakeholders ? uniquePreserve(base.stakeholders, input.decision.stakeholders) : base.stakeholders,
+    linkedEntityIds: input.decision.linkedEntityIds ? uniquePreserve(base.linkedEntityIds, input.decision.linkedEntityIds) : base.linkedEntityIds,
+    linkedClaimIds: input.decision.linkedClaimIds ? uniquePreserve(base.linkedClaimIds, input.decision.linkedClaimIds) : base.linkedClaimIds,
+    linkedCommitmentIds: input.decision.linkedCommitmentIds ? uniquePreserve(base.linkedCommitmentIds, input.decision.linkedCommitmentIds) : base.linkedCommitmentIds,
+    linkedDecisionThreadIds: input.decision.linkedDecisionThreadIds ? uniquePreserve(base.linkedDecisionThreadIds, input.decision.linkedDecisionThreadIds) : base.linkedDecisionThreadIds,
+    latestSummary: input.decision.latestSummary !== undefined ? input.decision.latestSummary : base.latestSummary,
+    nextMilestone: input.decision.nextMilestone !== undefined ? input.decision.nextMilestone : base.nextMilestone,
+    nextReviewAt,
+    lastSignalAt: input.decision.lastSignalAt ?? base.lastSignalAt ?? input.now,
+    lastReconciledAt: input.now,
+    source: input.decision.source ?? base.source ?? 'chief_loop',
   }
 }
 

@@ -4,6 +4,7 @@ import {
   buildFocusInitiativeDrafts,
   deriveInitiativePhase,
   findInitiativeRelatedDocuments,
+  materializeInitiativeDecision,
   reconcileInitiativeState,
   selectRelevantInitiatives,
   type InitiativeRecord,
@@ -287,5 +288,83 @@ describe('findInitiativeRelatedDocuments', () => {
 
     expect(related).toHaveLength(1)
     expect(related[0]?.title).toBe('Crane Ventures')
+  })
+})
+
+describe('materializeInitiativeDecision', () => {
+  it('creates a new initiative from an explicit chief decision', () => {
+    const initiative = materializeInitiativeDecision({
+      now: '2026-03-13T07:00:00.000Z',
+      orgId: 'org-1',
+      decision: {
+        title: 'Crane estimation',
+        goal: 'Advance the Crane estimation to signed scope.',
+        phase: 'planning',
+        status: 'active',
+        currentHypothesis: 'The estimate can close after one revised scoping pass.',
+        openQuestions: ['Does Crane want fixed bid or T&M?'],
+        knownRisks: ['Scope may expand after diligence feedback.'],
+        linkedEntityIds: ['entity-crane'],
+        linkedCommitmentIds: ['commitment-1'],
+        latestSummary: 'Crane needs a tighter estimation package before moving forward.',
+        nextMilestone: 'Send revised estimate',
+      },
+    })
+
+    expect(initiative.title).toBe('Crane estimation')
+    expect(initiative.goal).toContain('signed scope')
+    expect(initiative.phase).toBe('planning')
+    expect(initiative.linkedEntityIds).toEqual(['entity-crane'])
+    expect(initiative.linkedCommitmentIds).toEqual(['commitment-1'])
+    expect(initiative.nextReviewAt).toBeTruthy()
+  })
+
+  it('updates an existing initiative while preserving prior linked state', () => {
+    const initiative = materializeInitiativeDecision({
+      now: '2026-03-13T07:00:00.000Z',
+      orgId: 'org-1',
+      existing: {
+        id: 'initiative-1',
+        orgId: 'org-1',
+        title: 'Crane estimation',
+        goal: 'Advance Crane estimation work',
+        scope: null,
+        status: 'active',
+        phase: 'planning',
+        successCriteria: ['Estimate sent'],
+        currentHypothesis: null,
+        openQuestions: ['Who signs off on commercials?'],
+        knownRisks: [],
+        dependencies: [],
+        stakeholders: ['Crane Ventures'],
+        linkedEntityIds: ['entity-crane'],
+        linkedClaimIds: ['claim-1'],
+        linkedCommitmentIds: ['commitment-1'],
+        linkedDecisionThreadIds: [],
+        latestSummary: 'Crane scoping is active.',
+        nextMilestone: 'Send estimate',
+        nextReviewAt: '2026-03-13T09:00:00.000Z',
+        lastSignalAt: '2026-03-13T06:00:00.000Z',
+        lastReconciledAt: '2026-03-13T06:30:00.000Z',
+        source: 'chief_loop',
+        updatedAt: null,
+      },
+      decision: {
+        title: 'Crane estimation',
+        phase: 'execution',
+        knownRisks: ['Screen-sharing issues slowed the last call.'],
+        linkedDecisionThreadIds: ['decision-1'],
+        latestSummary: 'The estimate is moving, but execution depends on a clean walkthrough.',
+        nextMilestone: 'Run Zoom workflow review',
+      },
+    })
+
+    expect(initiative.id).toBe('initiative-1')
+    expect(initiative.phase).toBe('execution')
+    expect(initiative.linkedClaimIds).toEqual(['claim-1'])
+    expect(initiative.linkedDecisionThreadIds).toEqual(['decision-1'])
+    expect(initiative.openQuestions).toContain('Who signs off on commercials?')
+    expect(initiative.knownRisks).toContain('Screen-sharing issues slowed the last call.')
+    expect(initiative.nextMilestone).toBe('Run Zoom workflow review')
   })
 })

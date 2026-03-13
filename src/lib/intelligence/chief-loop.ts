@@ -80,9 +80,11 @@ import {
 } from '@/lib/intelligence/focus-profile'
 import {
   buildFocusInitiativeDrafts,
+  materializeInitiativeDecision,
   reconcileInitiativeState,
   selectRelevantInitiatives,
   type InitiativeDraft,
+  type InitiativeDecisionInput,
   type InitiativeRecord,
 } from '@/lib/intelligence/initiative-state'
 import {
@@ -1380,6 +1382,84 @@ function mapInitiativeRow(row: Record<string, unknown>): InitiativeRecord {
   }
 }
 
+function buildInitiativeRow(orgId: string, initiative: InitiativeRecord, nowIso: string) {
+  return {
+    org_id: orgId,
+    title: initiative.title,
+    goal: initiative.goal,
+    scope: initiative.scope,
+    status: initiative.status,
+    phase: initiative.phase,
+    success_criteria: initiative.successCriteria,
+    current_hypothesis: initiative.currentHypothesis,
+    open_questions: initiative.openQuestions,
+    known_risks: initiative.knownRisks,
+    dependencies: initiative.dependencies,
+    stakeholders: initiative.stakeholders,
+    linked_entity_ids: initiative.linkedEntityIds,
+    linked_claim_ids: initiative.linkedClaimIds,
+    linked_commitment_ids: initiative.linkedCommitmentIds,
+    linked_decision_thread_ids: initiative.linkedDecisionThreadIds,
+    latest_summary: initiative.latestSummary,
+    next_milestone: initiative.nextMilestone,
+    next_review_at: initiative.nextReviewAt,
+    last_signal_at: initiative.lastSignalAt,
+    last_reconciled_at: initiative.lastReconciledAt ?? nowIso,
+    source: initiative.source ?? 'chief_loop',
+  }
+}
+
+async function applyChiefInitiativeDecision(input: {
+  supabase: SupabaseClient
+  orgId: string
+  nowIso: string
+  decision: InitiativeDecisionInput & { initiativeId?: string | null }
+}): Promise<InitiativeRecord | null> {
+  const { supabase, orgId, nowIso, decision } = input
+
+  let existingRow: Record<string, unknown> | null = null
+
+  if (decision.initiativeId) {
+    const { data } = await supabase
+      .from('initiatives')
+      .select('*')
+      .eq('org_id', orgId)
+      .eq('id', decision.initiativeId)
+      .maybeSingle()
+    existingRow = (data as Record<string, unknown> | null) ?? null
+  }
+
+  if (!existingRow) {
+    const { data } = await supabase
+      .from('initiatives')
+      .select('*')
+      .eq('org_id', orgId)
+      .ilike('title', decision.title)
+      .maybeSingle()
+    existingRow = (data as Record<string, unknown> | null) ?? null
+  }
+
+  const initiative = materializeInitiativeDecision({
+    now: nowIso,
+    orgId,
+    decision,
+    existing: existingRow ? mapInitiativeRow(existingRow) : null,
+  })
+
+  await supabase
+    .from('initiatives')
+    .upsert(buildInitiativeRow(orgId, initiative, nowIso), { onConflict: 'org_id,title' })
+
+  const { data } = await supabase
+    .from('initiatives')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('title', initiative.title)
+    .maybeSingle()
+
+  return data ? mapInitiativeRow(data as Record<string, unknown>) : initiative
+}
+
 async function upsertInitiativesFromChiefContext(
   orgId: string,
   gatherResult: GatherResult,
@@ -1446,30 +1526,7 @@ async function upsertInitiativesFromChiefContext(
     return existing
   }
 
-  const rows = reconciled.map(initiative => ({
-    org_id: orgId,
-    title: initiative.title,
-    goal: initiative.goal,
-    scope: initiative.scope,
-    status: initiative.status,
-    phase: initiative.phase,
-    success_criteria: initiative.successCriteria,
-    current_hypothesis: initiative.currentHypothesis,
-    open_questions: initiative.openQuestions,
-    known_risks: initiative.knownRisks,
-    dependencies: initiative.dependencies,
-    stakeholders: initiative.stakeholders,
-    linked_entity_ids: initiative.linkedEntityIds,
-    linked_claim_ids: initiative.linkedClaimIds,
-    linked_commitment_ids: initiative.linkedCommitmentIds,
-    linked_decision_thread_ids: initiative.linkedDecisionThreadIds,
-    latest_summary: initiative.latestSummary,
-    next_milestone: initiative.nextMilestone,
-    next_review_at: initiative.nextReviewAt,
-    last_signal_at: initiative.lastSignalAt,
-    last_reconciled_at: initiative.lastReconciledAt ?? nowIso,
-    source: initiative.source ?? 'chief_loop',
-  }))
+  const rows = reconciled.map(initiative => buildInitiativeRow(orgId, initiative, nowIso))
 
   await supabase
     .from('initiatives')
@@ -2377,6 +2434,73 @@ async function phaseAct(
           break
         }
 
+        case 'create_initiative':
+        case 'update_initiative': {
+          const p = decision.payload as {
+            initiativeId?: string | null
+            title: string
+            goal?: string | null
+            scope?: string | null
+            phase?: InitiativeRecord['phase'] | null
+            status?: InitiativeRecord['status'] | null
+            currentHypothesis?: string | null
+            successCriteria?: string[] | null
+            openQuestions?: string[] | null
+            knownRisks?: string[] | null
+            dependencies?: string[] | null
+            stakeholders?: string[] | null
+            linkedEntityIds?: string[] | null
+            linkedClaimIds?: string[] | null
+            linkedCommitmentIds?: string[] | null
+            linkedDecisionThreadIds?: string[] | null
+            latestSummary?: string | null
+            nextMilestone?: string | null
+            nextReviewAt?: string | null
+          }
+
+          const initiative = await applyChiefInitiativeDecision({
+            supabase,
+            orgId,
+            nowIso: new Date().toISOString(),
+            decision: {
+              initiativeId: p.initiativeId ?? null,
+              title: p.title,
+              goal: p.goal,
+              scope: p.scope,
+              phase: p.phase,
+              status: p.status,
+              currentHypothesis: p.currentHypothesis,
+              successCriteria: p.successCriteria,
+              openQuestions: p.openQuestions,
+              knownRisks: p.knownRisks,
+              dependencies: p.dependencies,
+              stakeholders: p.stakeholders,
+              linkedEntityIds: p.linkedEntityIds,
+              linkedClaimIds: p.linkedClaimIds,
+              linkedCommitmentIds: p.linkedCommitmentIds,
+              linkedDecisionThreadIds: p.linkedDecisionThreadIds,
+              latestSummary: p.latestSummary,
+              nextMilestone: p.nextMilestone,
+              nextReviewAt: p.nextReviewAt,
+              source: 'chief_loop',
+            },
+          })
+
+          await logChiefLoopEvent(supabase, orgId, leaseId, 'initiative_updated', {
+            targetType: 'initiative',
+            targetId: initiative?.id ?? p.initiativeId ?? p.title,
+            rationale: decision.rationale,
+            policyResult: 'allowed',
+            metadata: {
+              title: p.title,
+              action: decision.type === 'create_initiative' ? 'create' : 'update',
+              phase: initiative?.phase ?? p.phase,
+              status: initiative?.status ?? p.status,
+            },
+          })
+          break
+        }
+
         // ── Graph Update Decisions (NEW) ──
 
         case 'create_entity': {
@@ -2927,6 +3051,9 @@ function getEvaluateAfter(decisionType: string): Date {
       return new Date(now + 24 * 60 * 60 * 1000)    // 24 hours (check if signal reappeared)
     case 'create_outcome':
       return new Date(now + 24 * 60 * 60 * 1000)    // 24 hours
+    case 'create_initiative':
+    case 'update_initiative':
+      return new Date(now + 12 * 60 * 60 * 1000)    // 12 hours
     case 'branch_replan':
       return new Date(now + 12 * 60 * 60 * 1000)    // 12 hours
     case 'escalate_blocker':
@@ -2950,10 +3077,11 @@ async function recordDecisionOutcome(
   const targetType =
     payload.outcomeId ? 'outcome' :
     payload.stepId ? 'step' :
+    payload.initiativeId ? 'initiative' :
     payload.entityId ? 'entity' :
     payload.candidateId ? 'signal' :
     undefined
-  const targetId = (payload.outcomeId ?? payload.stepId ?? payload.entityId ?? payload.candidateId) as string | undefined
+  const targetId = (payload.outcomeId ?? payload.stepId ?? payload.initiativeId ?? payload.entityId ?? payload.candidateId) as string | undefined
 
   await supabase.from('decision_outcomes').insert({
     org_id: orgId,

@@ -6,6 +6,7 @@ import {
   findInitiativeRelatedDocuments,
   materializeInitiativeDecision,
   reconcileInitiativeState,
+  selectChangedInitiatives,
   selectRelevantInitiatives,
   type InitiativeRecord,
 } from '@/lib/intelligence/initiative-state'
@@ -366,5 +367,75 @@ describe('materializeInitiativeDecision', () => {
     expect(initiative.openQuestions).toContain('Who signs off on commercials?')
     expect(initiative.knownRisks).toContain('Screen-sharing issues slowed the last call.')
     expect(initiative.nextMilestone).toBe('Run Zoom workflow review')
+  })
+})
+
+describe('selectChangedInitiatives', () => {
+  const baseline: InitiativeRecord = {
+    id: 'initiative-1',
+    orgId: 'org-1',
+    title: 'Crane estimation',
+    goal: 'Advance the Crane estimation to signed scope.',
+    scope: null,
+    status: 'active',
+    phase: 'planning',
+    successCriteria: ['Estimate approved'],
+    currentHypothesis: 'A revised estimate will unblock diligence.',
+    openQuestions: ['Does Crane want fixed bid or T&M?'],
+    knownRisks: ['Estimate package is still incomplete.'],
+    dependencies: [],
+    stakeholders: ['Crane Ventures'],
+    linkedEntityIds: ['entity-crane'],
+    linkedClaimIds: ['claim-1'],
+    linkedCommitmentIds: ['commitment-1'],
+    linkedDecisionThreadIds: ['decision-1'],
+    latestSummary: 'Crane needs a tighter estimate package.',
+    nextMilestone: 'Send revised estimate',
+    nextReviewAt: '2026-03-13T12:00:00.000Z',
+    lastSignalAt: '2026-03-13T08:00:00.000Z',
+    lastReconciledAt: '2026-03-13T08:30:00.000Z',
+    source: 'chief_loop',
+    updatedAt: '2026-03-13T08:30:00.000Z',
+  }
+
+  it('ignores no-op reconciliation churn', () => {
+    const changed = selectChangedInitiatives({
+      previous: [baseline],
+      next: [
+        {
+          ...baseline,
+          lastReconciledAt: '2026-03-13T09:00:00.000Z',
+          updatedAt: '2026-03-13T09:00:00.000Z',
+        },
+      ],
+    })
+
+    expect(changed).toEqual([])
+  })
+
+  it('returns materially changed and newly created initiatives', () => {
+    const changed = selectChangedInitiatives({
+      previous: [baseline],
+      next: [
+        {
+          ...baseline,
+          phase: 'execution',
+          latestSummary: 'Crane is now executing against the revised estimate.',
+        },
+        {
+          ...baseline,
+          id: 'initiative-2',
+          title: 'KeyValue staffing plan',
+          goal: 'Align staffing for delivery',
+          latestSummary: 'A delivery staffing plan is now required.',
+          linkedEntityIds: ['entity-keyvalue'],
+          linkedClaimIds: [],
+          linkedCommitmentIds: [],
+          linkedDecisionThreadIds: [],
+        },
+      ],
+    })
+
+    expect(changed).toEqual(['initiative-1', 'initiative-2'])
   })
 })

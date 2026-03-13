@@ -83,6 +83,7 @@ import {
   findInitiativeRelatedDocuments,
   materializeInitiativeDecision,
   reconcileInitiativeState,
+  selectChangedInitiatives,
   selectRelevantInitiatives,
   type InitiativeDraft,
   type InitiativeDecisionInput,
@@ -92,6 +93,7 @@ import {
   buildChiefWorldModel,
   type ChiefWorldModelRecord,
 } from '@/lib/intelligence/world-model'
+import { regenerateVaultDocumentsForInitiatives } from '@/lib/evidence/store'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -359,6 +361,10 @@ export async function runChiefLoopForOrg(
       const workingMemory = buildWorkingMemory(result, thinkDecisions, gatherResult)
       await upsertWorkingMemory(supabase, orgId, workingMemory)
       const refreshedInitiatives = await upsertInitiativesFromChiefContext(orgId, gatherResult, now.toISOString())
+      const changedInitiativeIds = selectChangedInitiatives({
+        previous: gatherResult.activeInitiatives,
+        next: refreshedInitiatives,
+      })
       const worldModel = buildChiefWorldModel({
         now: now.toISOString(),
         initiatives: refreshedInitiatives,
@@ -374,9 +380,18 @@ export async function runChiefLoopForOrg(
           title: artifact.title,
           channel: artifact.channel,
         })),
+        updatedInitiativeIds: changedInitiativeIds,
         previous: gatherResult.chiefWorldModel,
       })
       await upsertChiefWorldModelState(orgId, worldModel)
+      if (changedInitiativeIds.length > 0) {
+        await regenerateVaultDocumentsForInitiatives(createUntypedAdminClient(), {
+          orgId,
+          initiatives: refreshedInitiatives,
+          changedInitiativeIds,
+          changedAt: now.toISOString(),
+        })
+      }
       // Derive carry_forward TEXT for lease audit trail (backward compat)
       carryForward = workingMemory.runningSummary.slice(0, 2000)
     } catch (error) {

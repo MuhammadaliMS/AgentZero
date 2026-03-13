@@ -49,6 +49,7 @@ describe('buildChiefWorldModel', () => {
       changedArtifacts: [
         { id: 'artifact-1', title: 'Crane <> KeyValue', channel: 'meeting' },
       ],
+      updatedInitiativeIds: ['initiative-1'],
       previous: null,
     })
 
@@ -57,5 +58,6 @@ describe('buildChiefWorldModel', () => {
     expect(worldModel.executionMemory[0]?.phase).toBe('execution')
     expect(worldModel.changedSinceLastRun.artifacts[0]?.title).toBe('Crane <> KeyValue')
     expect(worldModel.initiativePriorities[0]?.initiativeId).toBe('initiative-1')
+    expect(worldModel.changedSinceLastRun.updatedInitiativeIds).toEqual(['initiative-1'])
   })
 })

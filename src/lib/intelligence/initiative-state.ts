@@ -454,6 +454,53 @@ export function materializeInitiativeDecision(input: {
   }
 }
 
+function buildInitiativeFingerprint(initiative: InitiativeRecord): string {
+  return JSON.stringify({
+    title: initiative.title,
+    goal: initiative.goal,
+    scope: initiative.scope,
+    status: initiative.status,
+    phase: initiative.phase,
+    successCriteria: initiative.successCriteria,
+    currentHypothesis: initiative.currentHypothesis,
+    openQuestions: initiative.openQuestions,
+    knownRisks: initiative.knownRisks,
+    dependencies: initiative.dependencies,
+    stakeholders: initiative.stakeholders,
+    linkedEntityIds: initiative.linkedEntityIds,
+    linkedClaimIds: initiative.linkedClaimIds,
+    linkedCommitmentIds: initiative.linkedCommitmentIds,
+    linkedDecisionThreadIds: initiative.linkedDecisionThreadIds,
+    latestSummary: initiative.latestSummary,
+    nextMilestone: initiative.nextMilestone,
+    nextReviewAt: initiative.nextReviewAt,
+    lastSignalAt: initiative.lastSignalAt,
+    source: initiative.source,
+  })
+}
+
+export function selectChangedInitiatives(input: {
+  previous: InitiativeRecord[]
+  next: InitiativeRecord[]
+}): string[] {
+  const previousById = new Map(input.previous.map(initiative => [initiative.id, initiative]))
+  const changedIds: string[] = []
+
+  for (const initiative of input.next) {
+    const previous = previousById.get(initiative.id)
+    if (!previous) {
+      changedIds.push(initiative.id)
+      continue
+    }
+
+    if (buildInitiativeFingerprint(previous) !== buildInitiativeFingerprint(initiative)) {
+      changedIds.push(initiative.id)
+    }
+  }
+
+  return changedIds
+}
+
 export function findInitiativeRelatedDocuments(input: {
   initiative: InitiativeRecord
   documents: IntelligenceVaultEntryPoint[]

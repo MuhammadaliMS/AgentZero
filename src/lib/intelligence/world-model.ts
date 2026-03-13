@@ -60,6 +60,7 @@ export function buildChiefWorldModel(input: {
   decisionThreads: MinimalDecisionThread[]
   activeNarratives: MinimalNarrative[]
   changedArtifacts: MinimalArtifact[]
+  updatedInitiativeIds?: string[]
   previous: ChiefWorldModelRecord | null
 }): ChiefWorldModelRecord {
   const nowMs = new Date(input.now).getTime()
@@ -114,7 +115,7 @@ export function buildChiefWorldModel(input: {
     initiativePriorities,
     changedSinceLastRun: {
       artifacts: input.changedArtifacts,
-      updatedInitiativeIds: input.initiatives.map(initiative => initiative.id),
+      updatedInitiativeIds: input.updatedInitiativeIds ?? input.initiatives.map(initiative => initiative.id),
     },
     version: (input.previous?.version ?? 0) + 1,
   }

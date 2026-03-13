@@ -13,6 +13,7 @@ import type {
   VaultSection,
 } from '@/lib/evidence/types'
 import type { MutationBundle } from '@/lib/evidence/schema'
+import type { InitiativeRecord } from '@/lib/intelligence/initiative-state'
 import { selectEvidenceForEmbedding } from '@/lib/evidence/selection'
 import { selectVaultDocumentsToPrune } from '@/lib/evidence/vault-rebuild'
 import {
@@ -957,6 +958,176 @@ export async function rebuildVaultWorkspace(
   }
 }
 
+export async function regenerateVaultDocumentsForInitiatives(
+  supabase: AdminClient,
+  input: {
+    orgId: string
+    initiatives: InitiativeRecord[]
+    changedInitiativeIds: string[]
+    changedAt?: string
+  }
+): Promise<string[]> {
+  const changedInitiatives = input.initiatives.filter((initiative) =>
+    input.changedInitiativeIds.includes(initiative.id)
+  )
+  if (changedInitiatives.length === 0) return []
+
+  const affectedPaths = new Set<string>()
+  const aggregatedEvidence = new Map<string, EvidenceItem>()
+
+  for (const initiative of changedInitiatives) {
+    const claimRows = await fetchClaimsByIds(supabase, input.orgId, initiative.linkedClaimIds)
+    const commitmentRows = (await Promise.all(
+      initiative.linkedCommitmentIds.map((commitmentId) => fetchCommitmentById(supabase, input.orgId, commitmentId))
+    )).filter((row): row is Record<string, unknown> => Boolean(row))
+    const decisionThreadRows = (await Promise.all(
+      initiative.linkedDecisionThreadIds.map((decisionThreadId) => fetchDecisionThreadById(supabase, input.orgId, decisionThreadId))
+    )).filter((row): row is Record<string, unknown> => Boolean(row))
+    const evidenceItems = await fetchEvidenceForClaims(supabase, input.orgId, initiative.linkedClaimIds)
+    for (const item of evidenceItems) {
+      aggregatedEvidence.set(item.id, item)
+    }
+
+    const recentArtifacts = await fetchRecentArtifactsForInitiative(supabase, input.orgId, initiative, claimRows)
+    const initiativePath = buildNarrativeVaultPath(initiative.title, 'initiative')
+    const previousInitiativeDoc = await fetchVaultDocumentByPath(supabase, input.orgId, initiativePath)
+    const initiativeFingerprint = buildFingerprint({
+      phase: initiative.phase,
+      status: initiative.status,
+      latestSummary: initiative.latestSummary,
+      nextMilestone: initiative.nextMilestone,
+      nextReviewAt: initiative.nextReviewAt,
+      linkedClaimIds: initiative.linkedClaimIds,
+      linkedCommitmentIds: initiative.linkedCommitmentIds,
+      linkedDecisionThreadIds: initiative.linkedDecisionThreadIds,
+    })
+    const initiativeSections = shouldRegenerateInterpretation(previousInitiativeDoc, initiativeFingerprint)
+      ? await writeNarrativeAuthor({
+          title: initiative.title,
+          narrativeType: 'initiative',
+          summaryFacts: buildInitiativeSummaryFacts(initiative, commitmentRows, decisionThreadRows),
+          evidenceItems,
+          recentArtifacts,
+          previousSummary: previousInitiativeDoc?.metadata.previousSummary as string | null | undefined,
+          manualSections: previousInitiativeDoc?.manualSections,
+        })
+      : selectInterpretiveSections(previousInitiativeDoc?.sections ?? [])
+
+    const initiativeDoc = renderNarrativeDocument({
+      title: initiative.title,
+      kind: 'initiative',
+      sections: [
+        ...initiativeSections,
+        createEvidenceSection('evidence', 'Evidence', evidenceItems),
+      ],
+      linkedIds: [
+        initiative.id,
+        ...initiative.linkedEntityIds,
+        ...initiative.linkedClaimIds,
+        ...initiative.linkedCommitmentIds,
+        ...initiative.linkedDecisionThreadIds,
+      ],
+      previousManualSections: previousInitiativeDoc?.manualSections,
+      lastSourceUpdateAt: newestEvidenceTimestampLocal(evidenceItems) ?? initiative.lastSignalAt,
+    })
+    initiativeDoc.metadata.sourceFingerprint = initiativeFingerprint
+    initiativeDoc.metadata.previousSummary = summarizePreviousSections(initiativeSections)
+    await upsertVaultDocument(supabase, input.orgId, initiativeDoc)
+    affectedPaths.add(initiativeDoc.path)
+
+    const relatedEntities = await fetchEntitiesByIds(supabase, input.orgId, initiative.linkedEntityIds)
+    for (const entity of relatedEntities.filter((candidate) => ['vendor', 'customer', 'team'].includes(candidate.entityType))) {
+      const claims = await fetchClaimsForEntity(supabase, input.orgId, entity.id)
+      const commitments = await fetchCommitmentsForEntity(supabase, input.orgId, entity.id)
+      const decisionThreads = await fetchDecisionThreadsForEntity(supabase, input.orgId, entity.id)
+      const entityEvidence = await fetchEvidenceForClaims(
+        supabase,
+        input.orgId,
+        claims.map((claim) => stringFromUnknown(claim.id)).filter(Boolean)
+      )
+      const narrativePath = buildNarrativeVaultPath(entity.name, 'account')
+      const previousNarrativeDoc = await fetchVaultDocumentByPath(supabase, input.orgId, narrativePath)
+      const sections = await writeNarrativeAuthor({
+        title: entity.name,
+        narrativeType: 'account',
+        summaryFacts: [
+          `${entity.name} is represented as a ${entity.entityType}.`,
+          commitments.length > 0 ? `${commitments.length} linked commitments are active.` : 'No linked commitments are currently active.',
+          decisionThreads.length > 0 ? `${decisionThreads.length} decision threads are linked.` : 'No linked decision threads are linked yet.',
+          `This account is linked to initiative "${initiative.title}".`,
+        ],
+        evidenceItems: entityEvidence,
+        recentArtifacts: await fetchRecentArtifactsForEntity(supabase, input.orgId, entity.id),
+        previousSummary: previousNarrativeDoc?.metadata.previousSummary as string | null | undefined,
+        manualSections: previousNarrativeDoc?.manualSections,
+      })
+      if (sections.length === 0) continue
+
+      const narrativeDoc = renderNarrativeDocument({
+        title: entity.name,
+        kind: 'account',
+        sections: [
+          ...sections,
+          createEvidenceSection('evidence', 'Evidence', entityEvidence),
+        ],
+        linkedIds: [entity.id, initiative.id],
+        previousManualSections: previousNarrativeDoc?.manualSections,
+        lastSourceUpdateAt: newestEvidenceTimestampLocal(entityEvidence),
+      })
+      await upsertVaultDocument(supabase, input.orgId, narrativeDoc)
+      affectedPaths.add(narrativeDoc.path)
+    }
+  }
+
+  const briefDateKey = (input.changedAt ?? new Date().toISOString()).slice(0, 10)
+  const briefPath = buildBriefVaultPath({ dateKey: briefDateKey })
+  const previousBriefDoc = await fetchVaultDocumentByPath(supabase, input.orgId, briefPath)
+  const recentVaultDocs = await fetchRecentVaultDocuments(supabase, input.orgId, 8)
+  const briefSections = await writeNarrativeAuthor({
+    title: `Daily Brief ${briefDateKey}`,
+    narrativeType: 'brief',
+    summaryFacts: [
+      `${changedInitiatives.length} initiatives changed in the latest chief loop run.`,
+      ...changedInitiatives.slice(0, 6).map((initiative) =>
+        `${initiative.title} is ${initiative.status} in ${initiative.phase}${initiative.nextMilestone ? ` and moving toward "${initiative.nextMilestone}"` : ''}.`
+      ),
+    ],
+    evidenceItems: [...aggregatedEvidence.values()].slice(0, 12),
+    recentArtifacts: recentVaultDocs.map((doc) => ({
+      path: doc.path,
+      title: doc.title,
+      documentType: doc.documentType,
+      updatedAt: doc.lastSourceUpdateAt ?? doc.metadata.updatedAt ?? null,
+    })),
+    previousSummary: previousBriefDoc?.metadata.previousSummary as string | null | undefined,
+    manualSections: previousBriefDoc?.manualSections,
+  })
+  if (briefSections.length > 0) {
+    const briefDoc = renderBriefDocument({
+      title: `Daily Brief ${briefDateKey}`,
+      dateKey: briefDateKey,
+      sections: [
+        ...briefSections,
+        createSection({
+          id: 'initiative-changes',
+          title: 'Initiatives changed',
+          kind: 'links',
+          content: changedInitiatives
+            .map((initiative) => `- ${initiative.title} [${initiative.phase}/${initiative.status}]`)
+            .join('\n'),
+        }),
+      ],
+      linkedIds: changedInitiatives.map((initiative) => initiative.id),
+      previousManualSections: previousBriefDoc?.manualSections,
+      lastSourceUpdateAt: input.changedAt ?? newestEvidenceTimestampLocal([...aggregatedEvidence.values()]),
+    })
+    await upsertVaultDocument(supabase, input.orgId, briefDoc)
+    affectedPaths.add(briefDoc.path)
+  }
+
+  return [...affectedPaths]
+}
+
 export async function fetchEvidenceItemsByIds(
   supabase: AdminClient,
   orgId: string,
@@ -1379,6 +1550,59 @@ async function fetchRecentArtifactsForEntity(
     .limit(8)
 
   return (data ?? []) as Array<Record<string, unknown>>
+}
+
+async function fetchRecentArtifactsForInitiative(
+  supabase: AdminClient,
+  orgId: string,
+  initiative: InitiativeRecord,
+  claimRows?: Array<Record<string, unknown>>
+): Promise<Array<Record<string, unknown>>> {
+  const claims = claimRows ?? await fetchClaimsByIds(supabase, orgId, initiative.linkedClaimIds)
+  const artifactIds = new Set(
+    claims
+      .map((claim) => stringFromUnknown(claim.artifact_id))
+      .filter(Boolean)
+  )
+
+  const relatedArtifacts = await Promise.all(
+    initiative.linkedEntityIds.map((entityId) => fetchRecentArtifactsForEntity(supabase, orgId, entityId))
+  )
+  for (const artifact of relatedArtifacts.flat()) {
+    const id = stringFromUnknown(artifact.id)
+    if (id) artifactIds.add(id)
+  }
+
+  if (artifactIds.size === 0) return []
+
+  const { data } = await supabase
+    .from('source_artifacts')
+    .select('id, title, channel, started_at, updated_at')
+    .eq('org_id', orgId)
+    .in('id', [...artifactIds])
+    .order('started_at', { ascending: false })
+    .limit(8)
+
+  return (data ?? []) as Array<Record<string, unknown>>
+}
+
+function buildInitiativeSummaryFacts(
+  initiative: InitiativeRecord,
+  commitments: Array<Record<string, unknown>>,
+  decisionThreads: Array<Record<string, unknown>>
+): string[] {
+  return [
+    `${initiative.title} is currently ${initiative.status} in the ${initiative.phase} phase.`,
+    `Goal: ${initiative.goal}`,
+    initiative.latestSummary ?? 'No summary has been captured yet.',
+    initiative.nextMilestone ? `Next milestone: ${initiative.nextMilestone}.` : 'No next milestone is set yet.',
+    commitments.length > 0
+      ? `${commitments.length} linked commitments are currently attached to this initiative.`
+      : 'No linked commitments are currently attached to this initiative.',
+    decisionThreads.length > 0
+      ? `${decisionThreads.length} decision threads are currently linked.`
+      : 'No decision threads are currently linked.',
+  ]
 }
 
 export function sanitizeMemoryCategory(category: string): string {

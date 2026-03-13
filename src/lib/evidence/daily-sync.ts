@@ -3,6 +3,7 @@ import { WebClient } from '@slack/web-api'
 import { enqueueEvidenceJob, triggerEvidenceJobProcessor } from '@/lib/evidence/jobs'
 import { isRelevantEmailMessage, isRelevantSlackConversation } from '@/lib/evidence/sync-filters'
 import { isFeatureEnabled } from '@/lib/evidence/flags'
+import { extractChiefFocusProfile, type ChiefFocusProfile } from '@/lib/intelligence/focus-profile'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { TokenManager } from '@/lib/integrations/token-manager'
 import { logCronRun, type ExecutionStep } from '@/lib/observability/cron-logger'
@@ -121,6 +122,7 @@ async function syncOrgSources(
   let slackArtifacts = 0
   let skippedEmails = 0
   let skippedSlack = 0
+  const focusProfile = extractChiefFocusProfile(orgSettings)
 
   const [gmailTokens, outlookTokens, slackTokens] = await Promise.all([
     TokenManager.getTokens(orgId, 'gmail'),
@@ -130,14 +132,14 @@ async function syncOrgSources(
 
   if (gmailTokens || outlookTokens) {
     const emailResult = gmailTokens
-      ? await syncGmail(admin, orgId, gmailTokens.access_token)
-      : await syncOutlook(admin, orgId, outlookTokens!.access_token)
+      ? await syncGmail(admin, orgId, gmailTokens.access_token, focusProfile)
+      : await syncOutlook(admin, orgId, outlookTokens!.access_token, focusProfile)
     emailArtifacts += emailResult.synced
     skippedEmails += emailResult.skipped
   }
 
   if (slackTokens) {
-    const slackResult = await syncSlack(admin, orgId, slackTokens.user_access_token || slackTokens.access_token)
+    const slackResult = await syncSlack(admin, orgId, slackTokens.user_access_token || slackTokens.access_token, focusProfile)
     slackArtifacts += slackResult.synced
     skippedSlack += slackResult.skipped
   }
@@ -150,7 +152,12 @@ async function syncOrgSources(
   }
 }
 
-async function syncGmail(admin: AdminClient, orgId: string, accessToken: string): Promise<{ synced: number; skipped: number }> {
+async function syncGmail(
+  admin: AdminClient,
+  orgId: string,
+  accessToken: string,
+  focusProfile: ChiefFocusProfile
+): Promise<{ synced: number; skipped: number }> {
   const query = [
     `newer_than:${Math.max(DAYS_BACK, 1)}d`,
     'in:inbox',
@@ -195,7 +202,7 @@ async function syncGmail(admin: AdminClient, orgId: string, accessToken: string)
       body: message.body,
     }))
 
-    if (!flattened.some(isRelevantEmailMessage)) {
+    if (!flattened.some(message => isRelevantEmailMessage(message, focusProfile))) {
       skipped++
       continue
     }
@@ -231,7 +238,12 @@ async function syncGmail(admin: AdminClient, orgId: string, accessToken: string)
   return { synced, skipped }
 }
 
-async function syncOutlook(admin: AdminClient, orgId: string, accessToken: string): Promise<{ synced: number; skipped: number }> {
+async function syncOutlook(
+  admin: AdminClient,
+  orgId: string,
+  accessToken: string,
+  focusProfile: ChiefFocusProfile
+): Promise<{ synced: number; skipped: number }> {
   const since = new Date(Date.now() - DAYS_BACK * 24 * 60 * 60 * 1000).toISOString()
   const url = [
     'https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages',
@@ -276,7 +288,7 @@ async function syncOutlook(admin: AdminClient, orgId: string, accessToken: strin
       body: extractOutlookBody(message),
     }))
 
-    if (!normalized.some(isRelevantEmailMessage)) {
+    if (!normalized.some(message => isRelevantEmailMessage(message, focusProfile))) {
       skipped++
       continue
     }
@@ -322,7 +334,12 @@ async function syncOutlook(admin: AdminClient, orgId: string, accessToken: strin
   return { synced, skipped }
 }
 
-async function syncSlack(admin: AdminClient, orgId: string, accessToken: string): Promise<{ synced: number; skipped: number }> {
+async function syncSlack(
+  admin: AdminClient,
+  orgId: string,
+  accessToken: string,
+  focusProfile: ChiefFocusProfile
+): Promise<{ synced: number; skipped: number }> {
   const client = new WebClient(accessToken)
   const authInfo = await client.auth.test()
   const userId = authInfo.user_id
@@ -347,7 +364,7 @@ async function syncSlack(admin: AdminClient, orgId: string, accessToken: string)
       channelType: candidate.channelType,
       participantEmails: [],
       messages: messages.map(message => ({ user: message.userName || 'unknown', text: message.text })),
-    })) {
+    }, focusProfile)) {
       skipped++
       continue
     }
@@ -383,6 +400,15 @@ async function syncSlack(admin: AdminClient, orgId: string, accessToken: string)
     })
     const messages = await hydrateSlackMessages(client, history.messages ?? [])
     if (messages.length === 0) {
+      skipped++
+      continue
+    }
+
+    if (!isRelevantSlackConversation({
+      channelType: candidate.channelType,
+      participantEmails: [],
+      messages: messages.map(message => ({ user: message.userName || 'unknown', text: message.text })),
+    }, focusProfile)) {
       skipped++
       continue
     }

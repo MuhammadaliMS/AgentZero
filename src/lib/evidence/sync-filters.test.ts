@@ -4,6 +4,7 @@ import {
   isRelevantEmailMessage,
   isRelevantSlackConversation,
 } from '@/lib/evidence/sync-filters'
+import { extractChiefFocusProfile } from '@/lib/intelligence/focus-profile'
 import {
   normalizeEmailArtifact,
   normalizeSlackArtifact,
@@ -29,6 +30,21 @@ describe('isRelevantEmailMessage', () => {
       body: 'Need this before the partner discussion.',
     })).toBe(true)
   })
+
+  it('suppresses deprioritized-only project email when a focus profile exists', () => {
+    const focusProfile = extractChiefFocusProfile({
+      chief_focus_topics: ['Crane'],
+      chief_deprioritized_topics: ['Axari'],
+    })
+
+    expect(isRelevantEmailMessage({
+      subject: 'Axari sprint planning',
+      from: 'team@axari.com',
+      labels: ['Inbox', 'Important'],
+      snippet: 'Roadmap discussion for the internal product sprint',
+      body: 'Please review the Axari backlog.',
+    }, focusProfile)).toBe(false)
+  })
 })
 
 describe('isRelevantSlackConversation', () => {
@@ -49,6 +65,21 @@ describe('isRelevantSlackConversation', () => {
         { user: 'Roy', text: 'Please include the requirements doc' },
       ],
     })).toBe(true)
+  })
+
+  it('suppresses deprioritized-only slack chatter when a focus profile exists', () => {
+    const focusProfile = extractChiefFocusProfile({
+      chief_focus_topics: ['Crane'],
+      chief_deprioritized_topics: ['Axari'],
+    })
+
+    expect(isRelevantSlackConversation({
+      channelType: 'public',
+      participantEmails: [],
+      messages: [
+        { user: 'you', text: 'Axari sprint review moved to 4 PM' },
+      ],
+    }, focusProfile)).toBe(false)
   })
 })
 

@@ -73,6 +73,11 @@ import type { ChiefAnalystInput, ChiefDecision } from '@/lib/agent/openai/chief-
 
 // Risk tier engine (Feature 8)
 import { computeEffectiveRisk, getRiskTier } from '@/lib/intelligence/risk-tier'
+import {
+  applyChiefFocusToItems,
+  extractChiefFocusProfile,
+  type ChiefFocusProfile,
+} from '@/lib/intelligence/focus-profile'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -443,6 +448,7 @@ interface GatherResult {
   connectedIntegrations: string[]
   proceduralMemories: Array<{ id: string; triggerPattern: string; successfulApproach: string; successRate: number }>
   workingMemory: WorkingMemory | null
+  focusProfile: ChiefFocusProfile
   // Feature 7: Decision accuracy stats (last 30 days)
   decisionAccuracy: Record<string, { avg: number; count: number }> | null
 }
@@ -471,6 +477,7 @@ async function phaseGather(
     connectedIntegrations: [],
     proceduralMemories: [],
     workingMemory: null,
+    focusProfile: extractChiefFocusProfile(null),
     decisionAccuracy: null,
   }
 
@@ -495,8 +502,8 @@ async function phaseGather(
       _evalCount,
     ] = await Promise.all([
       // Org name
-      supabase.from('organizations').select('name').eq('id', orgId).single()
-        .then(r => r.data as { name: string } | null),
+      supabase.from('organizations').select('name, settings').eq('id', orgId).single()
+        .then(r => r.data as { name: string; settings?: Record<string, unknown> | null } | null),
 
       // Active outcomes with runs + steps
       fetchActiveOutcomes(supabase, orgId),
@@ -611,6 +618,7 @@ async function phaseGather(
     ])
 
     r.orgName = orgData?.name ?? 'Unknown'
+    r.focusProfile = extractChiefFocusProfile((orgData?.settings as Record<string, unknown> | null | undefined) ?? null)
     r.activeOutcomes = outcomes
     r.recentEmails = emails
     r.recentSlackMessages = slackMessages
@@ -671,6 +679,60 @@ async function phaseGather(
       confidence: m.confidence ?? 0.8,
       createdAt: m.created_at,
     }))
+
+    r.activeOutcomes = applyChiefFocusToItems(
+      r.activeOutcomes,
+      outcome => `${outcome.title} ${outcome.description ?? ''}`,
+      r.focusProfile
+    ).items
+
+    r.recentEmails = applyChiefFocusToItems(
+      r.recentEmails,
+      email => `${email.subject} ${email.from} ${email.snippet}`,
+      r.focusProfile
+    ).items
+
+    r.recentSlackMessages = applyChiefFocusToItems(
+      r.recentSlackMessages,
+      message => `${message.channel} ${message.from} ${message.text}`,
+      r.focusProfile
+    ).items
+
+    r.todayEvents = applyChiefFocusToItems(
+      r.todayEvents,
+      event => event.summary,
+      r.focusProfile
+    ).items
+
+    r.recentInsights = applyChiefFocusToItems(
+      r.recentInsights,
+      insight => `${insight.summary} ${insight.category} ${insight.insightType}`,
+      r.focusProfile
+    ).items
+
+    r.recentFindings = applyChiefFocusToItems(
+      r.recentFindings,
+      finding => `${finding.title} ${finding.description} ${finding.type}`,
+      r.focusProfile
+    ).items
+
+    r.topEntities = applyChiefFocusToItems(
+      r.topEntities,
+      entity => `${entity.name} ${entity.description ?? ''} ${entity.entityType}`,
+      r.focusProfile
+    ).items
+
+    r.recentRelationships = applyChiefFocusToItems(
+      r.recentRelationships,
+      relationship => `${relationship.sourceEntityName} ${relationship.relationshipType} ${relationship.targetEntityName}`,
+      r.focusProfile
+    ).items
+
+    r.recentMemories = applyChiefFocusToItems(
+      r.recentMemories,
+      memory => `${memory.subject} ${memory.content} ${memory.category}`,
+      r.focusProfile
+    ).items
 
     r.totalSignals = r.recentEmails.length + r.recentSlackMessages.length +
       r.recentInsights.length + r.recentFindings.length + r.todayEvents.length
@@ -1176,6 +1238,7 @@ async function phaseThink(
       recentMemories: gather.recentMemories,
       workerViews: gather.workerViews ?? emptyWorkerViews,
       connectedIntegrations: gather.connectedIntegrations,
+      focusProfile: gather.focusProfile,
 
       // QW1: Carry-forward context from previous run
       previousCarryForward: previousCarryForward ?? undefined,
@@ -2554,4 +2617,3 @@ function estimateCost(inputTokens: number, outputTokens: number): number {
   // MiniMax M2.5 pricing via OpenRouter (approximate)
   return (inputTokens * 0.000002 + outputTokens * 0.000008)
 }
-

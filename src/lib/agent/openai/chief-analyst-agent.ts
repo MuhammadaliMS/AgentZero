@@ -17,6 +17,7 @@ import { TokenManager } from '@/lib/integrations/token-manager'
 import { generateEmbedding } from '@/lib/openai/client'
 import { WebClient } from '@slack/web-api'
 import type { WorkerViews } from '@/lib/intelligence/brief-synthesizer'
+import type { ChiefFocusProfile } from '@/lib/intelligence/focus-profile'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -135,6 +136,9 @@ export interface ChiefAnalystInput {
 
   // Decision accuracy (Feature 7) — per-type accuracy stats from last 30 days
   decisionAccuracy?: Record<string, { avg: number; count: number }>
+
+  // User-directed focus override for current priorities
+  focusProfile?: ChiefFocusProfile
 }
 
 /** Decisions the agent can make, collected from tool calls */
@@ -1008,6 +1012,15 @@ Current time: ${input.currentTime} (${input.timezone}). Use this to judge data f
 ## CONNECTED INTEGRATIONS
 ${input.connectedIntegrations.length > 0 ? input.connectedIntegrations.map(i => `- ${i}`).join('\n') : '- None (DB-only tools available)'}
 `)
+
+  if (input.focusProfile?.isActive) {
+    sections.push(`## CURRENT USER FOCUS
+${input.focusProfile.priorityTopics.length > 0 ? `Prioritize these areas: ${input.focusProfile.priorityTopics.join(', ')}` : ''}
+${input.focusProfile.deprioritizedTopics.length > 0 ? `Deprioritize these areas unless they directly affect current focused work: ${input.focusProfile.deprioritizedTopics.join(', ')}` : ''}
+${input.focusProfile.instructions ? `Additional guidance: ${input.focusProfile.instructions}` : ''}
+
+Treat deprioritized work as background noise unless it creates urgent risk, directly blocks focused work, or requires explicit offboarding/cleanup.`)
+  }
 
   // QW1: Carry-forward context from previous run
   if (input.previousCarryForward) {

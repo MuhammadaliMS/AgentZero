@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
@@ -201,6 +202,9 @@ export default function SettingsPage() {
   const [eodTime, setEodTime] = useState('17:00')
   const [showThinking, setShowThinking] = useState(true)
   const [weeklyBriefDay, setWeeklyBriefDay] = useState('monday')
+  const [focusTopics, setFocusTopics] = useState('')
+  const [deprioritizedTopics, setDeprioritizedTopics] = useState('')
+  const [focusInstructions, setFocusInstructions] = useState('')
 
   // Meeting bot config state
   const [botEnabled, setBotEnabled] = useState(false)
@@ -238,7 +242,11 @@ export default function SettingsPage() {
       const { data: orgData } = await supabase.from('organizations').select('*').eq('id', p.org_id).single()
       if (orgData) {
         const o = orgData as Organization
-        setOrg({ name: o.name || '', domain: o.domain || '', settings: (o.settings || {}) as Record<string, unknown> })
+        const orgSettings = (o.settings || {}) as Record<string, unknown>
+        setOrg({ name: o.name || '', domain: o.domain || '', settings: orgSettings })
+        setFocusTopics(Array.isArray(orgSettings.chief_focus_topics) ? orgSettings.chief_focus_topics.join('\n') : '')
+        setDeprioritizedTopics(Array.isArray(orgSettings.chief_deprioritized_topics) ? orgSettings.chief_deprioritized_topics.join('\n') : '')
+        setFocusInstructions((orgSettings.chief_focus_instructions as string) || '')
       }
 
       const { data: botConfig } = await (supabase as any).from('meeting_bot_config').select('*').eq('org_id', p.org_id).single()
@@ -291,8 +299,14 @@ export default function SettingsPage() {
     setSavingOrg(true)
     try {
       if (!orgId) return
+      const updatedSettings = {
+        ...org.settings,
+        chief_focus_topics: focusTopics.split('\n').map((value) => value.trim()).filter(Boolean),
+        chief_deprioritized_topics: deprioritizedTopics.split('\n').map((value) => value.trim()).filter(Boolean),
+        chief_focus_instructions: focusInstructions.trim() || null,
+      }
       const { error } = await supabase.from('organizations').update({
-        name: org.name, domain: org.domain || null,
+        name: org.name, domain: org.domain || null, settings: updatedSettings,
       }).eq('id', orgId)
       if (error) throw error
       toast.success('Organization settings saved')
@@ -511,7 +525,7 @@ export default function SettingsPage() {
 
         {/* ── Organization ── */}
         <Section icon={Building2} title="Organization" description="Manage your organization settings">
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="org-name">Organization Name</Label>
@@ -529,6 +543,54 @@ export default function SettingsPage() {
                   value={org.domain}
                   onChange={(e) => setOrg((o) => ({ ...o, domain: e.target.value }))}
                   placeholder="acme.com"
+                />
+              </div>
+            </div>
+
+            <Divider />
+
+            <div className="space-y-3">
+              <div>
+                <p className="text-sm font-medium">Chief Focus</p>
+                <p className="text-xs text-muted-foreground">
+                  Tell the Chief what to actively optimize for, and what to keep in the background.
+                </p>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="focus-topics">Current Focus Topics</Label>
+                  <Textarea
+                    id="focus-topics"
+                    value={focusTopics}
+                    onChange={(e) => setFocusTopics(e.target.value)}
+                    placeholder={'Crane Ventures\nKeyValue estimation\nClient delivery'}
+                    className="min-h-[120px]"
+                  />
+                  <p className="text-xs text-muted-foreground">One topic, account, or project per line.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="deprioritized-topics">Deprioritized Topics</Label>
+                  <Textarea
+                    id="deprioritized-topics"
+                    value={deprioritizedTopics}
+                    onChange={(e) => setDeprioritizedTopics(e.target.value)}
+                    placeholder={'Axari\nAI Spotlight\nInternal product'}
+                    className="min-h-[120px]"
+                  />
+                  <p className="text-xs text-muted-foreground">These signals are muted unless they are urgent or directly block focused work.</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="focus-instructions">Additional Guidance</Label>
+                <Textarea
+                  id="focus-instructions"
+                  value={focusInstructions}
+                  onChange={(e) => setFocusInstructions(e.target.value)}
+                  placeholder="I am no longer actively working on Axari. Keep it in the background unless it becomes urgent or blocks Crane work."
+                  className="min-h-[100px]"
                 />
               </div>
             </div>

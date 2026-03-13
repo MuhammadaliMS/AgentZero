@@ -1,3 +1,5 @@
+import { matchesChiefFocus, type ChiefFocusProfile } from '@/lib/intelligence/focus-profile'
+
 const NEWSLETTER_PATTERNS = [
   'unsubscribe',
   'manage preferences',
@@ -41,7 +43,7 @@ interface SlackConversationCandidate {
   messages: Array<{ user: string; text: string }>
 }
 
-export function isRelevantEmailMessage(email: EmailCandidate): boolean {
+export function isRelevantEmailMessage(email: EmailCandidate, focusProfile?: ChiefFocusProfile): boolean {
   const labels = email.labels.map(label => label.toLowerCase())
   if (labels.some(label => ['promotions', 'social', 'forums', 'spam', 'trash'].includes(label))) {
     return false
@@ -57,6 +59,10 @@ export function isRelevantEmailMessage(email: EmailCandidate): boolean {
     return false
   }
 
+  if (focusProfile?.isActive && matchesChiefFocus(haystack, focusProfile).suppress) {
+    return false
+  }
+
   if (WORK_KEYWORDS.some(keyword => haystack.includes(keyword))) {
     return true
   }
@@ -64,11 +70,16 @@ export function isRelevantEmailMessage(email: EmailCandidate): boolean {
   return labels.includes('important') || labels.includes('inbox') || labels.includes('unread')
 }
 
-export function isRelevantSlackConversation(conversation: SlackConversationCandidate): boolean {
+export function isRelevantSlackConversation(conversation: SlackConversationCandidate, focusProfile?: ChiefFocusProfile): boolean {
+  const haystack = conversation.messages.map(message => message.text).join(' ').toLowerCase()
+
+  if (focusProfile?.isActive && matchesChiefFocus(haystack, focusProfile).suppress) {
+    return false
+  }
+
   if (conversation.channelType === 'dm' || conversation.channelType === 'group_dm') {
     return true
   }
 
-  const haystack = conversation.messages.map(message => message.text).join(' ').toLowerCase()
   return WORK_KEYWORDS.some(keyword => haystack.includes(keyword))
 }

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "backfill:evidence": "tsx scripts/backfill-evidence-graph.ts"
+    "backfill:evidence": "tsx scripts/backfill-evidence-graph.ts",
+    "rebuild:vault": "tsx scripts/rebuild-vault-v2.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.59",

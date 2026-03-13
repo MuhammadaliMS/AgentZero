@@ -14,6 +14,7 @@ import type {
 } from '@/lib/evidence/types'
 import type { MutationBundle } from '@/lib/evidence/schema'
 import { selectEvidenceForEmbedding } from '@/lib/evidence/selection'
+import { selectVaultDocumentsToPrune } from '@/lib/evidence/vault-rebuild'
 import {
   summarizePreviousSections,
   writeEntitySynthesis,
@@ -69,6 +70,13 @@ export interface AppliedMutationResult {
   entitiesByRef: Map<string, string>
   commitmentsByTitle: Map<string, string>
   decisionThreadsByTitle: Map<string, string>
+}
+
+export interface VaultWorkspaceRebuildResult {
+  rebuiltPaths: string[]
+  prunedPaths: string[]
+  artifactCount: number
+  documentCount: number
 }
 
 /**
@@ -863,6 +871,92 @@ export async function regenerateVaultDocuments(
   return [...new Set(affectedPaths)]
 }
 
+/**
+ * Rebuild the Vault V2 workspace from the current canonical evidence state
+ * without rerunning source extraction.
+ */
+export async function rebuildVaultWorkspace(
+  supabase: AdminClient,
+  input: {
+    orgId: string
+    pruneMissing?: boolean
+    artifactLimit?: number
+  }
+): Promise<VaultWorkspaceRebuildResult> {
+  const rebuiltPaths = new Set<string>()
+  const pruneMissing = input.pruneMissing ?? true
+
+  let artifactQuery = supabase
+    .from('source_artifacts')
+    .select('id')
+    .eq('org_id', input.orgId)
+    .order('started_at', { ascending: false })
+
+  if (typeof input.artifactLimit === 'number' && input.artifactLimit > 0) {
+    artifactQuery = artifactQuery.limit(input.artifactLimit)
+  }
+
+  const { data: artifactRows, error: artifactError } = await artifactQuery
+  if (artifactError) {
+    throw new Error(`Failed to load source artifacts for vault rebuild: ${artifactError.message}`)
+  }
+
+  const artifactIds = ((artifactRows ?? []) as Array<Record<string, unknown>>)
+    .map(row => stringFromUnknown(row.id))
+    .filter(Boolean)
+
+  for (const artifactId of artifactIds) {
+    const artifact = await fetchArtifactById(supabase, input.orgId, artifactId)
+    if (!artifact) continue
+
+    const evidenceItems = await fetchEvidenceForArtifact(supabase, input.orgId, artifactId)
+    const claimRows = await fetchClaimsForArtifact(supabase, input.orgId, artifactId)
+    const decisionThreadRows = await fetchDecisionThreadsForArtifact(supabase, input.orgId, artifactId)
+    const commitmentRows = await fetchCommitmentsForArtifact(supabase, input.orgId, artifactId)
+    const memoryRows = await fetchMemoriesForArtifact(supabase, input.orgId, artifactId)
+
+    const entityIds = [...new Set(
+      claimRows.flatMap((row) => [
+        stringFromUnknown(row.subject_entity_id),
+        stringFromUnknown(row.object_entity_id),
+      ]).filter(Boolean)
+    )]
+
+    const affectedPaths = await regenerateVaultDocuments(supabase, {
+      orgId: input.orgId,
+      artifactId,
+      applied: {
+        artifactId,
+        evidenceItemIds: evidenceItems.map(item => item.id),
+        claimIds: claimRows.map(row => stringFromUnknown(row.id)).filter(Boolean),
+        entityIds,
+        decisionThreadIds: decisionThreadRows.map(row => stringFromUnknown(row.id)).filter(Boolean),
+        commitmentIds: commitmentRows.map(row => stringFromUnknown(row.id)).filter(Boolean),
+        memoryIds: memoryRows.map(row => stringFromUnknown(row.id)).filter(Boolean),
+        affectedVaultPaths: [],
+        entitiesByRef: new Map(),
+        commitmentsByTitle: new Map(),
+        decisionThreadsByTitle: new Map(),
+      },
+    })
+
+    for (const path of affectedPaths) {
+      rebuiltPaths.add(path)
+    }
+  }
+
+  const prunedPaths = pruneMissing
+    ? await pruneStaleVaultDocuments(supabase, input.orgId, [...rebuiltPaths])
+    : []
+
+  return {
+    rebuiltPaths: [...rebuiltPaths].sort(),
+    prunedPaths,
+    artifactCount: artifactIds.length,
+    documentCount: rebuiltPaths.size,
+  }
+}
+
 export async function fetchEvidenceItemsByIds(
   supabase: AdminClient,
   orgId: string,
@@ -877,6 +971,40 @@ export async function fetchEvidenceItemsByIds(
     .in('id', evidenceItemIds)
 
   return (data ?? []).map(mapEvidenceItem)
+}
+
+async function pruneStaleVaultDocuments(
+  supabase: AdminClient,
+  orgId: string,
+  rebuiltPaths: string[]
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('vault_documents')
+    .select('path')
+    .eq('org_id', orgId)
+
+  if (error) {
+    throw new Error(`Failed to load existing vault documents for prune: ${error.message}`)
+  }
+
+  const existingPaths = ((data ?? []) as Array<Record<string, unknown>>)
+    .map(row => stringFromUnknown(row.path))
+    .filter(Boolean)
+  const prunedPaths = selectVaultDocumentsToPrune({ existingPaths, rebuiltPaths })
+
+  if (prunedPaths.length > 0) {
+    const { error: deleteError } = await supabase
+      .from('vault_documents')
+      .delete()
+      .eq('org_id', orgId)
+      .in('path', prunedPaths)
+
+    if (deleteError) {
+      throw new Error(`Failed to prune stale vault documents: ${deleteError.message}`)
+    }
+  }
+
+  return prunedPaths
 }
 
 async function upsertVaultDocument(
@@ -1094,6 +1222,20 @@ async function fetchClaimsByIds(supabase: AdminClient, orgId: string, claimIds: 
   return (data ?? []) as Array<Record<string, unknown>>
 }
 
+async function fetchClaimsForArtifact(
+  supabase: AdminClient,
+  orgId: string,
+  artifactId: string
+): Promise<Array<Record<string, unknown>>> {
+  const { data } = await supabase
+    .from('claims')
+    .select('id, subject_entity_id, object_entity_id')
+    .eq('org_id', orgId)
+    .eq('artifact_id', artifactId)
+
+  return (data ?? []) as Array<Record<string, unknown>>
+}
+
 export async function fetchArtifactById(supabase: AdminClient, orgId: string, artifactId: string): Promise<SourceArtifact | null> {
   const { data } = await supabase
     .from('source_artifacts')
@@ -1289,6 +1431,48 @@ async function fetchDecisionThreadById(supabase: AdminClient, orgId: string, dec
     .eq('id', decisionThreadId)
     .maybeSingle()
   return data ?? null
+}
+
+async function fetchDecisionThreadsForArtifact(
+  supabase: AdminClient,
+  orgId: string,
+  artifactId: string
+): Promise<Array<Record<string, unknown>>> {
+  const { data } = await supabase
+    .from('decision_threads')
+    .select('id')
+    .eq('org_id', orgId)
+    .or(`first_artifact_id.eq.${artifactId},last_artifact_id.eq.${artifactId}`)
+
+  return (data ?? []) as Array<Record<string, unknown>>
+}
+
+async function fetchCommitmentsForArtifact(
+  supabase: AdminClient,
+  orgId: string,
+  artifactId: string
+): Promise<Array<Record<string, unknown>>> {
+  const { data } = await supabase
+    .from('commitments')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('source_ref', artifactId)
+
+  return (data ?? []) as Array<Record<string, unknown>>
+}
+
+async function fetchMemoriesForArtifact(
+  supabase: AdminClient,
+  orgId: string,
+  artifactId: string
+): Promise<Array<Record<string, unknown>>> {
+  const { data } = await supabase
+    .from('memory')
+    .select('id')
+    .eq('org_id', orgId)
+    .contains('source_artifact_ids', [artifactId])
+
+  return (data ?? []) as Array<Record<string, unknown>>
 }
 
 async function findExistingCommitment(supabase: AdminClient, orgId: string, title: string): Promise<Record<string, unknown> | null> {

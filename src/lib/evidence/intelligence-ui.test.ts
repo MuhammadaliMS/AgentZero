@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildIntelligenceNowSummary,
   describeInitiativeState,
   dedupeEntryPoints,
   explainInitiativePriority,
@@ -12,7 +13,9 @@ import {
   prioritizeInitiatives,
   summarizeInitiativeManualContext,
   summarizeArtifactChannels,
+  type ChiefOperationalMemoryLike,
   type IntelligenceInitiativeEntry,
+  type IntelligenceNowSummary,
   type IntelligenceVaultEntryPoint,
   type IntelligenceVaultTreeNode,
 } from '@/lib/evidence/intelligence-ui'
@@ -320,5 +323,123 @@ describe('summarizeInitiativeManualContext', () => {
       'Need a cleaner screen-sharing flow.',
       'Commercials need sign-off.',
     ])
+  })
+})
+
+describe('buildIntelligenceNowSummary', () => {
+  const initiatives: IntelligenceInitiativeEntry[] = [
+    {
+      id: 'crane',
+      title: 'Crane estimation',
+      status: 'blocked',
+      phase: 'execution',
+      nextMilestone: 'Send estimate',
+      nextReviewAt: '2026-03-13T07:00:00.000Z',
+      lastSignalAt: '2026-03-13T06:30:00.000Z',
+      latestSummary: 'Waiting for the final estimate package before sending Crane a response.',
+      currentHypothesis: 'Crane is ready to move once the package is polished.',
+      openQuestionCount: 2,
+      riskCount: 1,
+    },
+    {
+      id: 'axari',
+      title: 'Axari handoff',
+      status: 'waiting',
+      phase: 'verification',
+      nextMilestone: 'Confirm no more owner requests remain',
+      nextReviewAt: '2026-03-15T09:00:00.000Z',
+      lastSignalAt: '2026-03-12T10:00:00.000Z',
+      latestSummary: 'Deprioritized but still receiving passive updates.',
+      currentHypothesis: null,
+      openQuestionCount: 0,
+      riskCount: 0,
+    },
+  ]
+
+  const entries: IntelligenceVaultEntryPoint[] = [
+    {
+      path: 'Narratives/Accounts/crane-ventures.md',
+      title: 'Crane Ventures',
+      documentType: 'narrative',
+      updatedAt: '2026-03-13T07:10:00.000Z',
+      lastSourceUpdateAt: '2026-03-13T07:00:00.000Z',
+      summary: 'Crane estimation is blocked on the package review.',
+    },
+    {
+      path: 'Sources/Meetings/2026-03-13-crane.md',
+      title: 'Crane <> KeyValue',
+      documentType: 'source_artifact',
+      updatedAt: '2026-03-13T06:50:00.000Z',
+      lastSourceUpdateAt: '2026-03-13T06:50:00.000Z',
+      summary: 'Meeting generated new questions about estimate scope.',
+    },
+    {
+      path: 'Work/Action Items/send-estimate.md',
+      title: 'Send estimate package',
+      documentType: 'commitment',
+      updatedAt: '2026-03-13T07:05:00.000Z',
+      lastSourceUpdateAt: '2026-03-13T07:05:00.000Z',
+      summary: 'At risk until the package is ready.',
+    },
+  ]
+
+  const operationalMemory: ChiefOperationalMemoryLike = {
+    urgentCommitments: [
+      {
+        title: 'Send estimate package',
+        status: 'at_risk',
+      },
+    ],
+    blockedInitiatives: [
+      {
+        title: 'Crane estimation',
+        reason: 'Final package not ready',
+      },
+    ],
+  }
+
+  it('builds an action-first summary for the Now screen', () => {
+    const summary = buildIntelligenceNowSummary({
+      initiatives,
+      recentlyChanged: entries,
+      jumpBackIn: entries,
+      work: entries.filter((entry) => entry.documentType === 'commitment'),
+      meetings: entries.filter((entry) => entry.documentType === 'source_artifact'),
+      operationalMemory,
+      now: '2026-03-13T07:30:00.000Z',
+    })
+
+    expect(summary.topPriorities[0]).toEqual(
+      expect.objectContaining({
+        title: 'Crane estimation',
+      })
+    )
+    expect(summary.needsAttention[0]?.title).toContain('Crane estimation')
+    expect(summary.blocked[0]?.reason).toContain('Final package not ready')
+    expect(summary.waiting[0]?.title).toBe('Axari handoff')
+    expect(summary.recentSources[0]?.documentType).toBe('source_artifact')
+    expect(summary.whatChanged[0]?.title).toBe('Crane Ventures')
+  })
+
+  it('returns a stable empty state when there is no meaningful context yet', () => {
+    const summary = buildIntelligenceNowSummary({
+      initiatives: [],
+      recentlyChanged: [],
+      jumpBackIn: [],
+      work: [],
+      meetings: [],
+      operationalMemory: null,
+      now: '2026-03-13T07:30:00.000Z',
+    })
+
+    expect(summary).toEqual<IntelligenceNowSummary>({
+      whatChanged: [],
+      topPriorities: [],
+      needsAttention: [],
+      blocked: [],
+      waiting: [],
+      recentSources: [],
+      evidenceUsed: [],
+    })
   })
 })

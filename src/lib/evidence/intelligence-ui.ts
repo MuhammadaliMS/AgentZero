@@ -30,6 +30,33 @@ export interface IntelligenceInitiativeEntry {
   riskCount: number
 }
 
+export interface ChiefOperationalMemoryLike {
+  urgentCommitments?: Array<{
+    title: string
+    status: string
+  }>
+  blockedInitiatives?: Array<{
+    title: string
+    reason: string
+  }>
+}
+
+export interface IntelligenceNowItem {
+  title: string
+  reason: string
+  supportingPath?: string | null
+}
+
+export interface IntelligenceNowSummary {
+  whatChanged: IntelligenceNowItem[]
+  topPriorities: IntelligenceNowItem[]
+  needsAttention: IntelligenceNowItem[]
+  blocked: IntelligenceNowItem[]
+  waiting: IntelligenceNowItem[]
+  recentSources: IntelligenceVaultEntryPoint[]
+  evidenceUsed: IntelligenceVaultEntryPoint[]
+}
+
 interface InitiativeLike {
   title: string
   latestSummary: string | null
@@ -259,10 +286,144 @@ export function summarizeInitiativeManualContext(
   return snippets
 }
 
+export function buildIntelligenceNowSummary({
+  initiatives,
+  recentlyChanged,
+  jumpBackIn,
+  work,
+  meetings,
+  operationalMemory,
+  now = new Date().toISOString(),
+}: {
+  initiatives: IntelligenceInitiativeEntry[]
+  recentlyChanged: IntelligenceVaultEntryPoint[]
+  jumpBackIn: IntelligenceVaultEntryPoint[]
+  work: IntelligenceVaultEntryPoint[]
+  meetings: IntelligenceVaultEntryPoint[]
+  operationalMemory: ChiefOperationalMemoryLike | null
+  now?: string
+}): IntelligenceNowSummary {
+  if (
+    initiatives.length === 0
+    && recentlyChanged.length === 0
+    && jumpBackIn.length === 0
+    && work.length === 0
+    && meetings.length === 0
+    && !operationalMemory
+  ) {
+    return {
+      whatChanged: [],
+      topPriorities: [],
+      needsAttention: [],
+      blocked: [],
+      waiting: [],
+      recentSources: [],
+      evidenceUsed: [],
+    }
+  }
+
+  const rankedInitiatives = prioritizeInitiatives(initiatives, now)
+  const evidenceUsed = dedupeEntryPoints([...jumpBackIn, ...recentlyChanged, ...meetings]).slice(0, 6)
+  const recentSources = dedupeEntryPoints(
+    [...meetings, ...recentlyChanged].filter((entry) => entry.documentType === 'source_artifact' || entry.path.startsWith('Sources/'))
+  ).slice(0, 5)
+
+  const blockedByTitle = new Map(
+    (operationalMemory?.blockedInitiatives ?? []).map((item) => [item.title.trim().toLowerCase(), item.reason])
+  )
+
+  const blocked = rankedInitiatives
+    .filter((initiative) => initiative.status === 'blocked')
+    .map((initiative) => ({
+      title: initiative.title,
+      reason: blockedByTitle.get(initiative.title.trim().toLowerCase())
+        ?? initiative.latestSummary
+        ?? 'The chief is holding this until a dependency is resolved.',
+    }))
+    .slice(0, 4)
+
+  const waiting = rankedInitiatives
+    .filter((initiative) => initiative.status === 'waiting')
+    .map((initiative) => ({
+      title: initiative.title,
+      reason: initiative.latestSummary ?? 'The chief is waiting for an external update before moving this forward.',
+    }))
+    .slice(0, 4)
+
+  const topPriorities = rankedInitiatives
+    .slice(0, 4)
+    .map((initiative) => ({
+      title: initiative.title,
+      reason: explainInitiativePriority(initiative, now),
+    }))
+
+  const attentionTitles = new Set<string>()
+  const needsAttention: IntelligenceNowItem[] = []
+  for (const initiative of rankedInitiatives) {
+    const needsReview = initiative.nextReviewAt && new Date(initiative.nextReviewAt).getTime() <= new Date(now).getTime()
+    const needsQuestions = initiative.openQuestionCount > 0
+    const hasRisk = initiative.riskCount > 0
+    if (!needsReview && !needsQuestions && !hasRisk) continue
+    const reason = [
+      needsReview ? 'Review is due now.' : null,
+      needsQuestions ? `${initiative.openQuestionCount} open question${initiative.openQuestionCount === 1 ? '' : 's'}.` : null,
+      hasRisk ? `${initiative.riskCount} risk${initiative.riskCount === 1 ? '' : 's'} to resolve.` : null,
+    ].filter(Boolean).join(' ')
+    attentionTitles.add(initiative.title.trim().toLowerCase())
+    needsAttention.push({
+      title: initiative.title,
+      reason,
+    })
+    if (needsAttention.length >= 4) break
+  }
+
+  for (const commitment of operationalMemory?.urgentCommitments ?? []) {
+    const key = commitment.title.trim().toLowerCase()
+    if (attentionTitles.has(key)) continue
+    needsAttention.push({
+      title: commitment.title,
+      reason: `Urgent commitment is currently ${commitment.status.replace(/_/g, ' ')}.`,
+      supportingPath: work.find((entry) => entry.title.trim().toLowerCase() === key)?.path ?? null,
+    })
+    attentionTitles.add(key)
+    if (needsAttention.length >= 4) break
+  }
+
+  const whatChanged = dedupeEntryPoints(recentlyChanged)
+    .slice(0, 5)
+    .map((entry) => ({
+      title: entry.title,
+      reason: entry.summary ?? `${labelDocumentType(entry.documentType)} updated ${relativeTimeLabel(entry.updatedAt)}.`,
+      supportingPath: entry.path,
+    }))
+
+  return {
+    whatChanged,
+    topPriorities,
+    needsAttention,
+    blocked,
+    waiting,
+    recentSources,
+    evidenceUsed,
+  }
+}
+
 function normalizeTokens(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(token => token.length > 2)
+}
+
+function relativeTimeLabel(iso: string | null | undefined): string {
+  if (!iso) return 'recently'
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
 }

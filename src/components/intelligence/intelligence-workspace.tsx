@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -14,8 +13,10 @@ import {
   History,
   Link2,
   NotebookPen,
+  ShieldAlert,
   RefreshCw,
   Sparkles,
+  TimerReset,
   Workflow,
 } from 'lucide-react'
 
@@ -28,6 +29,7 @@ import { DailyView } from '@/components/command-center/daily-view'
 import { createClient } from '@/lib/supabase/client'
 import { type VaultTreeNode } from '@/lib/evidence/vault'
 import {
+  buildIntelligenceNowSummary,
   dedupeEntryPoints,
   explainInitiativePriority,
   findChangedDocsForInitiative,
@@ -308,23 +310,94 @@ function HomeSection({
   )
 }
 
+function NowList({
+  title,
+  subtitle,
+  icon: Icon,
+  items,
+  emptyLabel,
+  onOpen,
+}: {
+  title: string
+  subtitle: string
+  icon: typeof Sparkles
+  items: Array<{ title: string; reason: string; supportingPath?: string | null }>
+  emptyLabel: string
+  onOpen?: (path: string) => void
+}) {
+  return (
+    <Card className="border-border/50">
+      <CardContent className="p-5">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <Icon className="h-4 w-4" />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold">{title}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+          </div>
+        </div>
+        <div className="mt-4 space-y-2">
+          {items.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{emptyLabel}</p>
+          ) : (
+            items.map((item) => {
+              const content = (
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="truncate text-sm font-medium">{item.title}</p>
+                    {item.supportingPath && <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.reason}</p>
+                </>
+              )
+
+              if (!item.supportingPath || !onOpen) {
+                return (
+                  <div key={`${item.title}-${item.reason}`} className="rounded-xl border border-border/50 bg-card/80 px-3 py-2">
+                    {content}
+                  </div>
+                )
+              }
+
+              return (
+                <button
+                  key={`${item.title}-${item.reason}`}
+                  onClick={() => onOpen(item.supportingPath!)}
+                  className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                >
+                  {content}
+                </button>
+              )
+            })
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function IntelligenceHome({
   jumpBackIn,
-  recentlyChanged,
-  meetings,
-  work,
   initiatives,
+  nowSummary,
   onOpenDocument,
   onOpenInitiative,
 }: {
   jumpBackIn: IntelligenceVaultEntryPoint[]
-  recentlyChanged: IntelligenceVaultEntryPoint[]
-  meetings: IntelligenceVaultEntryPoint[]
-  work: IntelligenceVaultEntryPoint[]
   initiatives: IntelligenceInitiativeEntry[]
+  nowSummary: ReturnType<typeof buildIntelligenceNowSummary>
   onOpenDocument: (path: string) => void
   onOpenInitiative: (initiativeId: string) => void
 }) {
+  const topPriorities = nowSummary.topPriorities.map((item) => {
+    const matching = initiatives.find((initiative) => initiative.title === item.title)
+    return {
+      ...item,
+      supportingPath: matching ? `initiative:${matching.id}` : null,
+    }
+  })
+
   return (
     <div className="space-y-6 p-6">
       <Card className="border-primary/15 bg-primary/[0.03] shadow-none">
@@ -334,61 +407,144 @@ function IntelligenceHome({
               <Sparkles className="h-5 w-5" />
             </div>
             <div className="space-y-2">
-              <h2 className="text-2xl font-semibold tracking-tight">Start here</h2>
+              <h2 className="text-2xl font-semibold tracking-tight">Chief Now</h2>
               <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                Intelligence is now the main workspace. Use it to answer three questions fast:
-                what changed, what needs attention, and where the latest context came from.
+                Open this view to answer five things quickly: what changed, what the chief is prioritizing,
+                what needs you, what is blocked, and which evidence caused those decisions.
               </p>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <HomeSection
-          title="Initiatives"
-          subtitle="Long-horizon work the chief is actively tracking."
-          entries={initiatives.slice(0, 5).map((initiative) => ({
-            path: `initiative:${initiative.id}`,
-            title: initiative.title,
-            documentType: 'initiative',
-            updatedAt: initiative.lastSignalAt ?? initiative.nextReviewAt ?? new Date().toISOString(),
-            lastSourceUpdateAt: initiative.lastSignalAt,
-          }))}
-          onOpen={(path) => onOpenInitiative(path.replace('initiative:', ''))}
-        />
-        <HomeSection
-          title="Jump back in"
-          subtitle="The most useful briefs and narratives to resume work quickly."
-          entries={jumpBackIn}
-          onOpen={onOpenDocument}
-        />
-        <HomeSection
-          title="Recently changed"
-          subtitle="Freshly updated docs across meetings, work, and knowledge."
-          entries={recentlyChanged}
-          onOpen={onOpenDocument}
-        />
-        <HomeSection
-          title="Recent meetings"
-          subtitle="Meeting source docs and notes worth reviewing."
-          entries={meetings}
-          onOpen={onOpenDocument}
-        />
-        <HomeSection
-          title="Work in motion"
-          subtitle="Action items, decisions, and briefs that deserve follow-up."
-          entries={work}
-          onOpen={onOpenDocument}
-        />
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        {[
+          {
+            label: 'Changed since last check',
+            value: nowSummary.whatChanged.length,
+            detail: nowSummary.whatChanged[0]?.title ?? 'No new change yet',
+          },
+          {
+            label: 'Top priorities',
+            value: nowSummary.topPriorities.length,
+            detail: nowSummary.topPriorities[0]?.title ?? 'No active priority yet',
+          },
+          {
+            label: 'Needs you',
+            value: nowSummary.needsAttention.length,
+            detail: nowSummary.needsAttention[0]?.title ?? 'Nothing urgent for you',
+          },
+          {
+            label: 'Blocked',
+            value: nowSummary.blocked.length,
+            detail: nowSummary.blocked[0]?.title ?? 'No blocked initiatives',
+          },
+          {
+            label: 'Waiting',
+            value: nowSummary.waiting.length,
+            detail: nowSummary.waiting[0]?.title ?? 'No waiting items',
+          },
+        ].map((card) => (
+          <Card key={card.label} className="border-border/50">
+            <CardContent className="p-4">
+              <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">{card.label}</p>
+              <p className="mt-2 text-2xl font-semibold">{card.value}</p>
+              <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{card.detail}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,0.9fr)]">
+        <div className="space-y-6">
+          <NowList
+            title="What changed"
+            subtitle="The newest shifts across meetings, work, and account docs."
+            icon={RefreshCw}
+            items={nowSummary.whatChanged}
+            emptyLabel="Nothing material changed since the last check."
+            onOpen={onOpenDocument}
+          />
+          <NowList
+            title="What the chief is doing now"
+            subtitle="The workstreams currently getting active attention."
+            icon={BrainCircuit}
+            items={topPriorities}
+            emptyLabel="The chief has not raised any active priorities yet."
+            onOpen={(path) => {
+              if (path.startsWith('initiative:')) {
+                onOpenInitiative(path.replace('initiative:', ''))
+                return
+              }
+              onOpenDocument(path)
+            }}
+          />
+          <div className="grid gap-6 lg:grid-cols-2">
+            <NowList
+              title="What needs your attention"
+              subtitle="Questions, risks, and urgent commitments the chief cannot clear alone."
+              icon={Sparkles}
+              items={nowSummary.needsAttention}
+              emptyLabel="Nothing needs your input right now."
+              onOpen={onOpenDocument}
+            />
+            <NowList
+              title="What is blocked"
+              subtitle="Work that cannot advance until a dependency resolves."
+              icon={ShieldAlert}
+              items={nowSummary.blocked}
+              emptyLabel="No blocked initiatives right now."
+            />
+          </div>
+          <NowList
+            title="What is waiting"
+            subtitle="Items the chief is monitoring but not actively pushing yet."
+            icon={TimerReset}
+            items={nowSummary.waiting}
+            emptyLabel="Nothing is in a waiting state right now."
+          />
+        </div>
+
+        <div className="space-y-6">
+          <NowList
+            title="Why these priorities"
+            subtitle="The chief's current reasoning over initiative state and recent signals."
+            icon={History}
+            items={topPriorities}
+            emptyLabel="No active priority reasoning yet."
+            onOpen={(path) => {
+              if (path.startsWith('initiative:')) {
+                onOpenInitiative(path.replace('initiative:', ''))
+              }
+            }}
+          />
+          <HomeSection
+            title="Evidence used"
+            subtitle="The briefs, narratives, and source docs shaping the current world model."
+            entries={nowSummary.evidenceUsed}
+            onOpen={onOpenDocument}
+          />
+          <HomeSection
+            title="Recent sources"
+            subtitle="Meetings and source records that most recently changed the chief's view."
+            entries={nowSummary.recentSources}
+            onOpen={onOpenDocument}
+          />
+          <HomeSection
+            title="Jump back in"
+            subtitle="The fastest briefs and narratives to reopen if you want deeper context."
+            entries={jumpBackIn}
+            onOpen={onOpenDocument}
+          />
+        </div>
       </div>
 
       <Card className="border-border/50">
         <CardContent className="p-6">
           <div className="mb-5">
-            <h3 className="text-base font-semibold">Today</h3>
+            <h3 className="text-base font-semibold">Signals and actions</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              This replaces the old Command Center feed with the pieces that are actually useful.
+              The old Command Center feed now lives here, underneath the higher-signal chief summary.
             </p>
           </div>
           <DailyView />
@@ -613,6 +769,18 @@ export function IntelligenceWorkspace() {
   const initiativeManualContext = useMemo(
     () => summarizeInitiativeManualContext(initiativeRelatedDocs),
     [initiativeRelatedDocs]
+  )
+
+  const nowSummary = useMemo(
+    () => buildIntelligenceNowSummary({
+      initiatives,
+      recentlyChanged: entryPoints?.recentlyChanged ?? [],
+      jumpBackIn: entryPoints?.jumpBackIn ?? [],
+      work: entryPoints?.work ?? [],
+      meetings: entryPoints?.meetings ?? [],
+      operationalMemory: chiefWorldModel?.operationalMemory ?? null,
+    }),
+    [chiefWorldModel, entryPoints, initiatives]
   )
 
   async function saveManualSection(key: string) {
@@ -864,10 +1032,8 @@ export function IntelligenceWorkspace() {
               ) : showHome ? (
                 <IntelligenceHome
                   jumpBackIn={entryPoints?.jumpBackIn ?? []}
-                  recentlyChanged={entryPoints?.recentlyChanged ?? []}
-                  meetings={entryPoints?.meetings ?? []}
-                  work={entryPoints?.work ?? []}
                   initiatives={initiatives}
+                  nowSummary={nowSummary}
                   onOpenDocument={openDocument}
                   onOpenInitiative={(initiativeId) => {
                     setSelectedPanel('initiatives')
@@ -1082,15 +1248,13 @@ export function IntelligenceWorkspace() {
               <Card className="border-border/50">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-sm font-medium">
-                    <Sparkles className="h-4 w-4 text-primary" />
-                    How to use this
+                    <BrainCircuit className="h-4 w-4 text-primary" />
+                    What the chief believes
                   </div>
                   <div className="mt-4 space-y-3 text-sm text-muted-foreground">
-                    <p>Use <span className="font-medium text-foreground">Today</span> for what needs attention now.</p>
-                    <p>Use <span className="font-medium text-foreground">Initiatives</span> to track long-horizon work the chief is actively advancing.</p>
-                    <p>Use <span className="font-medium text-foreground">Accounts</span> when you want the storyline for a company or relationship.</p>
-                    <p>Use <span className="font-medium text-foreground">Meetings</span> for raw meeting source docs and notes.</p>
-                    <p>Use <span className="font-medium text-foreground">Work</span> for action items, decisions, and briefs.</p>
+                    <p>The chief is currently tracking <span className="font-medium text-foreground">{nowSummary.topPriorities.length}</span> active priorities.</p>
+                    <p><span className="font-medium text-foreground">{nowSummary.needsAttention.length}</span> items need your attention, and <span className="font-medium text-foreground">{nowSummary.blocked.length}</span> are blocked.</p>
+                    <p><span className="font-medium text-foreground">{nowSummary.waiting.length}</span> items are in a waiting state while the chief watches for new signals.</p>
                   </div>
                 </CardContent>
               </Card>
@@ -1098,22 +1262,26 @@ export function IntelligenceWorkspace() {
               <Card className="border-border/50">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-sm font-medium">
-                    <ArrowRight className="h-4 w-4 text-primary" />
-                    Useful surfaces
+                    <FileClock className="h-4 w-4 text-primary" />
+                    Evidence used
                   </div>
-                  <div className="mt-4 grid gap-2">
-                    {[
-                      { href: '/meetings', label: 'Meetings' },
-                      { href: '/knowledge-graph', label: 'Knowledge Graph' },
-                      { href: '/integrations', label: 'Integrations' },
-                    ].map((item) => (
-                      <Button asChild key={item.href} variant="outline" className="justify-between rounded-xl">
-                        <Link href={item.href}>
-                          {item.label}
-                          <ArrowRight className="h-4 w-4" />
-                        </Link>
-                      </Button>
-                    ))}
+                  <div className="mt-4 space-y-2">
+                    {nowSummary.evidenceUsed.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No evidence-backed docs have been pulled into the current view yet.</p>
+                    ) : (
+                      nowSummary.evidenceUsed.map((entry) => (
+                        <button
+                          key={entry.path}
+                          onClick={() => openDocument(entry.path)}
+                          className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                        >
+                          <p className="truncate text-sm font-medium">{entry.title}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {labelDocumentType(entry.documentType)} · {timeAgo(entry.updatedAt)}
+                          </p>
+                        </button>
+                      ))
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -1122,15 +1290,25 @@ export function IntelligenceWorkspace() {
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <Workflow className="h-4 w-4 text-primary" />
-                    Chief world model
+                    What changed the world model
                   </div>
-                  <div className="mt-4 space-y-3 text-sm text-muted-foreground">
-                    <p>
-                      Urgent commitments: {chiefWorldModel?.operationalMemory?.urgentCommitments?.length ?? 0}
-                    </p>
-                    <p>
-                      Blocked initiatives: {chiefWorldModel?.operationalMemory?.blockedInitiatives?.length ?? 0}
-                    </p>
+                  <div className="mt-4 space-y-2">
+                    {nowSummary.recentSources.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No recent source events have changed the world model yet.</p>
+                    ) : (
+                      nowSummary.recentSources.map((entry) => (
+                        <button
+                          key={entry.path}
+                          onClick={() => openDocument(entry.path)}
+                          className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                        >
+                          <p className="truncate text-sm font-medium">{entry.title}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {entry.summary ?? `${labelDocumentType(entry.documentType)} updated.`}
+                          </p>
+                        </button>
+                      ))
+                    )}
                   </div>
                 </CardContent>
               </Card>

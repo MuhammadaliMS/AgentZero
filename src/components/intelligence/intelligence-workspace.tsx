@@ -8,28 +8,27 @@ import {
   ArrowRight,
   BookOpen,
   BrainCircuit,
-  Clock3,
+  CalendarDays,
   FileClock,
   FolderTree,
-  GitBranch,
   History,
+  Link2,
   NotebookPen,
   RefreshCw,
+  Sparkles,
+  Workflow,
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
+import { DailyView } from '@/components/command-center/daily-view'
 import { createClient } from '@/lib/supabase/client'
+import { type VaultTreeNode } from '@/lib/evidence/vault'
 import {
-  buildVaultTree,
-  type VaultTreeNode,
-} from '@/lib/evidence/vault'
-import {
-  flattenVaultDocumentPaths,
+  dedupeEntryPoints,
   groupEntryPointsByFreshness,
   labelDocumentType,
   type IntelligenceVaultEntryPoint,
@@ -48,6 +47,8 @@ interface VaultTreeResponse {
   entryPoints: {
     accounts: IntelligenceVaultEntryPoint[]
     relationships: IntelligenceVaultEntryPoint[]
+    meetings: IntelligenceVaultEntryPoint[]
+    work: IntelligenceVaultEntryPoint[]
     jumpBackIn: IntelligenceVaultEntryPoint[]
     recentlyChanged: IntelligenceVaultEntryPoint[]
   }
@@ -80,8 +81,6 @@ interface VaultDocumentPayload {
     source_mode: string
     staleness_reason: string | null
     last_source_update_at: string | null
-    updated_at?: string | null
-    metadata?: Record<string, unknown> | null
   }
   links: Array<{
     linkKind: string
@@ -120,6 +119,8 @@ interface ChangesResponse {
   }>
 }
 
+type WorkspacePanel = 'today' | 'accounts' | 'meetings' | 'work' | 'raw'
+
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return 'Unknown'
   return new Date(iso).toLocaleString(undefined, {
@@ -142,7 +143,7 @@ function timeAgo(iso: string | null | undefined): string {
   return `${days}d ago`
 }
 
-function EntryList({
+function SidebarEntryList({
   title,
   entries,
   selectedPath,
@@ -245,6 +246,127 @@ function VaultTreeBranch({
   )
 }
 
+function HomeSection({
+  title,
+  subtitle,
+  entries,
+  onOpen,
+}: {
+  title: string
+  subtitle: string
+  entries: IntelligenceVaultEntryPoint[]
+  onOpen: (path: string) => void
+}) {
+  return (
+    <Card className="border-border/50">
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-base font-semibold">{title}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+          </div>
+          <Badge variant="secondary">{entries.length}</Badge>
+        </div>
+        <div className="mt-4 space-y-2">
+          {entries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nothing here yet.</p>
+          ) : (
+            entries.slice(0, 5).map((entry) => (
+              <button
+                key={entry.path}
+                onClick={() => onOpen(entry.path)}
+                className="flex w-full items-center justify-between rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{entry.title}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {labelDocumentType(entry.documentType)} · {timeAgo(entry.updatedAt)}
+                  </p>
+                </div>
+                <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+              </button>
+            ))
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function IntelligenceHome({
+  jumpBackIn,
+  recentlyChanged,
+  meetings,
+  work,
+  onOpenDocument,
+}: {
+  jumpBackIn: IntelligenceVaultEntryPoint[]
+  recentlyChanged: IntelligenceVaultEntryPoint[]
+  meetings: IntelligenceVaultEntryPoint[]
+  work: IntelligenceVaultEntryPoint[]
+  onOpenDocument: (path: string) => void
+}) {
+  return (
+    <div className="space-y-6 p-6">
+      <Card className="border-primary/15 bg-primary/[0.03] shadow-none">
+        <CardContent className="p-6">
+          <div className="flex items-start gap-4">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <Sparkles className="h-5 w-5" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-semibold tracking-tight">Start here</h2>
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                Intelligence is now the main workspace. Use it to answer three questions fast:
+                what changed, what needs attention, and where the latest context came from.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <HomeSection
+          title="Jump back in"
+          subtitle="The most useful briefs and narratives to resume work quickly."
+          entries={jumpBackIn}
+          onOpen={onOpenDocument}
+        />
+        <HomeSection
+          title="Recently changed"
+          subtitle="Freshly updated docs across meetings, work, and knowledge."
+          entries={recentlyChanged}
+          onOpen={onOpenDocument}
+        />
+        <HomeSection
+          title="Recent meetings"
+          subtitle="Meeting source docs and notes worth reviewing."
+          entries={meetings}
+          onOpen={onOpenDocument}
+        />
+        <HomeSection
+          title="Work in motion"
+          subtitle="Action items, decisions, and briefs that deserve follow-up."
+          entries={work}
+          onOpen={onOpenDocument}
+        />
+      </div>
+
+      <Card className="border-border/50">
+        <CardContent className="p-6">
+          <div className="mb-5">
+            <h3 className="text-base font-semibold">Today</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              This replaces the old Command Center feed with the pieces that are actually useful.
+            </p>
+          </div>
+          <DailyView />
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 export function IntelligenceWorkspace() {
   const supabase = useMemo(() => createClient() as any, [])
 
@@ -257,7 +379,7 @@ export function IntelligenceWorkspace() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [document, setDocument] = useState<VaultDocumentPayload | null>(null)
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
-  const [selectedPanel, setSelectedPanel] = useState<'accounts' | 'relationships' | 'jump' | 'raw'>('accounts')
+  const [selectedPanel, setSelectedPanel] = useState<WorkspacePanel>('today')
   const [manualDrafts, setManualDrafts] = useState<Record<string, string>>({})
   const [savingSectionKey, setSavingSectionKey] = useState<string | null>(null)
 
@@ -288,17 +410,21 @@ export function IntelligenceWorkspace() {
           supabase.from('vault_documents').select('id', { count: 'exact', head: true }),
           supabase.from('claims').select('id', { count: 'exact', head: true }).eq('status', 'active'),
           supabase.from('commitments').select('id', { count: 'exact', head: true }).in('status', ['active', 'at_risk', 'overdue']),
-          supabase.from('strategic_narratives').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+          supabase.from('vault_documents').select('id', { count: 'exact', head: true }).eq('document_type', 'narrative'),
         ])
-
-        const documentPaths = flattenVaultDocumentPaths(treeRes.tree)
 
         if (!cancelled) {
           setTree(treeRes.tree)
-          setEntryPoints(treeRes.entryPoints)
+          setEntryPoints({
+            accounts: dedupeEntryPoints(treeRes.entryPoints.accounts),
+            relationships: dedupeEntryPoints(treeRes.entryPoints.relationships),
+            meetings: dedupeEntryPoints(treeRes.entryPoints.meetings),
+            work: dedupeEntryPoints(treeRes.entryPoints.work),
+            jumpBackIn: dedupeEntryPoints(treeRes.entryPoints.jumpBackIn),
+            recentlyChanged: dedupeEntryPoints(treeRes.entryPoints.recentlyChanged),
+          })
           setChanges(changesRes.changes)
           setExpandedFolders(new Set(treeRes.tree.map((node) => node.path)))
-          setSelectedPath((current) => current ?? treeRes.entryPoints.jumpBackIn[0]?.path ?? treeRes.entryPoints.accounts[0]?.path ?? documentPaths[0] ?? null)
           setStats({
             vaultDocs: vaultDocsCountRes.count ?? 0,
             claims: claimsCountRes.count ?? 0,
@@ -330,12 +456,14 @@ export function IntelligenceWorkspace() {
 
     let cancelled = false
     const path = selectedPath
+
     async function loadDocument() {
       const response = await fetch(`/api/vault/document?path=${encodeURIComponent(path)}`)
       if (!response.ok) {
         if (!cancelled) setDocument(null)
         return
       }
+
       const payload = await response.json() as VaultDocumentPayload
       if (!cancelled) {
         setDocument(payload)
@@ -358,9 +486,35 @@ export function IntelligenceWorkspace() {
     [entryPoints]
   )
 
+  const linkedWork = useMemo(
+    () => (document?.links ?? []).filter((link) => ['commitment', 'decision_thread'].includes(link.linkKind)),
+    [document]
+  )
+
+  const linkedContext = useMemo(
+    () => (document?.links ?? []).filter((link) => !['commitment', 'decision_thread'].includes(link.linkKind)),
+    [document]
+  )
+
+  const citedSources = useMemo(() => {
+    const labels = new Set<string>()
+    const items: string[] = []
+
+    for (const section of document?.document.sections ?? []) {
+      for (const citation of section.citations ?? []) {
+        if (labels.has(citation.label)) continue
+        labels.add(citation.label)
+        items.push(citation.label)
+      }
+    }
+
+    return items
+  }, [document])
+
   async function saveManualSection(key: string) {
     if (!document) return
     setSavingSectionKey(key)
+
     try {
       const section = document.document.manual_sections[key]
       const response = await fetch('/api/vault/document/manual-section', {
@@ -394,6 +548,93 @@ export function IntelligenceWorkspace() {
     }
   }
 
+  const leftRailContent = (() => {
+    switch (selectedPanel) {
+      case 'accounts':
+        return (
+          <>
+            <SidebarEntryList
+              title="Fresh account docs"
+              entries={groupedAccounts.fresh}
+              selectedPath={selectedPath}
+              onSelect={setSelectedPath}
+            />
+            <SidebarEntryList
+              title="Relationship docs"
+              entries={entryPoints?.relationships ?? []}
+              selectedPath={selectedPath}
+              onSelect={setSelectedPath}
+            />
+            <SidebarEntryList
+              title="Older account docs"
+              entries={groupedAccounts.older}
+              selectedPath={selectedPath}
+              onSelect={setSelectedPath}
+            />
+          </>
+        )
+      case 'meetings':
+        return (
+          <SidebarEntryList
+            title="Meeting docs"
+            entries={entryPoints?.meetings ?? []}
+            selectedPath={selectedPath}
+            onSelect={setSelectedPath}
+          />
+        )
+      case 'work':
+        return (
+          <SidebarEntryList
+            title="Action items, decisions & briefs"
+            entries={entryPoints?.work ?? []}
+            selectedPath={selectedPath}
+            onSelect={setSelectedPath}
+          />
+        )
+      case 'raw':
+        return tree.length === 0 ? (
+          <div className="px-3 py-10 text-center text-sm text-muted-foreground">
+            Vault documents will appear here after evidence runs regenerate the workspace.
+          </div>
+        ) : (
+          <VaultTreeBranch
+            nodes={tree}
+            selectedPath={selectedPath}
+            expandedFolders={expandedFolders}
+            onToggleFolder={(path) => {
+              setExpandedFolders((current) => {
+                const next = new Set(current)
+                if (next.has(path)) next.delete(path)
+                else next.add(path)
+                return next
+              })
+            }}
+            onSelectDocument={setSelectedPath}
+          />
+        )
+      case 'today':
+      default:
+        return (
+          <>
+            <SidebarEntryList
+              title="Jump back in"
+              entries={entryPoints?.jumpBackIn ?? []}
+              selectedPath={selectedPath}
+              onSelect={setSelectedPath}
+            />
+            <SidebarEntryList
+              title="Recent movement"
+              entries={entryPoints?.recentlyChanged ?? []}
+              selectedPath={selectedPath}
+              onSelect={setSelectedPath}
+            />
+          </>
+        )
+    }
+  })()
+
+  const showHome = !selectedPath
+
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-8 sm:px-6 sm:py-10">
       <header className="rounded-[2rem] border border-border/50 bg-card/90 px-6 py-6 shadow-sm">
@@ -401,22 +642,22 @@ export function IntelligenceWorkspace() {
           <div className="max-w-3xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/5 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
               <NotebookPen className="h-3.5 w-3.5" />
-              Vault Workspace
+              Intelligence
             </div>
             <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
-              Obsidian-like navigation over the evidence graph.
+              One place to understand what matters now.
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
-              Accounts and relationships come first, raw folders are still available, and each document blends generated facts with Kimi-written interpretation and manual notes.
+              Start with today, then drill into accounts, meetings, and work. The graph stays underneath, but this page should feel like your operating workspace instead of a debug console.
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
               { label: 'Vault docs', value: stats?.vaultDocs ?? 0, icon: BookOpen },
-              { label: 'Active claims', value: stats?.claims ?? 0, icon: GitBranch },
-              { label: 'Open work', value: stats?.commitments ?? 0, icon: Clock3 },
-              { label: 'Narratives', value: stats?.narratives ?? 0, icon: BrainCircuit },
+              { label: 'Active claims', value: stats?.claims ?? 0, icon: Workflow },
+              { label: 'Open work', value: stats?.commitments ?? 0, icon: BrainCircuit },
+              { label: 'Narratives', value: stats?.narratives ?? 0, icon: RefreshCw },
             ].map((stat) => {
               const Icon = stat.icon
               return (
@@ -444,9 +685,10 @@ export function IntelligenceWorkspace() {
           <CardContent className="p-4">
             <div className="flex flex-wrap gap-2">
               {[
+                ['today', 'Today'],
                 ['accounts', 'Accounts'],
-                ['relationships', 'Relationships'],
-                ['jump', 'Jump back in'],
+                ['meetings', 'Meetings'],
+                ['work', 'Work'],
                 ['raw', 'Raw vault'],
               ].map(([value, label]) => (
                 <Button
@@ -454,7 +696,10 @@ export function IntelligenceWorkspace() {
                   variant={selectedPanel === value ? 'default' : 'outline'}
                   size="sm"
                   className="rounded-full"
-                  onClick={() => setSelectedPanel(value as typeof selectedPanel)}
+                  onClick={() => {
+                    setSelectedPanel(value as WorkspacePanel)
+                    if (value === 'today') setSelectedPath(null)
+                  }}
                 >
                   {label}
                 </Button>
@@ -462,73 +707,7 @@ export function IntelligenceWorkspace() {
             </div>
 
             <ScrollArea className="mt-4 h-[72vh] pr-3">
-              <div className="space-y-6">
-                {selectedPanel === 'accounts' && (
-                  <>
-                    <EntryList
-                      title="Fresh account docs"
-                      entries={groupedAccounts.fresh}
-                      selectedPath={selectedPath}
-                      onSelect={setSelectedPath}
-                    />
-                    <EntryList
-                      title="Older account docs"
-                      entries={groupedAccounts.older}
-                      selectedPath={selectedPath}
-                      onSelect={setSelectedPath}
-                    />
-                  </>
-                )}
-
-                {selectedPanel === 'relationships' && (
-                  <EntryList
-                    title="Relationship docs"
-                    entries={entryPoints?.relationships ?? []}
-                    selectedPath={selectedPath}
-                    onSelect={setSelectedPath}
-                  />
-                )}
-
-                {selectedPanel === 'jump' && (
-                  <>
-                    <EntryList
-                      title="Jump back in"
-                      entries={entryPoints?.jumpBackIn ?? []}
-                      selectedPath={selectedPath}
-                      onSelect={setSelectedPath}
-                    />
-                    <EntryList
-                      title="Recently changed"
-                      entries={entryPoints?.recentlyChanged ?? []}
-                      selectedPath={selectedPath}
-                      onSelect={setSelectedPath}
-                    />
-                  </>
-                )}
-
-                {selectedPanel === 'raw' && (
-                  tree.length === 0 ? (
-                    <div className="px-3 py-10 text-center text-sm text-muted-foreground">
-                      Vault documents will appear here after evidence runs regenerate the workspace.
-                    </div>
-                  ) : (
-                    <VaultTreeBranch
-                      nodes={tree}
-                      selectedPath={selectedPath}
-                      expandedFolders={expandedFolders}
-                      onToggleFolder={(path) => {
-                        setExpandedFolders((current) => {
-                          const next = new Set(current)
-                          if (next.has(path)) next.delete(path)
-                          else next.add(path)
-                          return next
-                        })
-                      }}
-                      onSelectDocument={setSelectedPath}
-                    />
-                  )
-                )}
-              </div>
+              <div className="space-y-6">{leftRailContent}</div>
             </ScrollArea>
           </CardContent>
         </Card>
@@ -536,9 +715,21 @@ export function IntelligenceWorkspace() {
         <Card className="border-border/50">
           <CardContent className="p-0">
             <ScrollArea className="h-[78vh]">
-              {!document ? (
+              {loading ? (
                 <div className="flex h-[78vh] items-center justify-center text-sm text-muted-foreground">
-                  {loading ? 'Loading vault workspace…' : 'Select a document from the left'}
+                  Loading intelligence workspace…
+                </div>
+              ) : showHome ? (
+                <IntelligenceHome
+                  jumpBackIn={entryPoints?.jumpBackIn ?? []}
+                  recentlyChanged={entryPoints?.recentlyChanged ?? []}
+                  meetings={entryPoints?.meetings ?? []}
+                  work={entryPoints?.work ?? []}
+                  onOpenDocument={setSelectedPath}
+                />
+              ) : !document ? (
+                <div className="flex h-[78vh] items-center justify-center text-sm text-muted-foreground">
+                  Select a document from the left.
                 </div>
               ) : (
                 <div className="p-6">
@@ -630,107 +821,155 @@ export function IntelligenceWorkspace() {
         </Card>
 
         <div className="space-y-6">
-          <Card className="border-border/50">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <GitBranch className="h-4 w-4 text-primary" />
-                Related objects
-              </div>
-              <div className="mt-4 space-y-2">
-                {(document?.links ?? []).length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No related links yet.</p>
-                ) : (
-                  document?.links.map((link) => (
-                    <button
-                      key={`${link.linkKind}-${link.targetId}`}
-                      onClick={() => link.targetPath && setSelectedPath(link.targetPath)}
-                      className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="truncate text-sm font-medium">{link.targetLabel ?? link.targetId}</p>
-                        <Badge variant="secondary" className="text-[10px]">
-                          {link.targetType ?? link.linkKind}
+          {showHome ? (
+            <>
+              <Card className="border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    How to use this
+                  </div>
+                  <div className="mt-4 space-y-3 text-sm text-muted-foreground">
+                    <p>Use <span className="font-medium text-foreground">Today</span> for what needs attention now.</p>
+                    <p>Use <span className="font-medium text-foreground">Accounts</span> when you want the storyline for a company or relationship.</p>
+                    <p>Use <span className="font-medium text-foreground">Meetings</span> for raw meeting source docs and notes.</p>
+                    <p>Use <span className="font-medium text-foreground">Work</span> for action items, decisions, and briefs.</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ArrowRight className="h-4 w-4 text-primary" />
+                    Useful surfaces
+                  </div>
+                  <div className="mt-4 grid gap-2">
+                    {[
+                      { href: '/meetings', label: 'Meetings' },
+                      { href: '/knowledge-graph', label: 'Knowledge Graph' },
+                      { href: '/integrations', label: 'Integrations' },
+                    ].map((item) => (
+                      <Button asChild key={item.href} variant="outline" className="justify-between rounded-xl">
+                        <Link href={item.href}>
+                          {item.label}
+                          <ArrowRight className="h-4 w-4" />
+                        </Link>
+                      </Button>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <>
+              <Card className="border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Link2 className="h-4 w-4 text-primary" />
+                    Linked context
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {linkedContext.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No linked context yet.</p>
+                    ) : (
+                      linkedContext.map((link) => (
+                        <button
+                          key={`${link.linkKind}-${link.targetId}`}
+                          onClick={() => link.targetPath && setSelectedPath(link.targetPath)}
+                          className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="truncate text-sm font-medium">{link.targetLabel ?? link.targetId}</p>
+                            <Badge variant="secondary" className="text-[10px]">
+                              {link.targetType ?? link.linkKind}
+                            </Badge>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <BrainCircuit className="h-4 w-4 text-primary" />
+                    Work connected to this
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {linkedWork.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No linked action items or decisions yet.</p>
+                    ) : (
+                      linkedWork.map((link) => (
+                        <button
+                          key={`${link.linkKind}-${link.targetId}`}
+                          onClick={() => link.targetPath && setSelectedPath(link.targetPath)}
+                          className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="truncate text-sm font-medium">{link.targetLabel ?? link.targetId}</p>
+                            <Badge variant="secondary" className="text-[10px]">
+                              {link.targetType ?? labelDocumentType(link.linkKind)}
+                            </Badge>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <CalendarDays className="h-4 w-4 text-primary" />
+                    Sources used in this doc
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {citedSources.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No source chips yet.</p>
+                    ) : (
+                      citedSources.map((label) => (
+                        <Badge key={label} variant="secondary" className="gap-1">
+                          <FileClock className="h-3 w-3" />
+                          {label}
                         </Badge>
-                      </div>
-                    </button>
-                  ))
-                )}
-              </div>
-            </CardContent>
-          </Card>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
 
-          <Card className="border-border/50">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <ArrowRight className="h-4 w-4 text-primary" />
-                Backlinks
-              </div>
-              <div className="mt-4 space-y-2">
-                {(document?.backlinks ?? []).length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No backlinks yet.</p>
-                ) : (
-                  document?.backlinks.map((backlink) => (
-                    <button
-                      key={`${backlink.documentId}-${backlink.path}`}
-                      onClick={() => setSelectedPath(backlink.path)}
-                      className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
-                    >
-                      <p className="truncate text-sm font-medium">{backlink.title}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {labelDocumentType(backlink.documentType)} · {timeAgo(backlink.updatedAt)}
-                      </p>
-                    </button>
-                  ))
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/50">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <RefreshCw className="h-4 w-4 text-primary" />
-                Recently changed
-              </div>
-              <div className="mt-4 space-y-2">
-                {changes.slice(0, 8).map((change) => (
-                  <button
-                    key={change.id}
-                    onClick={() => setSelectedPath(change.path)}
-                    className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
-                  >
-                    <p className="truncate text-sm font-medium">{change.title}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {labelDocumentType(change.document_type)} · {timeAgo(change.updated_at)}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/50">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <BrainCircuit className="h-4 w-4 text-primary" />
-                Product surfaces
-              </div>
-              <div className="mt-4 grid gap-2">
-                {[
-                  { href: '/knowledge-graph', label: 'Knowledge Graph' },
-                  { href: '/meetings', label: 'Meetings' },
-                  { href: '/command-center', label: 'Command Center' },
-                ].map((item) => (
-                  <Button asChild key={item.href} variant="outline" className="justify-between rounded-xl">
-                    <Link href={item.href}>
-                      {item.label}
-                      <ArrowRight className="h-4 w-4" />
-                    </Link>
-                  </Button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+              <Card className="border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <RefreshCw className="h-4 w-4 text-primary" />
+                    Referenced in
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {(document?.backlinks ?? []).length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No related docs yet.</p>
+                    ) : (
+                      document?.backlinks.map((backlink) => (
+                        <button
+                          key={`${backlink.documentId}-${backlink.path}`}
+                          onClick={() => setSelectedPath(backlink.path)}
+                          className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                        >
+                          <p className="truncate text-sm font-medium">{backlink.title}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {labelDocumentType(backlink.documentType)} · {timeAgo(backlink.updatedAt)}
+                          </p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
         </div>
       </div>
     </div>

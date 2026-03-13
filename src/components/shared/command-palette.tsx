@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/command'
 import {
   MessageSquare,
-  LayoutGrid,
+  BrainCircuit,
   Layers,
   Settings,
   Clock,
@@ -56,10 +56,10 @@ export function CommandPalette() {
         e.preventDefault()
         router.push('/chat')
       }
-      // Cmd+Shift+D → command center (dashboard)
+      // Cmd+Shift+D → intelligence workspace
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'd') {
         e.preventDefault()
-        router.push('/command-center')
+        router.push('/intelligence')
       }
     }
     document.addEventListener('keydown', handleKeyDown)
@@ -95,12 +95,12 @@ export function CommandPalette() {
       action: () => navigate('/chat'),
     },
     {
-      id: 'command-center',
-      label: 'Command Center',
+      id: 'intelligence',
+      label: 'Intelligence',
       group: 'Navigation',
-      keywords: ['dashboard', 'overview', 'actions', 'home'],
-      icon: <LayoutGrid className="h-4 w-4" />,
-      action: () => navigate('/command-center'),
+      keywords: ['dashboard', 'overview', 'actions', 'home', 'vault', 'workspace'],
+      icon: <BrainCircuit className="h-4 w-4" />,
+      action: () => navigate('/intelligence'),
     },
     {
       id: 'integrations',

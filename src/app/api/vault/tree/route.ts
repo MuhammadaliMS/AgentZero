@@ -40,6 +40,14 @@ export async function GET() {
       .filter((doc) => doc.path.startsWith('Narratives/Relationships/'))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 12)
+    const meetings = documents
+      .filter((doc) => doc.path.startsWith('Sources/Meetings/'))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 12)
+    const work = documents
+      .filter((doc) => doc.path.startsWith('Work/') || doc.path.startsWith('Briefs/'))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 12)
     const jumpBackIn = documents
       .filter((doc) => doc.path.startsWith('Briefs/') || doc.path.startsWith('Narratives/'))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
@@ -51,6 +59,8 @@ export async function GET() {
       entryPoints: {
         accounts,
         relationships,
+        meetings,
+        work,
         jumpBackIn,
         recentlyChanged,
       },

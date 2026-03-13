@@ -97,6 +97,20 @@ export function groupEntryPointsByFreshness(entries: IntelligenceVaultEntryPoint
   return { fresh, older }
 }
 
+export function dedupeEntryPoints(entries: IntelligenceVaultEntryPoint[]): IntelligenceVaultEntryPoint[] {
+  const byKey = new Map<string, IntelligenceVaultEntryPoint>()
+
+  for (const entry of entries) {
+    const key = `${entry.documentType}:${entry.title.trim().toLowerCase()}`
+    const existing = byKey.get(key)
+    if (!existing || existing.updatedAt < entry.updatedAt) {
+      byKey.set(key, entry)
+    }
+  }
+
+  return [...byKey.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+}
+
 export function labelDocumentType(documentType: string): string {
   switch (documentType) {
     case 'source_artifact':

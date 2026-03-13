@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  dedupeEntryPoints,
   flattenVaultDocumentPaths,
   groupEntryPointsByFreshness,
   labelDocumentType,
@@ -97,6 +98,39 @@ describe('groupEntryPointsByFreshness', () => {
     expect(grouped.fresh).toHaveLength(1)
     expect(grouped.older).toHaveLength(1)
     expect(grouped.fresh[0]?.title).toBe('Crane')
+  })
+})
+
+describe('dedupeEntryPoints', () => {
+  it('keeps the newest entry per title and document type to avoid noisy repeats', () => {
+    const entries: IntelligenceVaultEntryPoint[] = [
+      {
+        path: 'Knowledge/Organizations/axari.md',
+        title: 'Axari',
+        documentType: 'entity',
+        updatedAt: '2026-03-13T04:10:00.000Z',
+        lastSourceUpdateAt: null,
+      },
+      {
+        path: 'Knowledge/Organizations/axari-copy.md',
+        title: 'Axari',
+        documentType: 'entity',
+        updatedAt: '2026-03-13T04:20:00.000Z',
+        lastSourceUpdateAt: null,
+      },
+      {
+        path: 'Narratives/Accounts/axari.md',
+        title: 'Axari',
+        documentType: 'narrative',
+        updatedAt: '2026-03-13T04:30:00.000Z',
+        lastSourceUpdateAt: null,
+      },
+    ]
+
+    expect(dedupeEntryPoints(entries)).toEqual([
+      expect.objectContaining({ path: 'Narratives/Accounts/axari.md', documentType: 'narrative' }),
+      expect.objectContaining({ path: 'Knowledge/Organizations/axari-copy.md', documentType: 'entity' }),
+    ])
   })
 })
 

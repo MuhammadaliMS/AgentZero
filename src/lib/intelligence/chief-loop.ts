@@ -83,7 +83,6 @@ import {
   findInitiativeRelatedDocuments,
   materializeInitiativeDecision,
   reconcileInitiativeState,
-  selectChangedInitiatives,
   selectRelevantInitiatives,
   type InitiativeDraft,
   type InitiativeDecisionInput,
@@ -94,6 +93,7 @@ import {
   type ChiefWorldModelRecord,
 } from '@/lib/intelligence/world-model'
 import { regenerateVaultDocumentsForInitiatives } from '@/lib/evidence/store'
+import { resolveChiefWorldModelV3Plan } from '@/lib/intelligence/chief-world-model-v3'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -361,9 +361,10 @@ export async function runChiefLoopForOrg(
       const workingMemory = buildWorkingMemory(result, thinkDecisions, gatherResult)
       await upsertWorkingMemory(supabase, orgId, workingMemory)
       const refreshedInitiatives = await upsertInitiativesFromChiefContext(orgId, gatherResult, now.toISOString())
-      const changedInitiativeIds = selectChangedInitiatives({
-        previous: gatherResult.activeInitiatives,
-        next: refreshedInitiatives,
+      const worldModelPlan = resolveChiefWorldModelV3Plan({
+        orgSettings: gatherResult.orgSettings,
+        previousInitiatives: gatherResult.activeInitiatives,
+        nextInitiatives: refreshedInitiatives,
       })
       const worldModel = buildChiefWorldModel({
         now: now.toISOString(),
@@ -380,15 +381,15 @@ export async function runChiefLoopForOrg(
           title: artifact.title,
           channel: artifact.channel,
         })),
-        updatedInitiativeIds: changedInitiativeIds,
+        updatedInitiativeIds: worldModelPlan.changedInitiativeIds,
         previous: gatherResult.chiefWorldModel,
       })
       await upsertChiefWorldModelState(orgId, worldModel)
-      if (changedInitiativeIds.length > 0) {
+      if (worldModelPlan.enabled && worldModelPlan.changedInitiativeIds.length > 0) {
         await regenerateVaultDocumentsForInitiatives(createUntypedAdminClient(), {
           orgId,
           initiatives: refreshedInitiatives,
-          changedInitiativeIds,
+          changedInitiativeIds: worldModelPlan.changedInitiativeIds,
           changedAt: now.toISOString(),
         })
       }
@@ -538,6 +539,7 @@ interface GatherResult {
   durationMs: number
   totalSignals: number
   error?: string
+  orgSettings: Record<string, unknown> | null
 
   // All raw data with timestamps
   orgName: string
@@ -577,6 +579,7 @@ async function phaseGather(
   const r: GatherResult = {
     durationMs: 0,
     totalSignals: 0,
+    orgSettings: null,
     orgName: 'Unknown',
     activeOutcomes: [],
     recentEmails: [],
@@ -789,6 +792,7 @@ async function phaseGather(
     ])
 
     r.orgName = orgData?.name ?? 'Unknown'
+    r.orgSettings = (orgData?.settings as Record<string, unknown> | null | undefined) ?? null
     r.focusProfile = extractChiefFocusProfile((orgData?.settings as Record<string, unknown> | null | undefined) ?? null)
     r.activeOutcomes = outcomes
     r.recentEmails = emails

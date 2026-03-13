@@ -50,7 +50,7 @@ describe('getEvidenceAgentModels', () => {
     process.env = { ...ORIGINAL_ENV }
   })
 
-  it('defaults analyst to a fast model and synthesizer to the extractor model on NVIDIA', async () => {
+  it('defaults both analyst and synthesizer to the extractor model on NVIDIA', async () => {
     process.env.NVIDIA_API_KEY = 'nvapi-test'
     delete process.env.AGENTIC_EVIDENCE_ANALYST_MODEL
     delete process.env.AGENTIC_EVIDENCE_SYNTHESIZER_MODEL
@@ -60,7 +60,7 @@ describe('getEvidenceAgentModels', () => {
     const { getEvidenceAgentModels } = await import('@/lib/evidence/agents')
 
     expect(getEvidenceAgentModels()).toEqual({
-      analystModel: 'meta/llama-3.3-70b-instruct',
+      analystModel: 'moonshotai/kimi-k2.5',
       synthesizerModel: 'moonshotai/kimi-k2.5',
     })
   })

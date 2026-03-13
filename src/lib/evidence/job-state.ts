@@ -1,4 +1,4 @@
-export const EVIDENCE_JOB_STAGES = ['ingest', 'analyze', 'finalize'] as const
+export const EVIDENCE_JOB_STAGES = ['ingest', 'analyze', 'finalize', 'write_vault'] as const
 
 export type EvidenceJobStage = typeof EVIDENCE_JOB_STAGES[number]
 export type EvidenceJobStatus = 'queued' | 'processing' | 'completed' | 'failed'

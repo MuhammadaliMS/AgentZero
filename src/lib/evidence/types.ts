@@ -1,5 +1,63 @@
 import type { ArtifactChannel, ClaimKind, MutationBundle } from '@/lib/evidence/schema'
 
+export type VaultDocumentType =
+  | 'source_artifact'
+  | 'entity'
+  | 'commitment'
+  | 'decision_thread'
+  | 'timeline'
+  | 'narrative'
+  | 'brief'
+
+export type VaultRenderStrategy = 'deterministic' | 'llm_assisted' | 'kimi_authored'
+
+export type VaultSectionKind =
+  | 'summary'
+  | 'facts'
+  | 'changes'
+  | 'evidence'
+  | 'timeline'
+  | 'work'
+  | 'links'
+  | 'narrative'
+  | 'brief'
+  | 'manual'
+
+export interface VaultCitation {
+  label: string
+  linkKind?: string | null
+  targetId?: string | null
+  path?: string | null
+  happenedAt?: string | null
+}
+
+export interface VaultSection {
+  id: string
+  title: string
+  kind: VaultSectionKind
+  content: string
+  generated: boolean
+  editable: boolean
+  citations?: VaultCitation[]
+  updatedAt?: string | null
+}
+
+export interface VaultManualSection {
+  key: string
+  title: string
+  content: string
+  updatedAt?: string | null
+}
+
+export interface VaultNamedLink {
+  linkKind: 'entity' | 'claim' | 'commitment' | 'narrative' | 'evidence_item' | 'artifact' | 'decision_thread'
+  targetId: string
+  targetLabel: string | null
+  targetPath: string | null
+  targetType: string | null
+  targetMetadata: Record<string, unknown>
+}
+
 export interface SourceArtifact {
   id: string
   orgId: string
@@ -62,11 +120,44 @@ export interface VaultDocumentRecord {
   orgId: string
   path: string
   title: string
-  documentType: 'source_artifact' | 'entity' | 'commitment' | 'decision_thread' | 'timeline' | 'narrative'
+  documentType: VaultDocumentType
+  renderStrategy: VaultRenderStrategy
   contentMarkdown: string
   frontmatter: Record<string, unknown>
+  sections: VaultSection[]
+  manualSections: Record<string, VaultManualSection>
   sourceMode: 'generated' | 'manual' | 'hybrid'
+  stalenessReason: string | null
+  lastSourceUpdateAt: string | null
   metadata: Record<string, unknown>
+}
+
+export interface VaultContextPack {
+  orgId: string
+  title: string
+  documentType: VaultDocumentType
+  entity?: {
+    id: string
+    name: string
+    entityType: string
+    description: string | null
+  } | null
+  artifact?: SourceArtifact | null
+  claims?: ClaimRecord[]
+  commitments?: Array<Record<string, unknown>>
+  decisionThreads?: DecisionThreadRecord[]
+  evidenceItems?: EvidenceItem[]
+  recentArtifacts?: Array<Record<string, unknown>>
+  previousSummary?: string | null
+  manualSections?: Record<string, VaultManualSection>
+}
+
+export interface VaultWriteJob {
+  orgId: string
+  artifactId: string
+  documentPath: string
+  documentType: VaultDocumentType
+  renderStrategy: VaultRenderStrategy
 }
 
 export interface ContextPack {

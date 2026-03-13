@@ -8,10 +8,11 @@ import {
 
 describe('evidence job state', () => {
   it('advances stages in the expected order', () => {
-    expect(EVIDENCE_JOB_STAGES).toEqual(['ingest', 'analyze', 'finalize'])
+    expect(EVIDENCE_JOB_STAGES).toEqual(['ingest', 'analyze', 'finalize', 'write_vault'])
     expect(getNextEvidenceJobStage('ingest')).toBe('analyze')
     expect(getNextEvidenceJobStage('analyze')).toBe('finalize')
-    expect(getNextEvidenceJobStage('finalize')).toBeNull()
+    expect(getNextEvidenceJobStage('finalize')).toBe('write_vault')
+    expect(getNextEvidenceJobStage('write_vault')).toBeNull()
   })
 
   it('treats completed and failed as terminal statuses', () => {

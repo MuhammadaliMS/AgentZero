@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import {
   flattenVaultDocumentPaths,
+  groupEntryPointsByFreshness,
+  labelDocumentType,
   summarizeArtifactChannels,
+  type IntelligenceVaultEntryPoint,
   type IntelligenceVaultTreeNode,
 } from '@/lib/evidence/intelligence-ui'
 
@@ -65,5 +68,42 @@ describe('summarizeArtifactChannels', () => {
 
   it('falls back to an empty-state label when there are no channels', () => {
     expect(summarizeArtifactChannels([])).toBe('No synced sources yet')
+  })
+})
+
+describe('groupEntryPointsByFreshness', () => {
+  it('separates recently updated entry points from older ones', () => {
+    const now = new Date()
+    const recent = new Date(now.getTime() - 6 * 3_600_000).toISOString()
+    const stale = new Date(now.getTime() - 96 * 3_600_000).toISOString()
+    const entries: IntelligenceVaultEntryPoint[] = [
+      {
+        path: 'Narratives/Accounts/crane.md',
+        title: 'Crane',
+        documentType: 'narrative',
+        updatedAt: recent,
+        lastSourceUpdateAt: recent,
+      },
+      {
+        path: 'Knowledge/Organizations/keyvalue.md',
+        title: 'KeyValue',
+        documentType: 'entity',
+        updatedAt: stale,
+        lastSourceUpdateAt: stale,
+      },
+    ]
+
+    const grouped = groupEntryPointsByFreshness(entries)
+    expect(grouped.fresh).toHaveLength(1)
+    expect(grouped.older).toHaveLength(1)
+    expect(grouped.fresh[0]?.title).toBe('Crane')
+  })
+})
+
+describe('labelDocumentType', () => {
+  it('uses readable labels for key vault doc types', () => {
+    expect(labelDocumentType('decision_thread')).toBe('Decision')
+    expect(labelDocumentType('commitment')).toBe('Action item')
+    expect(labelDocumentType('brief')).toBe('Brief')
   })
 })

@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildBriefVaultPath,
+  buildNarrativeVaultPath,
   buildSourceArtifactVaultPath,
   buildVaultTree,
+  createManualSections,
+  renderBriefDocument,
+  renderNarrativeDocument,
   renderSourceArtifactDocument,
   slugifyVaultSegment,
 } from '@/lib/evidence/vault'
@@ -64,13 +69,67 @@ describe('renderSourceArtifactDocument', () => {
     })
 
     expect(rendered.frontmatter.artifactId).toBe('artifact-1')
+    expect(rendered.renderStrategy).toBe('llm_assisted')
+    expect(rendered.sections[0]?.title).toBe('Source metadata')
     expect(rendered.contentMarkdown).toContain('# Crane Intro Call')
-    expect(rendered.contentMarkdown).toContain('## Evidence')
+    expect(rendered.contentMarkdown).toContain('## Chronology')
     expect(rendered.contentMarkdown).toContain('Max Chapman')
     expect(rendered.links).toEqual([
-      { linkKind: 'artifact', targetId: 'artifact-1' },
-      { linkKind: 'evidence_item', targetId: 'ev-1' },
+      expect.objectContaining({ linkKind: 'artifact', targetId: 'artifact-1' }),
+      expect.objectContaining({ linkKind: 'evidence_item', targetId: 'ev-1' }),
     ])
+  })
+})
+
+describe('narrative and brief rendering', () => {
+  it('creates account narratives with persistent manual sections', () => {
+    const rendered = renderNarrativeDocument({
+      title: 'Crane Ventures',
+      kind: 'account',
+      sections: [
+        {
+          id: 'current-state',
+          title: 'Current state',
+          kind: 'narrative',
+          content: 'Crane is in active diligence with KeyValue.',
+          generated: true,
+          editable: false,
+        },
+      ],
+      previousManualSections: createManualSections({
+        manual_notes: {
+          key: 'manual_notes',
+          title: 'Manual notes',
+          content: 'Follow up on valuation sensitivity.',
+        },
+      }),
+    })
+
+    expect(rendered.path).toBe('Narratives/Accounts/crane-ventures.md')
+    expect(rendered.sourceMode).toBe('hybrid')
+    expect(rendered.manualSections.manual_notes?.content).toContain('valuation sensitivity')
+  })
+
+  it('creates daily brief documents in the Briefs folder', () => {
+    const rendered = renderBriefDocument({
+      title: 'Daily Brief 2026-03-13',
+      dateKey: '2026-03-13',
+      sections: [
+        {
+          id: 'today',
+          title: 'Today at a glance',
+          kind: 'brief',
+          content: 'Crane moved forward and one at-risk action item surfaced.',
+          generated: true,
+          editable: false,
+        },
+      ],
+    })
+
+    expect(buildBriefVaultPath({ dateKey: '2026-03-13' })).toBe('Briefs/2026-03-13.md')
+    expect(buildNarrativeVaultPath('Crane <> KeyValue', 'relationship')).toBe('Narratives/Relationships/crane-keyvalue.md')
+    expect(rendered.documentType).toBe('brief')
+    expect(rendered.contentMarkdown).toContain('Today at a glance')
   })
 })
 

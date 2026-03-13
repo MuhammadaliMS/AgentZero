@@ -10,6 +10,7 @@ import {
 } from '@/lib/evidence/agents'
 import { buildEvidenceContextPack } from '@/lib/evidence/context-pack'
 import {
+  type AppliedMutationResult,
   applyMutationBundle,
   fetchArtifactById,
   fetchEvidenceForArtifact,
@@ -35,6 +36,7 @@ export interface EvidenceJobRecord {
   compatibility: EvidencePipelineParams['compatibility'] | null
   sourceSummary: Record<string, unknown> | null
   analystBundle: Record<string, unknown> | null
+  appliedSummary: Record<string, unknown> | null
   artifactId: string | null
   attempts: number
   maxAttempts: number
@@ -101,6 +103,9 @@ export async function processNextEvidenceJob(jobId?: string): Promise<EvidenceJo
         break
       case 'finalize':
         await runFinalizeStage(admin, job)
+        break
+      case 'write_vault':
+        await runWriteVaultStage(admin, job)
         break
       default:
         throw new Error(`Unsupported evidence job stage: ${job.currentStage}`)
@@ -270,9 +275,25 @@ async function runFinalizeStage(admin: AdminClient, job: EvidenceJobRecord): Pro
     })
   }
 
+  await advanceEvidenceJob(admin, job, {
+    appliedSummary: serializeAppliedMutationResult(applied),
+    stageMetrics: {
+      claimCount: applied.claimIds.length,
+      entityCount: applied.entityIds.length,
+      commitmentCount: applied.commitmentIds.length,
+      decisionThreadCount: applied.decisionThreadIds.length,
+    },
+  })
+}
+
+async function runWriteVaultStage(admin: AdminClient, job: EvidenceJobRecord): Promise<void> {
+  if (!job.artifactId) throw new Error('Evidence job missing artifact_id for write_vault stage')
+  if (!job.appliedSummary) throw new Error('Evidence job missing applied_summary for write_vault stage')
+
+  const applied = deserializeAppliedMutationResult(job.appliedSummary)
   const affectedVaultPaths = await regenerateVaultDocuments(admin, {
     orgId: job.orgId,
-    artifactId: artifact.id,
+    artifactId: job.artifactId,
     applied,
   })
 
@@ -304,6 +325,7 @@ async function advanceEvidenceJob(
     artifactId?: string | null
     sourceSummary?: Record<string, unknown> | null
     analystBundle?: Record<string, unknown> | null
+    appliedSummary?: Record<string, unknown> | null
     stageMetrics?: Record<string, unknown>
   }
 ): Promise<void> {
@@ -318,6 +340,7 @@ async function advanceEvidenceJob(
       artifact_id: updates.artifactId ?? job.artifactId,
       source_summary: (updates.sourceSummary ?? job.sourceSummary ?? null) as unknown as Json,
       analyst_bundle: (updates.analystBundle ?? job.analystBundle ?? null) as unknown as Json,
+      applied_summary: (updates.appliedSummary ?? job.appliedSummary ?? null) as unknown as Json,
       stage_metrics: (updates.stageMetrics ?? {}) as unknown as Json,
       current_stage: nextStage,
       status: 'queued',
@@ -403,6 +426,7 @@ function mapEvidenceJob(row: Record<string, unknown>): EvidenceJobRecord {
     compatibility: objectValue(row.compatibility) as EvidencePipelineParams['compatibility'] | null,
     sourceSummary: objectValue(row.source_summary),
     analystBundle: objectValue(row.analyst_bundle),
+    appliedSummary: objectValue(row.applied_summary),
     artifactId: nullableString(row.artifact_id),
     attempts: numericValue(row.attempts, 0),
     maxAttempts: numericValue(row.max_attempts, 5),
@@ -426,4 +450,38 @@ function objectValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null
+}
+
+function arrayOfStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => String(item)).filter(Boolean)
+}
+
+function serializeAppliedMutationResult(result: AppliedMutationResult): Record<string, unknown> {
+  return {
+    artifactId: result.artifactId,
+    evidenceItemIds: result.evidenceItemIds,
+    claimIds: result.claimIds,
+    entityIds: result.entityIds,
+    decisionThreadIds: result.decisionThreadIds,
+    commitmentIds: result.commitmentIds,
+    memoryIds: result.memoryIds,
+    affectedVaultPaths: result.affectedVaultPaths,
+  }
+}
+
+function deserializeAppliedMutationResult(value: Record<string, unknown>): AppliedMutationResult {
+  return {
+    artifactId: String(value.artifactId ?? ''),
+    evidenceItemIds: arrayOfStrings(value.evidenceItemIds),
+    claimIds: arrayOfStrings(value.claimIds),
+    entityIds: arrayOfStrings(value.entityIds),
+    decisionThreadIds: arrayOfStrings(value.decisionThreadIds),
+    commitmentIds: arrayOfStrings(value.commitmentIds),
+    memoryIds: arrayOfStrings(value.memoryIds),
+    affectedVaultPaths: arrayOfStrings(value.affectedVaultPaths),
+    entitiesByRef: new Map(),
+    commitmentsByTitle: new Map(),
+    decisionThreadsByTitle: new Map(),
+  }
 }

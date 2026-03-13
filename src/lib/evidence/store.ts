@@ -3,12 +3,33 @@ import { createUntypedAdminClient } from '@/lib/supabase/admin'
 import { generateEmbedding, type ExtractedEntity } from '@/lib/openai/client'
 import { normalizeCanonical, upsertEntities, upsertRelationship } from '@/lib/graph/extraction-pipeline'
 import { buildClaimKey, type NormalizedArtifact, type NormalizedEvidenceItem } from '@/lib/evidence/normalizers'
-import type { ContextPack, EvidenceItem, SourceArtifact } from '@/lib/evidence/types'
+import type {
+  ContextPack,
+  EvidenceItem,
+  SourceArtifact,
+  VaultDocumentRecord,
+  VaultManualSection,
+  VaultNamedLink,
+  VaultSection,
+} from '@/lib/evidence/types'
 import type { MutationBundle } from '@/lib/evidence/schema'
 import { selectEvidenceForEmbedding } from '@/lib/evidence/selection'
 import {
+  summarizePreviousSections,
+  writeEntitySynthesis,
+  writeNarrativeAuthor,
+  writeSourceInterpretation,
+} from '@/lib/evidence/vault-author'
+import {
+  buildBriefVaultPath,
+  buildCommitmentVaultPath,
+  buildDecisionThreadVaultPath,
   buildEntityVaultPath,
+  buildNarrativeVaultPath,
+  buildSourceArtifactVaultPath,
   buildTimelineVaultPath,
+  createSection,
+  renderBriefDocument,
   renderCommitmentDocument,
   renderDecisionThreadDocument,
   renderEntityDocument,
@@ -508,10 +529,27 @@ export async function regenerateVaultDocuments(
   const artifactEvidence = await fetchEvidenceForArtifact(supabase, input.orgId, input.artifactId)
 
   if (artifact) {
+    const sourcePath = buildSourceArtifactVaultPath(artifact)
+    const previousSourceDoc = await fetchVaultDocumentByPath(supabase, input.orgId, sourcePath)
+    const sourceFingerprint = buildFingerprint({
+      title: artifact.title,
+      evidenceItemIds: artifactEvidence.map((item) => item.id),
+    })
+    const sourceInterpretation = shouldRegenerateInterpretation(previousSourceDoc, sourceFingerprint)
+      ? await writeSourceInterpretation({
+          artifact,
+          evidenceItems: artifactEvidence,
+          previousSummary: previousSourceDoc?.metadata.previousSummary as string | null | undefined,
+        })
+      : selectInterpretiveSections(previousSourceDoc?.sections ?? [])
     const sourceDoc = renderSourceArtifactDocument({
       artifact,
       evidenceItems: artifactEvidence,
+      interpretationSections: sourceInterpretation,
+      previousManualSections: previousSourceDoc?.manualSections,
     })
+    sourceDoc.metadata.sourceFingerprint = sourceFingerprint
+    sourceDoc.metadata.previousSummary = summarizePreviousSections(sourceInterpretation)
     await upsertVaultDocument(supabase, input.orgId, sourceDoc)
     affectedPaths.push(sourceDoc.path)
   }
@@ -528,6 +566,25 @@ export async function regenerateVaultDocuments(
       input.orgId,
       claims.map(claim => stringFromUnknown(claim.id)).filter(Boolean)
     )
+    const entityPath = buildEntityVaultPath(entity)
+    const previousEntityDoc = await fetchVaultDocumentByPath(supabase, input.orgId, entityPath)
+    const entityFingerprint = buildFingerprint({
+      claimIds: claims.map((claim) => stringFromUnknown(claim.id)).filter(Boolean),
+      commitmentIds: commitments.map((commitment) => stringFromUnknown(commitment.id)).filter(Boolean),
+      decisionThreadIds: decisionThreads.map((thread) => stringFromUnknown(thread.id)).filter(Boolean),
+    })
+    const entityInterpretation = shouldRegenerateInterpretation(previousEntityDoc, entityFingerprint)
+      ? await writeEntitySynthesis({
+          title: entity.name,
+          entityType: entity.entityType,
+          claims,
+          commitments,
+          decisionThreads,
+          evidenceItems,
+          previousSummary: previousEntityDoc?.metadata.previousSummary as string | null | undefined,
+          manualSections: previousEntityDoc?.manualSections,
+        })
+      : selectInterpretiveSections(previousEntityDoc?.sections ?? [])
 
     const entityDoc = renderEntityDocument({
       entity,
@@ -535,15 +592,21 @@ export async function regenerateVaultDocuments(
       commitments,
       decisionThreads,
       evidenceItems,
+      interpretationSections: entityInterpretation,
+      previousManualSections: previousEntityDoc?.manualSections,
     })
+    entityDoc.metadata.sourceFingerprint = entityFingerprint
+    entityDoc.metadata.previousSummary = summarizePreviousSections(entityInterpretation)
     await upsertVaultDocument(supabase, input.orgId, entityDoc)
     affectedPaths.push(entityDoc.path)
 
+    const previousTimelineDoc = await fetchVaultDocumentByPath(supabase, input.orgId, buildTimelineVaultPath(entity.name))
     const timelineDoc = renderTimelineDocument({
       title: entity.name,
       claims,
       evidenceItems,
       path: buildTimelineVaultPath(entity.name),
+      previousManualSections: previousTimelineDoc?.manualSections,
     })
     await upsertVaultDocument(supabase, input.orgId, timelineDoc)
     affectedPaths.push(timelineDoc.path)
@@ -556,10 +619,32 @@ export async function regenerateVaultDocuments(
     const evidenceItems = latestEvidenceItemId
       ? await fetchEvidenceItemsByIds(supabase, input.orgId, [latestEvidenceItemId])
       : []
+    const commitmentPath = buildCommitmentVaultPath(stringFromUnknown(commitment.title, 'Untitled commitment'))
+    const previousCommitmentDoc = await fetchVaultDocumentByPath(supabase, input.orgId, commitmentPath)
+    const commitmentFingerprint = buildFingerprint({
+      status: commitment.status,
+      dueDate: commitment.due_date ?? null,
+      evidenceItemIds: evidenceItems.map((item) => item.id),
+    })
+    const commitmentInterpretation = shouldRegenerateInterpretation(previousCommitmentDoc, commitmentFingerprint)
+      ? await writeEntitySynthesis({
+          title: stringFromUnknown(commitment.title, 'Untitled commitment'),
+          claims: [],
+          commitments: [commitment],
+          decisionThreads: [],
+          evidenceItems,
+          previousSummary: previousCommitmentDoc?.metadata.previousSummary as string | null | undefined,
+          manualSections: previousCommitmentDoc?.manualSections,
+        })
+      : selectInterpretiveSections(previousCommitmentDoc?.sections ?? [])
     const commitmentDoc = renderCommitmentDocument({
       commitment,
       evidenceItems,
+      interpretationSections: commitmentInterpretation,
+      previousManualSections: previousCommitmentDoc?.manualSections,
     })
+    commitmentDoc.metadata.sourceFingerprint = commitmentFingerprint
+    commitmentDoc.metadata.previousSummary = summarizePreviousSections(commitmentInterpretation)
     await upsertVaultDocument(supabase, input.orgId, commitmentDoc)
     affectedPaths.push(commitmentDoc.path)
   }
@@ -575,11 +660,33 @@ export async function regenerateVaultDocuments(
       input.orgId,
       claims.map(claim => stringFromUnknown(claim.id)).filter(Boolean)
     )
+    const threadPath = buildDecisionThreadVaultPath(thread.title)
+    const previousThreadDoc = await fetchVaultDocumentByPath(supabase, input.orgId, threadPath)
+    const threadFingerprint = buildFingerprint({
+      status: thread.status,
+      currentClaimId: thread.current_claim_id,
+      relatedEntityIds: thread.related_entity_ids ?? [],
+    })
+    const threadInterpretation = shouldRegenerateInterpretation(previousThreadDoc, threadFingerprint)
+      ? await writeEntitySynthesis({
+          title: thread.title,
+          claims,
+          commitments: [],
+          decisionThreads: [thread],
+          evidenceItems,
+          previousSummary: previousThreadDoc?.metadata.previousSummary as string | null | undefined,
+          manualSections: previousThreadDoc?.manualSections,
+        })
+      : selectInterpretiveSections(previousThreadDoc?.sections ?? [])
     const threadDoc = renderDecisionThreadDocument({
       decisionThread: thread,
       claims,
       evidenceItems,
+      interpretationSections: threadInterpretation,
+      previousManualSections: previousThreadDoc?.manualSections,
     })
+    threadDoc.metadata.sourceFingerprint = threadFingerprint
+    threadDoc.metadata.previousSummary = summarizePreviousSections(threadInterpretation)
     await upsertVaultDocument(supabase, input.orgId, threadDoc)
     affectedPaths.push(threadDoc.path)
   }
@@ -592,14 +699,165 @@ export async function regenerateVaultDocuments(
       .in('id', input.applied.memoryIds)
 
     for (const memory of memories ?? []) {
+      const narrativePath = buildNarrativeVaultPath(stringFromUnknown(memory.subject))
+      const previousNarrativeDoc = await fetchVaultDocumentByPath(supabase, input.orgId, narrativePath)
+      const evidenceItems = artifactEvidence.slice(0, 12)
+      const narrativeSections = await writeNarrativeAuthor({
+        title: stringFromUnknown(memory.subject),
+        narrativeType: 'initiative',
+        summaryFacts: [stringFromUnknown(memory.content)],
+        evidenceItems,
+        recentArtifacts: artifact ? [{ id: artifact.id, title: artifact.title, channel: artifact.channel }] : [],
+        previousSummary: previousNarrativeDoc?.metadata.previousSummary as string | null | undefined,
+        manualSections: previousNarrativeDoc?.manualSections,
+      })
       const narrativeDoc = renderNarrativeDocument({
         title: stringFromUnknown(memory.subject),
-        content: stringFromUnknown(memory.content),
+        sections: narrativeSections.length > 0
+          ? [
+              ...narrativeSections,
+              {
+                id: 'evidence',
+                title: 'Evidence',
+                kind: 'evidence',
+                content: evidenceItems.map((item) => `- ${item.authorName ?? 'Unknown'}: ${item.text.slice(0, 240)}`).join('\n') || stringFromUnknown(memory.content),
+                generated: true,
+                editable: false,
+              },
+            ]
+          : [{
+              id: 'current-state',
+              title: 'Current state',
+              kind: 'narrative',
+              content: stringFromUnknown(memory.content),
+              generated: true,
+              editable: false,
+            }],
         linkedIds: [stringFromUnknown(memory.id)],
+        previousManualSections: previousNarrativeDoc?.manualSections,
+        lastSourceUpdateAt: newestEvidenceTimestampLocal(evidenceItems),
       })
       await upsertVaultDocument(supabase, input.orgId, narrativeDoc)
       affectedPaths.push(narrativeDoc.path)
     }
+  }
+
+  const organizationEntities = await fetchEntitiesByIds(supabase, input.orgId, uniqueEntityIds)
+  for (const entity of organizationEntities.filter((candidate) => ['vendor', 'customer', 'team'].includes(candidate.entityType))) {
+    const claims = await fetchClaimsForEntity(supabase, input.orgId, entity.id)
+    const commitments = await fetchCommitmentsForEntity(supabase, input.orgId, entity.id)
+    const decisionThreads = await fetchDecisionThreadsForEntity(supabase, input.orgId, entity.id)
+    const evidenceItems = await fetchEvidenceForClaims(
+      supabase,
+      input.orgId,
+      claims.map((claim) => stringFromUnknown(claim.id)).filter(Boolean)
+    )
+    const narrativePath = buildNarrativeVaultPath(entity.name, 'account')
+    const previousNarrativeDoc = await fetchVaultDocumentByPath(supabase, input.orgId, narrativePath)
+    const sections = await writeNarrativeAuthor({
+      title: entity.name,
+      narrativeType: 'account',
+      summaryFacts: [
+        `${entity.name} is represented as a ${entity.entityType}.`,
+        commitments.length > 0 ? `${commitments.length} linked commitments are active.` : 'No linked commitments are currently active.',
+        decisionThreads.length > 0 ? `${decisionThreads.length} decision threads are linked.` : 'No linked decision threads are linked yet.',
+      ],
+      evidenceItems,
+      recentArtifacts: await fetchRecentArtifactsForEntity(supabase, input.orgId, entity.id),
+      previousSummary: previousNarrativeDoc?.metadata.previousSummary as string | null | undefined,
+      manualSections: previousNarrativeDoc?.manualSections,
+    })
+    if (sections.length === 0) continue
+
+    const narrativeDoc = renderNarrativeDocument({
+      title: entity.name,
+      kind: 'account',
+      sections: [
+        ...sections,
+        createEvidenceSection('evidence', 'Evidence', evidenceItems),
+      ],
+      linkedIds: [entity.id],
+      previousManualSections: previousNarrativeDoc?.manualSections,
+      lastSourceUpdateAt: newestEvidenceTimestampLocal(evidenceItems),
+    })
+    await upsertVaultDocument(supabase, input.orgId, narrativeDoc)
+    affectedPaths.push(narrativeDoc.path)
+  }
+
+  if (artifact && artifact.title.includes('<>')) {
+    const relationshipPath = buildNarrativeVaultPath(artifact.title, 'relationship')
+    const previousRelationshipDoc = await fetchVaultDocumentByPath(supabase, input.orgId, relationshipPath)
+    const relationshipSections = await writeNarrativeAuthor({
+      title: artifact.title,
+      narrativeType: 'relationship',
+      summaryFacts: [
+        `Relationship doc generated from ${artifact.channel} artifact "${artifact.title}".`,
+        `${artifactEvidence.length} evidence items are linked to this source.`,
+        `${input.applied.claimIds.length} claims were applied in the latest run.`,
+      ],
+      evidenceItems: artifactEvidence,
+      recentArtifacts: [{ id: artifact.id, title: artifact.title, channel: artifact.channel, startedAt: artifact.startedAt }],
+      previousSummary: previousRelationshipDoc?.metadata.previousSummary as string | null | undefined,
+      manualSections: previousRelationshipDoc?.manualSections,
+    })
+    if (relationshipSections.length > 0) {
+      const relationshipDoc = renderNarrativeDocument({
+        title: artifact.title,
+        kind: 'relationship',
+        sections: [
+          ...relationshipSections,
+          createEvidenceSection('evidence', 'Evidence', artifactEvidence),
+        ],
+        linkedIds: [artifact.id, ...uniqueEntityIds],
+        previousManualSections: previousRelationshipDoc?.manualSections,
+        lastSourceUpdateAt: artifact.endedAt ?? artifact.startedAt,
+      })
+      await upsertVaultDocument(supabase, input.orgId, relationshipDoc)
+      affectedPaths.push(relationshipDoc.path)
+    }
+  }
+
+  const briefDateKey = new Date().toISOString().slice(0, 10)
+  const briefPath = buildBriefVaultPath({ dateKey: briefDateKey })
+  const previousBriefDoc = await fetchVaultDocumentByPath(supabase, input.orgId, briefPath)
+  const recentVaultDocs = await fetchRecentVaultDocuments(supabase, input.orgId, 6)
+  const briefSections = await writeNarrativeAuthor({
+    title: `Daily Brief ${briefDateKey}`,
+    narrativeType: 'brief',
+    summaryFacts: [
+      `${affectedPaths.length} vault documents were affected by the latest write pass.`,
+      `${input.applied.claimIds.length} claims are linked to the current artifact update.`,
+      `${input.applied.commitmentIds.length} commitments and ${input.applied.decisionThreadIds.length} decision threads changed in this pass.`,
+    ],
+    evidenceItems: artifactEvidence,
+    recentArtifacts: recentVaultDocs.map((doc) => ({
+      path: doc.path,
+      title: doc.title,
+      documentType: doc.documentType,
+      updatedAt: doc.lastSourceUpdateAt ?? doc.metadata.updatedAt ?? null,
+    })),
+    previousSummary: previousBriefDoc?.metadata.previousSummary as string | null | undefined,
+    manualSections: previousBriefDoc?.manualSections,
+  })
+  if (briefSections.length > 0) {
+    const briefDoc = renderBriefDocument({
+      title: `Daily Brief ${briefDateKey}`,
+      dateKey: briefDateKey,
+      sections: [
+        ...briefSections,
+        createSection({
+          id: 'recently-changed',
+          title: 'Recently changed',
+          kind: 'links',
+          content: recentVaultDocs.map((doc) => `- ${doc.title} (${doc.documentType})`).join('\n'),
+        }),
+      ],
+      linkedIds: uniqueEntityIds,
+      previousManualSections: previousBriefDoc?.manualSections,
+      lastSourceUpdateAt: artifact?.endedAt ?? artifact?.startedAt ?? null,
+    })
+    await upsertVaultDocument(supabase, input.orgId, briefDoc)
+    affectedPaths.push(briefDoc.path)
   }
 
   return [...new Set(affectedPaths)]
@@ -633,9 +891,14 @@ async function upsertVaultDocument(
       path: doc.path,
       title: doc.title,
       document_type: doc.documentType,
+      render_strategy: doc.renderStrategy,
       content_markdown: doc.contentMarkdown,
       frontmatter: doc.frontmatter as Json,
+      sections: doc.sections as unknown as Json,
+      manual_sections: doc.manualSections as unknown as Json,
       source_mode: doc.sourceMode,
+      staleness_reason: doc.stalenessReason,
+      last_source_update_at: doc.lastSourceUpdateAt,
       metadata: doc.metadata as Json,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'org_id,path' })
@@ -653,8 +916,63 @@ async function upsertVaultDocument(
         vault_document_id: vaultDocumentId,
         link_kind: link.linkKind,
         target_id: link.targetId,
+        target_label: link.targetLabel ?? null,
+        target_path: link.targetPath ?? null,
+        target_type: link.targetType ?? null,
+        target_metadata: (link.targetMetadata ?? {}) as Json,
       }, { onConflict: 'vault_document_id,link_kind,target_id' })
   }
+}
+
+export async function fetchVaultDocumentByPath(
+  supabase: AdminClient,
+  orgId: string,
+  path: string
+): Promise<VaultDocumentRecord | null> {
+  const { data } = await supabase
+    .from('vault_documents')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('path', path)
+    .maybeSingle()
+
+  return data ? mapVaultDocument(data) : null
+}
+
+export async function fetchRecentVaultDocuments(
+  supabase: AdminClient,
+  orgId: string,
+  limit = 12
+): Promise<VaultDocumentRecord[]> {
+  const { data } = await supabase
+    .from('vault_documents')
+    .select('*')
+    .eq('org_id', orgId)
+    .order('updated_at', { ascending: false })
+    .limit(limit)
+
+  return (data ?? []).map(mapVaultDocument)
+}
+
+export async function fetchNamedVaultLinks(
+  supabase: AdminClient,
+  orgId: string,
+  vaultDocumentId: string
+): Promise<VaultNamedLink[]> {
+  const { data } = await supabase
+    .from('vault_document_links')
+    .select('link_kind, target_id, target_label, target_path, target_type, target_metadata')
+    .eq('org_id', orgId)
+    .eq('vault_document_id', vaultDocumentId)
+
+  return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+    linkKind: row.link_kind as VaultNamedLink['linkKind'],
+    targetId: stringFromUnknown(row.target_id),
+    targetLabel: nullableString(row.target_label),
+    targetPath: nullableString(row.target_path),
+    targetType: nullableString(row.target_type),
+    targetMetadata: objectValue(row.target_metadata) ?? {},
+  }))
 }
 
 async function resolveEntityRefs(
@@ -821,6 +1139,28 @@ async function fetchEntityById(
   }
 }
 
+async function fetchEntitiesByIds(
+  supabase: AdminClient,
+  orgId: string,
+  entityIds: string[]
+): Promise<Array<{ id: string; name: string; entityType: string; description: string | null; attributes?: Record<string, unknown> | null }>> {
+  if (entityIds.length === 0) return []
+
+  const { data } = await supabase
+    .from('entities')
+    .select('id, name, entity_type, description, attributes')
+    .eq('org_id', orgId)
+    .in('id', entityIds)
+
+  return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+    id: stringFromUnknown(row.id),
+    name: stringFromUnknown(row.name),
+    entityType: stringFromUnknown(row.entity_type),
+    description: nullableString(row.description),
+    attributes: objectValue(row.attributes),
+  }))
+}
+
 async function fetchClaimsForEntity(supabase: AdminClient, orgId: string, entityId: string): Promise<Array<Record<string, unknown>>> {
   const { data } = await supabase
     .from('claims')
@@ -871,6 +1211,30 @@ async function fetchDecisionThreadsForEntity(supabase: AdminClient, orgId: strin
     .contains('related_entity_ids', [entityId])
     .order('updated_at', { ascending: false })
     .limit(50)
+
+  return (data ?? []) as Array<Record<string, unknown>>
+}
+
+async function fetchRecentArtifactsForEntity(
+  supabase: AdminClient,
+  orgId: string,
+  entityId: string
+): Promise<Array<Record<string, unknown>>> {
+  const claims = await fetchClaimsForEntity(supabase, orgId, entityId)
+  const artifactIds = [...new Set(
+    claims
+      .map((claim) => stringFromUnknown(claim.artifact_id))
+      .filter(Boolean)
+  )]
+  if (artifactIds.length === 0) return []
+
+  const { data } = await supabase
+    .from('source_artifacts')
+    .select('id, title, channel, started_at, updated_at')
+    .eq('org_id', orgId)
+    .in('id', artifactIds)
+    .order('started_at', { ascending: false })
+    .limit(8)
 
   return (data ?? []) as Array<Record<string, unknown>>
 }
@@ -994,6 +1358,65 @@ function mapEvidenceItem(row: Record<string, unknown>): EvidenceItem {
     sourceAnchor: stringFromUnknown(row.source_anchor),
     metadata: objectValue(row.metadata) ?? {},
   }
+}
+
+function mapVaultDocument(row: Record<string, unknown>): VaultDocumentRecord {
+  return {
+    id: stringFromUnknown(row.id),
+    orgId: stringFromUnknown(row.org_id),
+    path: stringFromUnknown(row.path),
+    title: stringFromUnknown(row.title),
+    documentType: row.document_type as VaultDocumentRecord['documentType'],
+    renderStrategy: (stringFromUnknown(row.render_strategy, 'deterministic') as VaultDocumentRecord['renderStrategy']),
+    contentMarkdown: stringFromUnknown(row.content_markdown),
+    frontmatter: objectValue(row.frontmatter) ?? {},
+    sections: Array.isArray(row.sections) ? row.sections as VaultSection[] : [],
+    manualSections: (objectValue(row.manual_sections) as Record<string, VaultManualSection> | null) ?? {},
+    sourceMode: row.source_mode as VaultDocumentRecord['sourceMode'],
+    stalenessReason: nullableString(row.staleness_reason),
+    lastSourceUpdateAt: nullableString(row.last_source_update_at),
+    metadata: objectValue(row.metadata) ?? {},
+  }
+}
+
+function selectInterpretiveSections(sections: VaultSection[]): VaultSection[] {
+  return sections.filter((section) => ['summary', 'changes', 'narrative', 'brief', 'work'].includes(section.kind))
+}
+
+function shouldRegenerateInterpretation(
+  previousDoc: VaultDocumentRecord | null,
+  nextFingerprint: string
+): boolean {
+  if (!previousDoc) return true
+  return stringFromUnknown(previousDoc.metadata.sourceFingerprint) !== nextFingerprint
+}
+
+function buildFingerprint(payload: unknown): string {
+  return JSON.stringify(payload)
+}
+
+function newestEvidenceTimestampLocal(evidenceItems: EvidenceItem[]): string | null {
+  const values = evidenceItems
+    .map((item) => item.happenedAt)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+  return values.at(-1) ?? null
+}
+
+function createEvidenceSection(id: string, title: string, evidenceItems: EvidenceItem[]): VaultSection {
+  return createSection({
+    id,
+    title,
+    kind: 'evidence',
+    content: evidenceItems.length > 0
+      ? evidenceItems.slice(0, 12).map((item) => `- ${item.authorName ?? 'Unknown'}: ${item.text.slice(0, 240)}`).join('\n')
+      : '_No evidence linked yet_',
+    citations: evidenceItems.slice(0, 10).map((item) => ({
+      label: `${item.authorName ?? 'Unknown'} @ ${item.happenedAt ?? item.sequenceNo}`,
+      linkKind: 'evidence_item',
+      targetId: item.id,
+    })),
+  })
 }
 
 function normalizeRef(value: string): string {

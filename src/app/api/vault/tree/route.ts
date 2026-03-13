@@ -11,7 +11,7 @@ export async function GET() {
     const { orgId, admin } = await getAuthenticatedEvidenceContext()
     const { data, error } = await admin
       .from('vault_documents')
-      .select('path')
+      .select('path, title, document_type, updated_at, last_source_update_at')
       .eq('org_id', orgId)
       .order('path', { ascending: true })
 
@@ -19,10 +19,41 @@ export async function GET() {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    const paths = (data ?? []).map((row: Record<string, unknown>) => String(row.path ?? '')).filter(Boolean)
+    const documents = ((data ?? []) as Array<Record<string, unknown>>)
+      .map((row) => ({
+        path: String(row.path ?? ''),
+        title: String(row.title ?? ''),
+        documentType: String(row.document_type ?? ''),
+        updatedAt: String(row.updated_at ?? ''),
+        lastSourceUpdateAt: typeof row.last_source_update_at === 'string' ? row.last_source_update_at : null,
+      }))
+      .filter((row) => row.path.length > 0)
+    const paths = documents.map((row) => row.path)
+    const recentlyChanged = [...documents]
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 12)
+    const accounts = documents
+      .filter((doc) => doc.path.startsWith('Narratives/Accounts/') || doc.path.startsWith('Knowledge/Organizations/'))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 12)
+    const relationships = documents
+      .filter((doc) => doc.path.startsWith('Narratives/Relationships/'))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 12)
+    const jumpBackIn = documents
+      .filter((doc) => doc.path.startsWith('Briefs/') || doc.path.startsWith('Narratives/'))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 12)
+
     return NextResponse.json({
       tree: buildVaultTree(paths),
       total: paths.length,
+      entryPoints: {
+        accounts,
+        relationships,
+        jumpBackIn,
+        recentlyChanged,
+      },
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error'

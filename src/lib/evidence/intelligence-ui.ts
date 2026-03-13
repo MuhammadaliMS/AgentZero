@@ -5,6 +5,14 @@ export interface IntelligenceVaultTreeNode {
   children?: IntelligenceVaultTreeNode[]
 }
 
+export interface IntelligenceVaultEntryPoint {
+  path: string
+  title: string
+  documentType: string
+  updatedAt: string
+  lastSourceUpdateAt: string | null
+}
+
 const CHANNEL_LABELS: Record<string, string> = {
   meeting: 'meeting',
   email: 'email',
@@ -67,4 +75,41 @@ export function summarizeArtifactChannels(channels: string[]): string {
       return `${count} ${label}`
     })
     .join(', ')
+}
+
+export function groupEntryPointsByFreshness(entries: IntelligenceVaultEntryPoint[]): {
+  fresh: IntelligenceVaultEntryPoint[]
+  older: IntelligenceVaultEntryPoint[]
+} {
+  const now = Date.now()
+  const fresh: IntelligenceVaultEntryPoint[] = []
+  const older: IntelligenceVaultEntryPoint[] = []
+
+  for (const entry of entries) {
+    const ageHours = (now - new Date(entry.updatedAt).getTime()) / 3_600_000
+    if (ageHours <= 48) {
+      fresh.push(entry)
+    } else {
+      older.push(entry)
+    }
+  }
+
+  return { fresh, older }
+}
+
+export function labelDocumentType(documentType: string): string {
+  switch (documentType) {
+    case 'source_artifact':
+      return 'Source'
+    case 'decision_thread':
+      return 'Decision'
+    case 'commitment':
+      return 'Action item'
+    case 'brief':
+      return 'Brief'
+    case 'narrative':
+      return 'Narrative'
+    default:
+      return documentType.replace(/_/g, ' ')
+  }
 }

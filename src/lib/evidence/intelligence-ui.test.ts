@@ -4,9 +4,11 @@ import {
   buildAccountWorkspaceSummary,
   buildEvidenceFeed,
   buildIntelligenceNowSummary,
+  describeLikelyNextAction,
   describeInitiativeState,
   dedupeEntryPoints,
   explainInitiativePriority,
+  findInitiativesForDocument,
   findChangedDocsForInitiative,
   findRelatedDocsForInitiative,
   flattenVaultDocumentPaths,
@@ -533,13 +535,91 @@ describe('buildEvidenceFeed', () => {
           summary: 'Estimate package is now at risk.',
         },
       ],
+      initiatives: [
+        {
+          id: 'crane',
+          title: 'Crane estimation',
+          status: 'active',
+          phase: 'execution',
+          nextMilestone: 'Send estimate package',
+          nextReviewAt: null,
+          lastSignalAt: '2026-03-13T07:00:00.000Z',
+          latestSummary: 'Working with Crane on the estimate package.',
+          currentHypothesis: null,
+          openQuestionCount: 0,
+          riskCount: 0,
+        },
+      ],
     })
 
     expect(feed[0]).toEqual(
       expect.objectContaining({
         title: 'Crane <> KeyValue',
         supportingPath: 'Sources/Meetings/crane.md',
+        relatedInitiatives: ['Crane estimation'],
       })
     )
+  })
+})
+
+describe('findInitiativesForDocument', () => {
+  it('matches a document back to the most relevant initiatives', () => {
+    const matches = findInitiativesForDocument(
+      {
+        title: 'Crane Ventures',
+        summary: 'Estimate package is blocked waiting on Crane feedback.',
+        path: 'Narratives/Accounts/crane-ventures.md',
+      },
+      [
+        {
+          id: 'crane',
+          title: 'Crane estimation',
+          status: 'blocked',
+          phase: 'execution',
+          nextMilestone: 'Send estimate package',
+          nextReviewAt: null,
+          lastSignalAt: null,
+          latestSummary: 'Waiting on Crane feedback.',
+          currentHypothesis: null,
+          openQuestionCount: 0,
+          riskCount: 1,
+        },
+        {
+          id: 'axari',
+          title: 'Axari handoff',
+          status: 'waiting',
+          phase: 'verification',
+          nextMilestone: null,
+          nextReviewAt: null,
+          lastSignalAt: null,
+          latestSummary: 'Internal transition only.',
+          currentHypothesis: null,
+          openQuestionCount: 0,
+          riskCount: 0,
+        },
+      ]
+    )
+
+    expect(matches).toEqual([
+      expect.objectContaining({ id: 'crane' }),
+    ])
+  })
+})
+
+describe('describeLikelyNextAction', () => {
+  it('turns initiative state into a plain-english next move', () => {
+    expect(describeLikelyNextAction({
+      id: 'crane',
+      title: 'Crane estimation',
+      status: 'blocked',
+      phase: 'execution',
+      nextMilestone: 'Send estimate package',
+      nextReviewAt: null,
+      lastSignalAt: null,
+      latestSummary: null,
+      currentHypothesis: null,
+      openQuestionCount: 0,
+      riskCount: 1,
+    })).toContain('Send estimate package')
   })
 })

@@ -32,9 +32,11 @@ import {
   buildAccountWorkspaceSummary,
   buildEvidenceFeed,
   buildIntelligenceNowSummary,
+  describeLikelyNextAction,
   dedupeEntryPoints,
   explainInitiativePriority,
   findChangedDocsForInitiative,
+  findInitiativesForDocument,
   findRelatedDocsForInitiative,
   describeInitiativeState,
   groupEntryPointsByFreshness,
@@ -888,9 +890,44 @@ export function IntelligenceWorkspace() {
       meetings: entryPoints?.meetings ?? [],
       recentlyChanged: entryPoints?.recentlyChanged ?? [],
       work: entryPoints?.work ?? [],
+      initiatives,
     }),
-    [entryPoints]
+    [entryPoints, initiatives]
   )
+
+  const documentLeadSummary = useMemo(() => {
+    const leadSection = document?.document.sections.find((section) =>
+      section.kind === 'summary' || section.kind === 'narrative' || section.kind === 'changes'
+    )
+    return typeof leadSection?.content === 'string' ? leadSection.content : null
+  }, [document])
+
+  const documentInitiatives = useMemo(
+    () => document ? findInitiativesForDocument(
+      {
+        title: document.document.title,
+        summary: documentLeadSummary,
+        path: document.document.path,
+      },
+      initiatives
+    ) : [],
+    [document, documentLeadSummary, initiatives]
+  )
+
+  const selectedEvidenceEntry = useMemo(
+    () => selectedPanel === 'evidence' && document
+      ? evidenceFeed.find((entry) => entry.supportingPath === document.document.path) ?? null
+      : null,
+    [document, evidenceFeed, selectedPanel]
+  )
+
+  const isAccountDocument = selectedPanel === 'accounts'
+    && !!document
+    && ['narrative', 'entity'].includes(document.document.document_type)
+
+  const isEvidenceDocument = selectedPanel === 'evidence'
+    && !!document
+    && document.document.document_type === 'source_artifact'
 
   async function saveManualSection(key: string) {
     if (!document) return
@@ -1341,6 +1378,160 @@ export function IntelligenceWorkspace() {
               ) : !document ? (
                 <div className="flex h-[78vh] items-center justify-center text-sm text-muted-foreground">
                   Select a document from the left.
+                </div>
+              ) : isAccountDocument ? (
+                <div className="p-6">
+                  <div className="flex flex-col gap-3 border-b border-border/50 pb-5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">{labelDocumentType(document.document.document_type)}</Badge>
+                      <Badge variant="outline">Account dossier</Badge>
+                      <Badge variant="outline">{document.document.render_strategy.replace(/_/g, ' ')}</Badge>
+                    </div>
+                    <h2 className="text-2xl font-semibold tracking-tight">{document.document.title}</h2>
+                    <p className="text-sm text-muted-foreground">
+                      {documentLeadSummary ?? 'This account doc is now part of the chief-facing dossier layer.'}
+                    </p>
+                  </div>
+
+                  <div className="mt-6 grid gap-4 md:grid-cols-2">
+                    <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">Relationship status</h3>
+                      <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
+                        {documentLeadSummary ?? 'No relationship summary has been written yet.'}
+                      </p>
+                    </section>
+                    <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">What changed recently</h3>
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        {document.compare.previousSummary ?? 'No explicit change summary yet. Open the linked context to see the latest supporting docs.'}
+                      </p>
+                    </section>
+                    <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">Linked initiatives</h3>
+                      <div className="mt-3 space-y-2">
+                        {documentInitiatives.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No initiative is linked yet.</p>
+                        ) : (
+                          documentInitiatives.map((initiative) => (
+                            <button
+                              key={initiative.id}
+                              onClick={() => {
+                                setSelectedPanel('initiatives')
+                                setSelectedInitiativeId(initiative.id)
+                                setSelectedPath(null)
+                              }}
+                              className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="truncate text-sm font-medium">{initiative.title}</p>
+                                <Badge variant="secondary" className="text-[10px]">{initiative.phase}</Badge>
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">{describeLikelyNextAction(initiative)}</p>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </section>
+                    <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">What the chief will likely do next</h3>
+                      <div className="mt-3 space-y-2">
+                        {documentInitiatives.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No linked initiative means the chief does not yet have a concrete next move scoped here.</p>
+                        ) : (
+                          documentInitiatives.map((initiative) => (
+                            <div key={`${initiative.id}-next`} className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2">
+                              <p className="text-sm font-medium">{initiative.title}</p>
+                              <p className="mt-1 text-xs text-muted-foreground">{describeLikelyNextAction(initiative)}</p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </section>
+                  </div>
+
+                  <div className="mt-6 space-y-6">
+                    {document.document.sections.map((section) => (
+                      <section key={section.id} className="rounded-2xl border border-border/50 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 className="text-base font-medium">{section.title}</h3>
+                          <Badge variant="outline" className="text-[10px] uppercase">
+                            {section.kind}
+                          </Badge>
+                        </div>
+                        <div className="prose prose-sm mt-3 max-w-none dark:prose-invert">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {section.content}
+                          </ReactMarkdown>
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                </div>
+              ) : isEvidenceDocument ? (
+                <div className="p-6">
+                  <div className="flex flex-col gap-3 border-b border-border/50 pb-5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">Source</Badge>
+                      <Badge variant="outline">Explainability view</Badge>
+                    </div>
+                    <h2 className="text-2xl font-semibold tracking-tight">{document.document.title}</h2>
+                    <p className="text-sm text-muted-foreground">
+                      {selectedEvidenceEntry?.summary ?? documentLeadSummary ?? 'This source changed the chief view.'}
+                    </p>
+                  </div>
+
+                  <div className="mt-6 grid gap-4 md:grid-cols-2">
+                    <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">Why this mattered</h3>
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        {selectedEvidenceEntry?.summary ?? 'This source was recorded because it materially changed the evidence-backed state.'}
+                      </p>
+                    </section>
+                    <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">Affected initiatives</h3>
+                      <div className="mt-3 space-y-2">
+                        {documentInitiatives.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No initiative was confidently linked to this source yet.</p>
+                        ) : (
+                          documentInitiatives.map((initiative) => (
+                            <button
+                              key={initiative.id}
+                              onClick={() => {
+                                setSelectedPanel('initiatives')
+                                setSelectedInitiativeId(initiative.id)
+                                setSelectedPath(null)
+                              }}
+                              className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="truncate text-sm font-medium">{initiative.title}</p>
+                                <Badge variant="secondary" className="text-[10px]">{initiative.status}</Badge>
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">{describeLikelyNextAction(initiative)}</p>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </section>
+                  </div>
+
+                  <div className="mt-6 space-y-6">
+                    {document.document.sections.map((section) => (
+                      <section key={section.id} className="rounded-2xl border border-border/50 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 className="text-base font-medium">{section.title}</h3>
+                          <Badge variant="outline" className="text-[10px] uppercase">
+                            {section.kind}
+                          </Badge>
+                        </div>
+                        <div className="prose prose-sm mt-3 max-w-none dark:prose-invert">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {section.content}
+                          </ReactMarkdown>
+                        </div>
+                      </section>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <div className="p-6">

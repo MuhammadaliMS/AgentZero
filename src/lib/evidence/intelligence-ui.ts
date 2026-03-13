@@ -69,11 +69,18 @@ export interface IntelligenceEvidenceEntry {
   summary: string
   supportingPath: string
   updatedAt: string
+  relatedInitiatives: string[]
 }
 
 interface InitiativeLike {
   title: string
   latestSummary: string | null
+}
+
+interface InitiativeDocumentLike {
+  title: string
+  summary?: string | null
+  path?: string | null
 }
 
 const CHANNEL_LABELS: Record<string, string> = {
@@ -458,10 +465,12 @@ export function buildEvidenceFeed({
   meetings,
   recentlyChanged,
   work,
+  initiatives,
 }: {
   meetings: IntelligenceVaultEntryPoint[]
   recentlyChanged: IntelligenceVaultEntryPoint[]
   work: IntelligenceVaultEntryPoint[]
+  initiatives: IntelligenceInitiativeEntry[]
 }): IntelligenceEvidenceEntry[] {
   const changedWorkByTitle = new Map(
     dedupeEntryPoints(work).map((entry) => [entry.title.trim().toLowerCase(), entry])
@@ -484,9 +493,58 @@ export function buildEvidenceFeed({
           : entry.summary ?? 'New source evidence arrived and may have changed the chief view.',
         supportingPath: entry.path,
         updatedAt: entry.updatedAt,
+        relatedInitiatives: findInitiativesForDocument(entry, initiatives).map((initiative) => initiative.title),
       }
     })
     .slice(0, 12)
+}
+
+export function findInitiativesForDocument<T extends InitiativeDocumentLike>(
+  document: T,
+  initiatives: IntelligenceInitiativeEntry[],
+  limit: number = 3
+): IntelligenceInitiativeEntry[] {
+  const documentTokens = normalizeTokens(`${document.title} ${document.summary ?? ''} ${document.path ?? ''}`)
+
+  return [...initiatives]
+    .map((initiative) => {
+      const initiativeTokens = normalizeTokens(
+        `${initiative.title} ${initiative.latestSummary ?? ''} ${initiative.currentHypothesis ?? ''}`
+      )
+      const overlap = initiativeTokens.filter((token) => documentTokens.includes(token)).length
+      return { initiative, overlap }
+    })
+    .filter((entry) => entry.overlap > 0)
+    .sort((left, right) => {
+      if (right.overlap !== left.overlap) return right.overlap - left.overlap
+      return right.initiative.title.localeCompare(left.initiative.title)
+    })
+    .slice(0, limit)
+    .map((entry) => entry.initiative)
+}
+
+export function describeLikelyNextAction(entry: IntelligenceInitiativeEntry): string {
+  if (entry.status === 'blocked') {
+    return entry.nextMilestone
+      ? `Unblock this so the chief can move to: ${entry.nextMilestone}.`
+      : 'Resolve the blocking dependency so the chief can advance the initiative.'
+  }
+
+  if (entry.status === 'waiting') {
+    return entry.nextReviewAt
+      ? `Wait for the next review on ${new Date(entry.nextReviewAt).toLocaleDateString()}.`
+      : 'Keep monitoring for new signals before taking the next step.'
+  }
+
+  if (entry.nextMilestone) {
+    return `Advance this toward: ${entry.nextMilestone}.`
+  }
+
+  if (entry.openQuestionCount > 0) {
+    return `Resolve the ${entry.openQuestionCount} open question${entry.openQuestionCount === 1 ? '' : 's'} to move this forward.`
+  }
+
+  return 'Keep this initiative warm and look for the next concrete step.'
 }
 
 function normalizeTokens(text: string): string[] {

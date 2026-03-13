@@ -7,6 +7,7 @@ import {
   describeLikelyNextAction,
   describeInitiativeState,
   dedupeEntryPoints,
+  explainAccountPriority,
   explainInitiativePriority,
   findInitiativesForDocument,
   findChangedDocsForInitiative,
@@ -621,5 +622,33 @@ describe('describeLikelyNextAction', () => {
       openQuestionCount: 0,
       riskCount: 1,
     })).toContain('Send estimate package')
+  })
+})
+
+describe('explainAccountPriority', () => {
+  it('explains account priority from linked initiatives and recent change context', () => {
+    const explanation = explainAccountPriority({
+      title: 'Crane Ventures',
+      changedSummary: 'Estimate scope expanded after the latest meeting.',
+      initiatives: [
+        {
+          id: 'crane',
+          title: 'Crane estimation',
+          status: 'blocked',
+          phase: 'execution',
+          nextMilestone: 'Send estimate package',
+          nextReviewAt: null,
+          lastSignalAt: null,
+          latestSummary: null,
+          currentHypothesis: null,
+          openQuestionCount: 0,
+          riskCount: 1,
+        },
+      ],
+    })
+
+    expect(explanation).toContain('Crane estimation')
+    expect(explanation).toContain('blocked')
+    expect(explanation).toContain('Estimate scope expanded')
   })
 })

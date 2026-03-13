@@ -547,6 +547,35 @@ export function describeLikelyNextAction(entry: IntelligenceInitiativeEntry): st
   return 'Keep this initiative warm and look for the next concrete step.'
 }
 
+export function explainAccountPriority({
+  title,
+  changedSummary,
+  initiatives,
+}: {
+  title: string
+  changedSummary?: string | null
+  initiatives: IntelligenceInitiativeEntry[]
+}): string {
+  if (initiatives.length === 0) {
+    return changedSummary
+      ? `This account is visible because it changed recently: ${changedSummary}`
+      : 'This account is visible because it is part of the active workspace.'
+  }
+
+  const initiativeTitles = initiatives.map((initiative) => initiative.title).join(', ')
+  const blockedCount = initiatives.filter((initiative) => initiative.status === 'blocked').length
+  const activeCount = initiatives.filter((initiative) => initiative.status === 'active').length
+
+  const reasons = [
+    `${title} is connected to ${initiativeTitles}.`,
+    activeCount > 0 ? `${activeCount} linked initiative${activeCount === 1 ? '' : 's'} are active.` : null,
+    blockedCount > 0 ? `${blockedCount} linked initiative${blockedCount === 1 ? '' : 's'} are blocked and need attention.` : null,
+    changedSummary ? `Latest change: ${changedSummary}` : null,
+  ].filter(Boolean)
+
+  return reasons.join(' ')
+}
+
 function normalizeTokens(text: string): string[] {
   return text
     .toLowerCase()

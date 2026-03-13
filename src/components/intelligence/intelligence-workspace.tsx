@@ -34,6 +34,7 @@ import {
   buildIntelligenceNowSummary,
   describeLikelyNextAction,
   dedupeEntryPoints,
+  explainAccountPriority,
   explainInitiativePriority,
   findChangedDocsForInitiative,
   findInitiativesForDocument,
@@ -647,6 +648,44 @@ function EvidenceFeedCard({
   )
 }
 
+function ModeStatusStrip({
+  nowSummary,
+}: {
+  nowSummary: ReturnType<typeof buildIntelligenceNowSummary>
+}) {
+  const cards = [
+    {
+      label: 'Needs you',
+      value: nowSummary.needsAttention.length,
+      detail: nowSummary.needsAttention[0]?.title ?? 'Nothing urgent for you',
+    },
+    {
+      label: 'Blocked',
+      value: nowSummary.blocked.length,
+      detail: nowSummary.blocked[0]?.title ?? 'No blocked initiatives',
+    },
+    {
+      label: 'Waiting',
+      value: nowSummary.waiting.length,
+      detail: nowSummary.waiting[0]?.title ?? 'No waiting items',
+    },
+  ]
+
+  return (
+    <div className="mt-6 grid gap-3 md:grid-cols-3">
+      {cards.map((card) => (
+        <Card key={card.label} className="border-border/50">
+          <CardContent className="p-4">
+            <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">{card.label}</p>
+            <p className="mt-2 text-2xl font-semibold">{card.value}</p>
+            <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{card.detail}</p>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
 export function IntelligenceWorkspace() {
   const supabase = useMemo(() => createClient() as any, [])
 
@@ -914,13 +953,6 @@ export function IntelligenceWorkspace() {
     [document, documentLeadSummary, initiatives]
   )
 
-  const selectedEvidenceEntry = useMemo(
-    () => selectedPanel === 'evidence' && document
-      ? evidenceFeed.find((entry) => entry.supportingPath === document.document.path) ?? null
-      : null,
-    [document, evidenceFeed, selectedPanel]
-  )
-
   const isAccountDocument = selectedPanel === 'accounts'
     && !!document
     && ['narrative', 'entity'].includes(document.document.document_type)
@@ -928,6 +960,24 @@ export function IntelligenceWorkspace() {
   const isEvidenceDocument = selectedPanel === 'evidence'
     && !!document
     && document.document.document_type === 'source_artifact'
+
+  const documentPriorityReason = useMemo(
+    () => isAccountDocument && document
+      ? explainAccountPriority({
+        title: document.document.title,
+        changedSummary: document.compare.previousSummary ?? documentLeadSummary,
+        initiatives: documentInitiatives,
+      })
+      : null,
+    [document, documentInitiatives, documentLeadSummary, isAccountDocument]
+  )
+
+  const selectedEvidenceEntry = useMemo(
+    () => selectedPanel === 'evidence' && document
+      ? evidenceFeed.find((entry) => entry.supportingPath === document.document.path) ?? null
+      : null,
+    [document, evidenceFeed, selectedPanel]
+  )
 
   async function saveManualSection(key: string) {
     if (!document) return
@@ -1139,6 +1189,8 @@ export function IntelligenceWorkspace() {
           {error}
         </div>
       )}
+
+      <ModeStatusStrip nowSummary={nowSummary} />
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)_320px]">
         <Card className="border-border/50">
@@ -1401,6 +1453,12 @@ export function IntelligenceWorkspace() {
                       </p>
                     </section>
                     <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">Why this account is prioritized</h3>
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        {documentPriorityReason}
+                      </p>
+                    </section>
+                    <section className="rounded-2xl border border-border/50 p-4">
                       <h3 className="text-base font-medium">What changed recently</h3>
                       <p className="mt-3 text-sm text-muted-foreground">
                         {document.compare.previousSummary ?? 'No explicit change summary yet. Open the linked context to see the latest supporting docs.'}
@@ -1507,7 +1565,12 @@ export function IntelligenceWorkspace() {
                                 <p className="truncate text-sm font-medium">{initiative.title}</p>
                                 <Badge variant="secondary" className="text-[10px]">{initiative.status}</Badge>
                               </div>
-                              <p className="mt-1 text-xs text-muted-foreground">{describeLikelyNextAction(initiative)}</p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {describeLikelyNextAction(initiative)}
+                                {selectedEvidenceEntry?.relatedInitiatives.includes(initiative.title)
+                                  ? ' This source directly reinforced that initiative.'
+                                  : ''}
+                              </p>
                             </button>
                           ))
                         )}

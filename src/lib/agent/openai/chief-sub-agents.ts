@@ -1,11 +1,12 @@
 /**
  * Chief Sub-Agents — Specialized agents for the Chief Loop THINK phase.
  *
- * Replaces the monolithic single-agent approach with 4 sequential sub-agents:
+ * Replaces the monolithic single-agent approach with 5 sequential sub-agents:
  *   1. Triage    — Classify all signals by urgency/category (always runs)
- *   2. Analysis  — Deep investigation, insights, memory (conditional)
- *   3. Execution — Create/update outcomes, steps, escalations (conditional)
- *   4. Graph     — Knowledge graph maintenance (conditional)
+ *   2. Sensemaking — Deep investigation, changed-state synthesis, insights, memory (conditional)
+ *   3. Initiative Planner — Update durable initiative state even on quieter cycles (conditional)
+ *   4. Execution — Create/update outcomes, steps, escalations (conditional)
+ *   5. Graph     — Knowledge graph maintenance (conditional)
  *
  * Architecture: Sequential runner.run() calls (NOT handoffs).
  * Each agent gets a scoped tool subset from the shared createChiefAnalystTools().
@@ -77,10 +78,14 @@ const TRIAGE_TOOL_NAMES = [
   'defer', 'dismiss',
 ]
 
-const ANALYSIS_TOOL_NAMES = [
+const SENSEMAKING_TOOL_NAMES = [
   ...READ_TOOL_NAMES,
   'store_insight', 'store_memory', 'attach_signal_to_outcome',
-  'create_initiative', 'update_initiative',
+]
+
+const INITIATIVE_TOOL_NAMES = [
+  'query_knowledge', 'get_entity_detail', 'get_outcome_detail',
+  'create_initiative', 'update_initiative', 'store_memory',
 ]
 
 const EXECUTION_TOOL_NAMES = [
@@ -219,17 +224,19 @@ ${input.focusProfile.instructions ? `Guidance: ${input.focusProfile.instructions
   return sections.join('\n')
 }
 
-function buildAnalysisPrompt(
+function buildSensemakingPrompt(
   input: ChiefAnalystInput,
   signals: TriageClassification[]
 ): string {
   const sections: string[] = []
 
-  sections.push(`You are a Deep Analysis Specialist. You investigate signals that need analysis, cross-reference data sources, and store insights and memories. You think like a Senior Product Manager — prioritizing customer impact, delivery risk, and stakeholder alignment.
+  sections.push(`You are a Sensemaking Specialist. Your job is to understand what changed, what remains true, what is noise, and which workstreams are actually affected. You investigate signals, cross-reference data sources, and store durable insights and memory. You think like a Senior Product Manager — prioritizing customer impact, delivery risk, and stakeholder alignment.
 
 ## YOUR JOB
-- Investigate each signal that was classified as needs_analysis
+- Investigate each signal that was classified as needs_analysis or that materially changes current work
 - Cross-reference with emails, Slack, calendar, and knowledge graph
+- Identify what changed since the last touchpoint and what still appears true
+- Identify which initiative(s), if any, the change affects
 - Store insights with confidence scores factoring in data freshness
 - Store important context as institutional memory
 - Link signals to existing outcomes when relevant
@@ -348,6 +355,16 @@ ${input.focusProfile.instructions ? `Guidance: ${input.focusProfile.instructions
     }
   }
 
+  if (input.chiefWorldModel) {
+    sections.push('\n## WORLD MODEL SNAPSHOT')
+    for (const item of input.chiefWorldModel.changedSinceLastRun.artifacts.slice(0, 6)) {
+      sections.push(`- Changed artifact: ${item.title} [${item.channel}]`)
+    }
+    for (const blocked of input.chiefWorldModel.operationalMemory.blockedInitiatives.slice(0, 4)) {
+      sections.push(`- Blocked initiative: ${blocked.title} — ${blocked.reason}`)
+    }
+  }
+
   sections.push(`
 ## INSTRUCTIONS
 1. Investigate each signal using READ tools (read full emails, search Slack, get entity details).
@@ -355,11 +372,136 @@ ${input.focusProfile.instructions ? `Guidance: ${input.focusProfile.instructions
 3. Store insights with appropriate confidence scores.
 4. Store important context as institutional memory for future reference.
 5. Link signals to existing outcomes when they provide relevant evidence.
-6. Flag cross-team dependencies and delivery risks that could affect upcoming milestones.
-7. Create or update initiatives when the work should persist across future chief runs and needs durable multi-step ownership.
+6. Explicitly note what changed, what remains true, and which initiative is affected.
+7. Flag cross-team dependencies and delivery risks that could affect upcoming milestones.
 `)
 
   return sections.join('\n')
+}
+
+export function buildInitiativePlannerPrompt(
+  input: ChiefAnalystInput,
+  signals: TriageClassification[]
+): string {
+  const sections: string[] = []
+
+  sections.push(`You are an Initiative Planner. Your job is to maintain long-horizon execution state so the chief loop does not reconstruct projects from zero every hour.
+
+## YOUR JOB
+- Review active initiatives, blocked initiatives, and due-for-review initiatives
+- Read changed source artifacts, narratives, commitments, and vault context
+- Create initiatives for durable multi-step work that should persist across runs
+- Update existing initiatives when phase, milestone, risks, open questions, or summary changed
+- Keep initiative state compact, explicit, and useful for future execution
+
+## RULES
+- Prefer update_initiative when a workstream already exists.
+- Use create_initiative only when the work deserves durable tracking across future runs.
+- Tie initiative changes to concrete evidence from signals, commitments, decision threads, or vault context.
+- Do not create duplicate initiatives with slightly different titles.
+- Focus on what matters for the next review cycle: phase, next milestone, hypothesis, risks, and open questions.
+
+## CONTEXT
+Organization: ${input.orgName}
+Current time: ${input.currentTime} (${input.timezone})
+`)
+
+  if (input.focusProfile?.isActive) {
+    sections.push(`## CURRENT USER FOCUS
+${input.focusProfile.priorityTopics.length > 0 ? `Prioritize: ${input.focusProfile.priorityTopics.join(', ')}` : ''}
+${input.focusProfile.deprioritizedTopics.length > 0 ? `Deprioritize unless urgent or linked to focused work: ${input.focusProfile.deprioritizedTopics.join(', ')}` : ''}
+${input.focusProfile.instructions ? `Guidance: ${input.focusProfile.instructions}` : ''}`)
+  }
+
+  if (input.activeInitiatives.length > 0) {
+    sections.push('## ACTIVE INITIATIVES')
+    for (const initiative of input.activeInitiatives.slice(0, 8)) {
+      sections.push([
+        `- ${initiative.title} (${initiative.id}) [${initiative.phase}/${initiative.status}]`,
+        `  Goal: ${initiative.goal}`,
+        initiative.latestSummary ? `  Summary: ${initiative.latestSummary}` : null,
+        initiative.currentHypothesis ? `  Hypothesis: ${initiative.currentHypothesis}` : null,
+        initiative.nextMilestone ? `  Next milestone: ${initiative.nextMilestone}` : null,
+        initiative.nextReviewAt ? `  Next review: ${initiative.nextReviewAt}` : null,
+      ].filter(Boolean).join('\n'))
+    }
+  }
+
+  if (input.chiefWorldModel) {
+    sections.push('\n## WORLD MODEL')
+    for (const blocked of input.chiefWorldModel.operationalMemory.blockedInitiatives.slice(0, 5)) {
+      sections.push(`- Blocked: ${blocked.title} — ${blocked.reason}`)
+    }
+    for (const execution of input.chiefWorldModel.executionMemory.slice(0, 8)) {
+      sections.push(`- Execution memory: ${execution.title} [${execution.phase}/${execution.status}]${execution.nextMilestone ? ` → ${execution.nextMilestone}` : ''}`)
+    }
+  }
+
+  if (input.activeCommitments.length > 0) {
+    sections.push('\n## ACTIVE COMMITMENTS')
+    for (const commitment of input.activeCommitments.slice(0, 10)) {
+      sections.push(`- ${commitment.title} [${commitment.status}/${commitment.priority}]${commitment.dueDate ? ` due ${commitment.dueDate}` : ''}`)
+    }
+  }
+
+  if (input.decisionThreads.length > 0) {
+    sections.push('\n## DECISION THREADS')
+    for (const thread of input.decisionThreads.slice(0, 8)) {
+      sections.push(`- ${thread.title} [${thread.status}]`)
+    }
+  }
+
+  if (input.recentSourceArtifacts.length > 0) {
+    sections.push('\n## RECENT SOURCE ARTIFACTS')
+    for (const artifact of input.recentSourceArtifacts.slice(0, 8)) {
+      sections.push(`- ${artifact.title} [${artifact.channel}]${artifact.startedAt ? ` (${artifact.startedAt})` : ''}`)
+    }
+  }
+
+  if (input.vaultContext.length > 0) {
+    sections.push('\n## VAULT CONTEXT')
+    for (const doc of input.vaultContext.slice(0, 8)) {
+      sections.push(`- ${doc.title} [${doc.documentType}]${doc.summary ? ` — ${doc.summary.slice(0, 180)}` : ''}${doc.manualSectionSummaries.length > 0 ? ` | manual: ${doc.manualSectionSummaries.slice(0, 2).join(' / ')}` : ''}`)
+    }
+  }
+
+  if (signals.length > 0) {
+    sections.push('\n## SIGNALS TO ACCOUNT FOR')
+    for (const signal of signals) {
+      sections.push(`- [${signal.priority}] ${signal.signalType} ${signal.signalId}: ${signal.reasoning}`)
+    }
+  }
+
+  sections.push(`
+## INSTRUCTIONS
+1. Review the initiative context above before deciding anything.
+2. Use update_initiative whenever an existing initiative needs a clearer phase, milestone, summary, risks, or open questions.
+3. Use create_initiative when new durable work emerged from the changed signals.
+4. Use store_memory only when there is durable coordination context worth preserving outside the initiative row.
+5. Avoid churn: do not rewrite initiatives for tiny no-op changes.
+`)
+
+  return sections.join('\n')
+}
+
+export function shouldRunInitiativePlanner(
+  input: Pick<ChiefAnalystInput, 'activeInitiatives' | 'focusProfile'>,
+  signals: TriageClassification[],
+  now: string
+): boolean {
+  const nowMs = new Date(now).getTime()
+  const hasDurableSignals = signals.some(signal =>
+    signal.category === 'needs_action' || signal.category === 'needs_analysis' || signal.category === 'needs_graph_update'
+  )
+  const hasDueReview = input.activeInitiatives.some(initiative =>
+    initiative.nextReviewAt && new Date(initiative.nextReviewAt).getTime() <= nowMs
+  )
+  const hasBlocked = input.activeInitiatives.some(initiative =>
+    initiative.status === 'blocked' || initiative.phase === 'waiting'
+  )
+  const hasFocus = (input.focusProfile?.priorityTopics.length ?? 0) > 0
+
+  return hasDurableSignals || hasDueReview || hasBlocked || hasFocus
 }
 
 function buildExecutionPrompt(
@@ -707,9 +849,14 @@ export async function runSubAgents(input: ChiefAnalystInput, collector?: StepCol
   const needsAnalysis = classifications.filter(c => c.category === 'needs_analysis')
   const needsAction = classifications.filter(c => c.category === 'needs_action')
   const needsGraph = classifications.filter(c => c.category === 'needs_graph_update')
+  const needsSensemaking = classifications.filter(c =>
+    ['needs_analysis', 'needs_action', 'needs_graph_update'].includes(c.category)
+  )
+  const runInitiativePlanner = shouldRunInitiativePlanner(input, classifications, input.currentTime)
 
-  // Quiet-hour optimization: skip downstream agents if nothing needs processing
-  if (needsAnalysis.length === 0 && needsAction.length === 0 && needsGraph.length === 0) {
+  // Quiet-hour optimization: skip downstream agents only if there is no changed work
+  // and no initiative is due/blocked/focused enough to review.
+  if (needsSensemaking.length === 0 && needsGraph.length === 0 && !runInitiativePlanner) {
     console.log('[SubAgents] Quiet hour — no signals need processing. Skipping downstream agents.')
     return {
       decisions,
@@ -720,41 +867,75 @@ export async function runSubAgents(input: ChiefAnalystInput, collector?: StepCol
     }
   }
 
-  // ── 3. ANALYSIS (conditional) ───────────────────────────────────────
+  // ── 3. SENSEMAKING (conditional) ────────────────────────────────────
 
-  if (needsAnalysis.length > 0) {
-    console.log(`[SubAgents:analysis] Starting analysis for ${needsAnalysis.length} signals...`)
-    collector?.subAgentStart('Analysis Specialist')
-    const analysisStart = Date.now()
+  if (needsSensemaking.length > 0) {
+    console.log(`[SubAgents:sensemaking] Starting sensemaking for ${needsSensemaking.length} signals...`)
+    collector?.subAgentStart('Sensemaking Specialist')
+    const sensemakingStart = Date.now()
     try {
-      const rawAnalysisTools = pickTools(allTools, ANALYSIS_TOOL_NAMES)
-      const analysisTools = collector ? wrapToolsWithStepCollector(rawAnalysisTools, collector) : rawAnalysisTools
-      const analysisAgent = new Agent({
-        name: 'Analysis Specialist',
-        instructions: buildAnalysisPrompt(input, needsAnalysis),
+      const rawSensemakingTools = pickTools(allTools, SENSEMAKING_TOOL_NAMES)
+      const sensemakingTools = collector ? wrapToolsWithStepCollector(rawSensemakingTools, collector) : rawSensemakingTools
+      const sensemakingAgent = new Agent({
+        name: 'Sensemaking Specialist',
+        instructions: buildSensemakingPrompt(input, needsSensemaking),
         model,
-        tools: analysisTools,
+        tools: sensemakingTools,
       })
 
-      const analysisResult = await Promise.race([
-        runner.run(analysisAgent, 'Investigate the signals requiring analysis. Cross-reference data sources. Store insights and memories.', { maxTurns: 15 }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Analysis timed out (60s)')), 60_000)),
+      const sensemakingResult = await Promise.race([
+        runner.run(sensemakingAgent, 'Investigate what changed, what remains true, and which initiatives are affected. Store insights and durable memory.', { maxTurns: 15 }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Sensemaking timed out (60s)')), 60_000)),
       ])
 
-      const analysisUsage = extractUsage(analysisResult)
-      totalInputTokens += analysisUsage.input
-      totalOutputTokens += analysisUsage.output
-      totalTurns += extractTurns(analysisResult)
-      collector?.subAgentEnd('Analysis Specialist', Date.now() - analysisStart, 'ok', { in: analysisUsage.input, out: analysisUsage.output })
+      const sensemakingUsage = extractUsage(sensemakingResult)
+      totalInputTokens += sensemakingUsage.input
+      totalOutputTokens += sensemakingUsage.output
+      totalTurns += extractTurns(sensemakingResult)
+      collector?.subAgentEnd('Sensemaking Specialist', Date.now() - sensemakingStart, 'ok', { in: sensemakingUsage.input, out: sensemakingUsage.output })
 
-      console.log(`[SubAgents:analysis] Done: ${decisions.length} total decisions`)
+      console.log(`[SubAgents:sensemaking] Done: ${decisions.length} total decisions`)
     } catch (err) {
-      collector?.subAgentEnd('Analysis Specialist', Date.now() - analysisStart, 'error')
-      console.error('[SubAgents:analysis] Error:', err)
+      collector?.subAgentEnd('Sensemaking Specialist', Date.now() - sensemakingStart, 'error')
+      console.error('[SubAgents:sensemaking] Error:', err)
     }
   }
 
-  // ── 4. EXECUTION PLANNER (conditional) ──────────────────────────────
+  // ── 4. INITIATIVE PLANNER (conditional) ─────────────────────────────
+
+  if (runInitiativePlanner) {
+    console.log('[SubAgents:initiative] Starting initiative planning...')
+    collector?.subAgentStart('Initiative Planner')
+    const initiativeStart = Date.now()
+    try {
+      const rawInitiativeTools = pickTools(allTools, INITIATIVE_TOOL_NAMES)
+      const initiativeTools = collector ? wrapToolsWithStepCollector(rawInitiativeTools, collector) : rawInitiativeTools
+      const initiativeAgent = new Agent({
+        name: 'Initiative Planner',
+        instructions: buildInitiativePlannerPrompt(input, needsSensemaking),
+        model,
+        tools: initiativeTools,
+      })
+
+      const initiativeResult = await Promise.race([
+        runner.run(initiativeAgent, 'Review the active initiatives and changed context. Update durable initiative state for the next chief run.', { maxTurns: 12 }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Initiative planning timed out (45s)')), 45_000)),
+      ])
+
+      const initiativeUsage = extractUsage(initiativeResult)
+      totalInputTokens += initiativeUsage.input
+      totalOutputTokens += initiativeUsage.output
+      totalTurns += extractTurns(initiativeResult)
+      collector?.subAgentEnd('Initiative Planner', Date.now() - initiativeStart, 'ok', { in: initiativeUsage.input, out: initiativeUsage.output })
+
+      console.log(`[SubAgents:initiative] Done: ${decisions.length} total decisions`)
+    } catch (err) {
+      collector?.subAgentEnd('Initiative Planner', Date.now() - initiativeStart, 'error')
+      console.error('[SubAgents:initiative] Error:', err)
+    }
+  }
+
+  // ── 5. EXECUTION PLANNER (conditional) ──────────────────────────────
 
   if (needsAction.length > 0) {
     console.log(`[SubAgents:execution] Starting execution planning for ${needsAction.length} signals...`)
@@ -788,7 +969,7 @@ export async function runSubAgents(input: ChiefAnalystInput, collector?: StepCol
     }
   }
 
-  // ── 5. GRAPH CURATOR (conditional) ──────────────────────────────────
+  // ── 6. GRAPH CURATOR (conditional) ──────────────────────────────────
 
   if (needsGraph.length > 0) {
     console.log(`[SubAgents:graph] Starting graph curation for ${needsGraph.length} signals...`)

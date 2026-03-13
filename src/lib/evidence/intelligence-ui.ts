@@ -59,6 +59,12 @@ export interface IntelligenceNowSummary {
   evidenceUsed: IntelligenceVaultEntryPoint[]
 }
 
+export interface IntelligenceOverviewChip {
+  label: 'Needs you' | 'Blocked' | 'Waiting' | 'Top initiative'
+  value: number | string
+  detail: string
+}
+
 export interface IntelligenceAccountWorkspaceSummary {
   featuredAccounts: IntelligenceVaultEntryPoint[]
   relationshipDocs: IntelligenceVaultEntryPoint[]
@@ -463,6 +469,33 @@ export function buildAccountWorkspaceSummary({
   }
 }
 
+export function buildOverviewStrip(
+  summary: IntelligenceNowSummary
+): IntelligenceOverviewChip[] {
+  return [
+    {
+      label: 'Needs you',
+      value: summary.needsAttention.length,
+      detail: summary.needsAttention[0]?.title ?? 'Nothing urgent for you',
+    },
+    {
+      label: 'Blocked',
+      value: summary.blocked.length,
+      detail: summary.blocked[0]?.title ?? 'No blocked initiatives',
+    },
+    {
+      label: 'Waiting',
+      value: summary.waiting.length,
+      detail: summary.waiting[0]?.title ?? 'No waiting items',
+    },
+    {
+      label: 'Top initiative',
+      value: summary.topPriorities[0]?.title ?? 'Nothing active yet',
+      detail: summary.topPriorities[0]?.reason ?? 'The chief has not raised a top initiative yet.',
+    },
+  ]
+}
+
 export function buildEvidenceFeed({
   meetings,
   recentlyChanged,
@@ -501,6 +534,15 @@ export function buildEvidenceFeed({
       }
     })
     .slice(0, 12)
+}
+
+export function summarizeConnectedContext(
+  entries: IntelligenceVaultEntryPoint[],
+  limit: number = 6
+): IntelligenceVaultEntryPoint[] {
+  return dedupeEntryPoints(entries)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, limit)
 }
 
 export function findInitiativesForDocument<T extends InitiativeDocumentLike>(

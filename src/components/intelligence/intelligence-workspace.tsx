@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -32,6 +32,7 @@ import {
   buildAccountWorkspaceSummary,
   buildEvidenceFeed,
   buildIntelligenceNowSummary,
+  buildOverviewStrip,
   describeLikelyNextAction,
   dedupeEntryPoints,
   explainAccountPriority,
@@ -43,6 +44,7 @@ import {
   groupEntryPointsByFreshness,
   labelDocumentType,
   prioritizeInitiatives,
+  summarizeConnectedContext,
   summarizeInitiativeManualContext,
   type IntelligenceInitiativeEntry,
   type IntelligenceVaultEntryPoint,
@@ -656,41 +658,89 @@ function EvidenceFeedCard({
   )
 }
 
-function ModeStatusStrip({
-  nowSummary,
+function ModeHeaderStrip({
+  chips,
 }: {
-  nowSummary: ReturnType<typeof buildIntelligenceNowSummary>
+  chips: ReturnType<typeof buildOverviewStrip>
 }) {
-  const cards = [
-    {
-      label: 'Needs you',
-      value: nowSummary.needsAttention.length,
-      detail: nowSummary.needsAttention[0]?.title ?? 'Nothing urgent for you',
-    },
-    {
-      label: 'Blocked',
-      value: nowSummary.blocked.length,
-      detail: nowSummary.blocked[0]?.title ?? 'No blocked initiatives',
-    },
-    {
-      label: 'Waiting',
-      value: nowSummary.waiting.length,
-      detail: nowSummary.waiting[0]?.title ?? 'No waiting items',
-    },
-  ]
-
   return (
-    <div className="mt-6 grid gap-3 md:grid-cols-3">
-      {cards.map((card) => (
-        <Card key={card.label} className="border-border/50">
-          <CardContent className="p-4">
-            <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">{card.label}</p>
-            <p className="mt-2 text-2xl font-semibold">{card.value}</p>
-            <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{card.detail}</p>
-          </CardContent>
-        </Card>
-      ))}
+    <div className="sticky top-4 z-10 mt-4 rounded-2xl border border-border/60 bg-background/90 px-3 py-3 shadow-sm backdrop-blur">
+      <div className="grid gap-2 md:grid-cols-4">
+        {chips.map((chip) => (
+          <div key={chip.label} className="rounded-xl border border-border/50 bg-card/70 px-3 py-2">
+            <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">{chip.label}</p>
+            <p className="mt-1 truncate text-base font-semibold">{chip.value}</p>
+            <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{chip.detail}</p>
+          </div>
+        ))}
+      </div>
     </div>
+  )
+}
+
+function ExplanationCard({
+  title,
+  icon: Icon,
+  children,
+}: {
+  title: string
+  icon: typeof Sparkles
+  children: ReactNode
+}) {
+  return (
+    <Card className="border-border/50">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Icon className="h-4 w-4 text-primary" />
+          {title}
+        </div>
+        <div className="mt-4 space-y-3 text-sm text-muted-foreground">{children}</div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ConnectedContextList({
+  title,
+  entries,
+  emptyLabel,
+  onOpen,
+}: {
+  title: string
+  entries: IntelligenceVaultEntryPoint[]
+  emptyLabel: string
+  onOpen: (path: string) => void
+}) {
+  return (
+    <Card className="border-border/50">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Link2 className="h-4 w-4 text-primary" />
+          {title}
+        </div>
+        <div className="mt-4 space-y-2">
+          {entries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{emptyLabel}</p>
+          ) : (
+            entries.map((entry) => (
+              <button
+                key={`${entry.path}-${entry.updatedAt}`}
+                onClick={() => onOpen(entry.path)}
+                className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="truncate text-sm font-medium">{entry.title}</p>
+                  <Badge variant="secondary" className="text-[10px]">
+                    {labelDocumentType(entry.documentType)}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{timeAgo(entry.updatedAt)}</p>
+              </button>
+            ))
+          )}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -942,6 +992,11 @@ export function IntelligenceWorkspace() {
     [entryPoints, initiatives]
   )
 
+  const overviewChips = useMemo(
+    () => buildOverviewStrip(nowSummary),
+    [nowSummary]
+  )
+
   const documentLeadSummary = useMemo(() => {
     const leadSection = document?.document.sections.find((section) =>
       section.kind === 'summary' || section.kind === 'narrative' || section.kind === 'changes'
@@ -1007,6 +1062,63 @@ export function IntelligenceWorkspace() {
       ? evidenceFeed.find((entry) => entry.supportingPath === document.document.path) ?? null
       : null,
     [document, evidenceFeed, selectedPanel]
+  )
+
+  const connectedContextDocs = useMemo(
+    () => summarizeConnectedContext([
+      ...initiativeRelatedDocs,
+      ...((document?.backlinks ?? []).map((backlink) => ({
+        path: backlink.path,
+        title: backlink.title,
+        documentType: backlink.documentType,
+        updatedAt: backlink.updatedAt,
+        lastSourceUpdateAt: null,
+      }))),
+    ]),
+    [document?.backlinks, initiativeRelatedDocs]
+  )
+
+  const documentConnectedContext = useMemo(
+    () => summarizeConnectedContext([
+      ...initiativeRelatedDocs,
+      ...(documentInitiatives.flatMap((initiative) => findRelatedDocsForInitiative(initiative, allVaultDocs))),
+      ...((document?.backlinks ?? []).map((backlink) => ({
+        path: backlink.path,
+        title: backlink.title,
+        documentType: backlink.documentType,
+        updatedAt: backlink.updatedAt,
+        lastSourceUpdateAt: null,
+      }))),
+    ]),
+    [allVaultDocs, document?.backlinks, documentInitiatives, initiativeRelatedDocs]
+  )
+
+  const linkedWorkEntries = useMemo(
+    () => linkedWork
+      .map((link) => {
+        if (!link.targetPath) return null
+        const matching = allVaultDocs.find((doc) => doc.path === link.targetPath)
+        return matching ?? {
+          path: link.targetPath,
+          title: link.targetLabel ?? link.targetId,
+          documentType: link.targetType ?? link.linkKind,
+          updatedAt: new Date().toISOString(),
+          lastSourceUpdateAt: null,
+        }
+      })
+      .filter((entry): entry is IntelligenceVaultEntryPoint => entry !== null),
+    [allVaultDocs, linkedWork]
+  )
+
+  const accountConnectedContext = useMemo(
+    () => summarizeConnectedContext([
+      ...documentConnectedContext,
+      ...((entryPoints?.meetings ?? []).filter((entry) => {
+        const haystack = `${entry.title} ${entry.summary ?? ''}`.toLowerCase()
+        return haystack.includes(document?.document.title.toLowerCase() ?? '')
+      })),
+    ]),
+    [document?.document.title, documentConnectedContext, entryPoints?.meetings]
   )
 
   async function saveManualSection(key: string) {
@@ -1086,19 +1198,19 @@ export function IntelligenceWorkspace() {
         return (
           <>
             <SidebarEntryList
-              title="Fresh account docs"
+              title="Account dossiers"
               entries={groupedAccounts.fresh}
               selectedPath={selectedPath}
               onSelect={openDocument}
             />
             <SidebarEntryList
-              title="Relationship docs"
+              title="Relationship stories"
               entries={entryPoints?.relationships ?? []}
               selectedPath={selectedPath}
               onSelect={openDocument}
             />
             <SidebarEntryList
-              title="Older account docs"
+              title="Older account context"
               entries={groupedAccounts.older}
               selectedPath={selectedPath}
               onSelect={openDocument}
@@ -1109,13 +1221,13 @@ export function IntelligenceWorkspace() {
         return (
           <>
             <SidebarEntryList
-              title="Recent source records"
+              title="Source records"
               entries={entryPoints?.meetings ?? []}
               selectedPath={selectedPath}
               onSelect={openDocument}
             />
             <SidebarEntryList
-              title="Changed from evidence"
+              title="Recent impact"
               entries={(entryPoints?.recentlyChanged ?? []).filter((entry) => entry.documentType === 'source_artifact' || entry.path.startsWith('Sources/'))}
               selectedPath={selectedPath}
               onSelect={openDocument}
@@ -1177,27 +1289,26 @@ export function IntelligenceWorkspace() {
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-8 sm:px-6 sm:py-10">
-      <header className="rounded-[2rem] border border-border/50 bg-card/90 px-6 py-6 shadow-sm">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+      <header className="rounded-[2rem] border border-border/50 bg-card/90 px-6 py-5 shadow-sm">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="max-w-3xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/5 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
               <NotebookPen className="h-3.5 w-3.5" />
               Intelligence
             </div>
-            <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-[2.5rem]">
               One place to understand what matters now.
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
-              Start with today, then drill into initiatives, accounts, evidence, and work. The graph stays underneath, but this page should feel like your operating workspace instead of a debug console.
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
+              Start with Chief now, then drill into initiatives, accounts, evidence, and work.
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-3 gap-3">
               {[
-                { label: 'Vault docs', value: stats?.vaultDocs ?? 0, icon: BookOpen },
-                { label: 'Active claims', value: stats?.claims ?? 0, icon: Workflow },
                 { label: 'Initiatives', value: stats?.initiatives ?? 0, icon: BrainCircuit },
                 { label: 'Open work', value: stats?.commitments ?? 0, icon: RefreshCw },
+                { label: 'Vault docs', value: stats?.vaultDocs ?? 0, icon: BookOpen },
               ].map((stat) => {
               const Icon = stat.icon
               return (
@@ -1206,7 +1317,7 @@ export function IntelligenceWorkspace() {
                     <Icon className="h-3.5 w-3.5" />
                     {stat.label}
                   </div>
-                  <p className="mt-2 text-2xl font-semibold">{stat.value}</p>
+                  <p className="mt-1 text-2xl font-semibold">{stat.value}</p>
                 </div>
               )
             })}
@@ -1220,19 +1331,19 @@ export function IntelligenceWorkspace() {
         </div>
       )}
 
-      <ModeStatusStrip nowSummary={nowSummary} />
+      <ModeHeaderStrip chips={overviewChips} />
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)_320px]">
+      <div className="mt-6 grid gap-5 xl:grid-cols-[260px_minmax(0,1fr)_300px]">
         <Card className="border-border/50">
           <CardContent className="p-4">
             <div className="flex flex-wrap gap-2">
               {[
-                ['today', 'Today'],
+                ['today', 'Chief now'],
                 ['initiatives', 'Initiatives'],
                 ['accounts', 'Accounts'],
                 ['evidence', 'Evidence'],
                 ['work', 'Work'],
-                ['raw', 'Raw vault'],
+                ['raw', 'Vault'],
               ].map(([value, label]) => (
                 <Button
                   key={value}
@@ -1252,7 +1363,7 @@ export function IntelligenceWorkspace() {
               ))}
             </div>
 
-            <ScrollArea className="mt-4 h-[72vh] pr-3">
+            <ScrollArea className="mt-4 h-[74vh] pr-3">
               <div className="space-y-6">{leftRailContent}</div>
             </ScrollArea>
           </CardContent>
@@ -1349,6 +1460,66 @@ export function IntelligenceWorkspace() {
                     </div>
                   </div>
                 </div>
+              ) : showPanelLanding && selectedPanel === 'initiatives' ? (
+                <div className="space-y-6 p-6">
+                  <Card className="border-primary/15 bg-primary/[0.03] shadow-none">
+                    <CardContent className="p-6">
+                      <h2 className="text-2xl font-semibold tracking-tight">Initiatives</h2>
+                      <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+                        These are the long-horizon workstreams the chief is actively tracking across meetings, email, Slack, and the vault.
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+                    <NowList
+                      title="Top initiatives"
+                      subtitle="The initiatives most likely to move or need review next."
+                      icon={BrainCircuit}
+                      items={initiatives.slice(0, 5).map((initiative) => ({
+                        title: initiative.title,
+                        reason: explainInitiativePriority(initiative),
+                        supportingPath: `initiative:${initiative.id}`,
+                      }))}
+                      emptyLabel="No active initiatives yet."
+                      onOpen={(path) => {
+                        if (path.startsWith('initiative:')) {
+                          setSelectedInitiativeId(path.replace('initiative:', ''))
+                        }
+                      }}
+                    />
+                    <ExplanationCard title="How to use initiatives" icon={History}>
+                      <p>Open an initiative to see what changed, what is blocked, and what the chief plans to do next.</p>
+                      <p>Initiatives are the durable workstreams behind the daily signal noise.</p>
+                    </ExplanationCard>
+                  </div>
+                </div>
+              ) : showPanelLanding && selectedPanel === 'work' ? (
+                <div className="space-y-6 p-6">
+                  <Card className="border-primary/15 bg-primary/[0.03] shadow-none">
+                    <CardContent className="p-6">
+                      <h2 className="text-2xl font-semibold tracking-tight">Open work</h2>
+                      <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+                        Track action items, decision threads, and briefs that the chief is actively using to move work forward.
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <HomeSection
+                      title="Open work"
+                      subtitle="Action items, decisions, and briefs with the freshest movement."
+                      entries={entryPoints?.work ?? []}
+                      onOpen={openDocument}
+                    />
+                    <NowList
+                      title="Needs you"
+                      subtitle="Work items the chief cannot clear without you."
+                      icon={Sparkles}
+                      items={nowSummary.needsAttention}
+                      emptyLabel="No work items need your input right now."
+                      onOpen={openDocument}
+                    />
+                  </div>
+                </div>
               ) : selectedInitiative ? (
                 <div className="p-6">
                   <div className="flex flex-col gap-3 border-b border-border/50 pb-5">
@@ -1359,16 +1530,6 @@ export function IntelligenceWorkspace() {
                     </div>
                     <h2 className="text-2xl font-semibold tracking-tight">{selectedInitiative.title}</h2>
                     <p className="text-sm text-muted-foreground">{describeInitiativeState(selectedInitiative)}</p>
-                  </div>
-
-                  <div className="mt-6 rounded-2xl border border-border/50 bg-muted/20 p-4">
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <History className="h-4 w-4 text-primary" />
-                      Why this is prioritized
-                    </div>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      {explainInitiativePriority(selectedInitiative)}
-                    </p>
                   </div>
 
                   <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -1421,40 +1582,43 @@ export function IntelligenceWorkspace() {
                       </div>
                     </section>
                     <section className="rounded-2xl border border-border/50 p-4">
-                      <h3 className="text-base font-medium">Related vault docs</h3>
+                      <h3 className="text-base font-medium">Open questions</h3>
                       <div className="mt-3 space-y-2">
-                        {initiativeRelatedDocs.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">No related docs linked yet.</p>
+                        {selectedInitiative.openQuestionCount === 0 ? (
+                          <p className="text-sm text-muted-foreground">No open questions on this initiative right now.</p>
                         ) : (
-                          initiativeRelatedDocs.map((doc) => (
-                            <button
-                              key={doc.path}
-                              onClick={() => openDocument(doc.path)}
-                              className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
-                            >
-                              <p className="truncate text-sm font-medium">{doc.title}</p>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                {labelDocumentType(doc.documentType)} · {timeAgo(doc.updatedAt)}
-                              </p>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    </section>
-                    <section className="rounded-2xl border border-border/50 p-4">
-                      <h3 className="text-base font-medium">Manual context from vault</h3>
-                      <div className="mt-3 space-y-2">
-                        {initiativeManualContext.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">No manual notes or hypotheses have been linked into this initiative yet.</p>
-                        ) : (
-                          initiativeManualContext.map((snippet, index) => (
-                            <div key={`${index}-${snippet.slice(0, 24)}`} className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
-                              {snippet}
+                          (selectedInitiative.currentHypothesis ? [selectedInitiative.currentHypothesis] : selectedInitiative.latestSummary ? [selectedInitiative.latestSummary] : []).slice(0, 1).map((summary) => (
+                            <div key={summary} className="rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-sm text-muted-foreground">
+                              {summary}
                             </div>
                           ))
                         )}
                       </div>
                     </section>
+                    <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">Known risks</h3>
+                      <div className="mt-3 space-y-2">
+                        {selectedInitiative.riskCount === 0 ? (
+                          <p className="text-sm text-muted-foreground">No known risks are attached to this initiative right now.</p>
+                        ) : (
+                          <div className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
+                            {selectedInitiative.riskCount} known risk{selectedInitiative.riskCount === 1 ? '' : 's'} are attached. Open connected context for supporting detail.
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                    {initiativeManualContext.length > 0 && (
+                      <section className="rounded-2xl border border-border/50 p-4 md:col-span-2">
+                        <h3 className="text-base font-medium">Your notes</h3>
+                        <div className="mt-3 space-y-2">
+                          {initiativeManualContext.map((context, index) => (
+                            <div key={`${context}-${index}`} className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
+                              {context}
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
                   </div>
                 </div>
               ) : !document ? (
@@ -1483,38 +1647,30 @@ export function IntelligenceWorkspace() {
                       </p>
                     </section>
                     <section className="rounded-2xl border border-border/50 p-4">
-                      <h3 className="text-base font-medium">Why this account is prioritized</h3>
-                      <p className="mt-3 text-sm text-muted-foreground">
-                        {documentPriorityReason}
-                      </p>
-                    </section>
-                    <section className="rounded-2xl border border-border/50 p-4">
                       <h3 className="text-base font-medium">What changed recently</h3>
                       <p className="mt-3 text-sm text-muted-foreground">
-                        {document.compare.previousSummary ?? 'No explicit change summary yet. Open the linked context to see the latest supporting docs.'}
+                        {document.compare.previousSummary ?? 'No explicit change summary yet. Open connected context to review the latest supporting docs.'}
                       </p>
                     </section>
                     <section className="rounded-2xl border border-border/50 p-4">
-                      <h3 className="text-base font-medium">Linked initiatives</h3>
+                      <h3 className="text-base font-medium">Open work and decisions in motion</h3>
                       <div className="mt-3 space-y-2">
-                        {documentInitiatives.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">No initiative is linked yet.</p>
+                        {linkedWorkEntries.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No active commitments or decision threads are linked to this account yet.</p>
                         ) : (
-                          documentInitiatives.map((initiative) => (
+                          linkedWorkEntries.slice(0, 4).map((entry) => (
                             <button
-                              key={initiative.id}
-                              onClick={() => {
-                                setSelectedPanel('initiatives')
-                                setSelectedInitiativeId(initiative.id)
-                                setSelectedPath(null)
-                              }}
+                              key={entry.path}
+                              onClick={() => openDocument(entry.path)}
                               className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
                             >
                               <div className="flex items-center justify-between gap-3">
-                                <p className="truncate text-sm font-medium">{initiative.title}</p>
-                                <Badge variant="secondary" className="text-[10px]">{initiative.phase}</Badge>
+                                <p className="truncate text-sm font-medium">{entry.title}</p>
+                                <Badge variant="secondary" className="text-[10px]">{labelDocumentType(entry.documentType)}</Badge>
                               </div>
-                              <p className="mt-1 text-xs text-muted-foreground">{describeLikelyNextAction(initiative)}</p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {entry.summary ?? `${labelDocumentType(entry.documentType)} updated ${timeAgo(entry.updatedAt)}.`}
+                              </p>
                             </button>
                           ))
                         )}
@@ -1537,7 +1693,13 @@ export function IntelligenceWorkspace() {
                     </section>
                   </div>
 
-                  <div className="mt-6 space-y-6">
+                  <div className="mt-6 space-y-4">
+                    <div>
+                      <h3 className="text-sm font-medium uppercase tracking-[0.16em] text-muted-foreground">Supporting detail</h3>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        The sections below are the full generated account record. Use them when you want the underlying detail rather than the operating brief above.
+                      </p>
+                    </div>
                     {document.document.sections.map((section) => (
                       <section key={section.id} className="rounded-2xl border border-border/50 p-4">
                         <div className="flex items-center justify-between gap-3">
@@ -1576,6 +1738,12 @@ export function IntelligenceWorkspace() {
                       </p>
                     </section>
                     <section className="rounded-2xl border border-border/50 p-4">
+                      <h3 className="text-base font-medium">What changed</h3>
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        {document.compare.previousSummary ?? documentLeadSummary ?? 'Open the source detail below to inspect the exact meeting, email, or thread content that changed the chief view.'}
+                      </p>
+                    </section>
+                    <section className="rounded-2xl border border-border/50 p-4 md:col-span-2">
                       <h3 className="text-base font-medium">Affected initiatives</h3>
                       <div className="mt-3 space-y-2">
                         {documentInitiatives.length === 0 ? (
@@ -1606,9 +1774,41 @@ export function IntelligenceWorkspace() {
                         )}
                       </div>
                     </section>
+                    <section className="rounded-2xl border border-border/50 p-4 md:col-span-2">
+                      <h3 className="text-base font-medium">Follow-on effects</h3>
+                      <div className="mt-3 space-y-2">
+                        {documentConnectedContext.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No regenerated docs are linked to this source yet.</p>
+                        ) : (
+                          documentConnectedContext.slice(0, 5).map((entry) => (
+                            <button
+                              key={entry.path}
+                              onClick={() => openDocument(entry.path)}
+                              className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="truncate text-sm font-medium">{entry.title}</p>
+                                <Badge variant="secondary" className="text-[10px]">
+                                  {labelDocumentType(entry.documentType)}
+                                </Badge>
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {entry.summary ?? `${labelDocumentType(entry.documentType)} updated ${timeAgo(entry.updatedAt)}.`}
+                              </p>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </section>
                   </div>
 
-                  <div className="mt-6 space-y-6">
+                  <div className="mt-6 space-y-4">
+                    <div>
+                      <h3 className="text-sm font-medium uppercase tracking-[0.16em] text-muted-foreground">Source detail</h3>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        The sections below are the underlying source record that produced the impact summary above.
+                      </p>
+                    </div>
                     {document.document.sections.map((section) => (
                       <section key={section.id} className="rounded-2xl border border-border/50 p-4">
                         <div className="flex items-center justify-between gap-3">
@@ -1870,76 +2070,90 @@ export function IntelligenceWorkspace() {
             <>
               {selectedInitiative && (
                 <>
-                  <Card className="border-border/50">
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <Workflow className="h-4 w-4 text-primary" />
-                        Changed since last review
-                      </div>
-                      <p className="mt-4 text-sm text-muted-foreground">
-                        {selectedInitiative.latestSummary ?? 'No change summary yet.'}
-                      </p>
-                    </CardContent>
-                  </Card>
+                  <ExplanationCard title="Why this initiative is prioritized" icon={Workflow}>
+                    <p>{explainInitiativePriority(selectedInitiative)}</p>
+                    <p>{describeLikelyNextAction(selectedInitiative)}</p>
+                  </ExplanationCard>
 
-                  <Card className="border-border/50">
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <Link2 className="h-4 w-4 text-primary" />
-                        Initiative docs
-                      </div>
-                      <div className="mt-4 space-y-2">
-                        {initiativeRelatedDocs.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">No related docs yet.</p>
-                        ) : (
-                          initiativeRelatedDocs.map((doc) => (
-                            <button
-                              key={doc.path}
-                              onClick={() => openDocument(doc.path)}
-                              className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
-                            >
-                              <p className="truncate text-sm font-medium">{doc.title}</p>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                {labelDocumentType(doc.documentType)} · {timeAgo(doc.updatedAt)}
-                              </p>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
+                  <ConnectedContextList
+                    title="Connected context"
+                    entries={connectedContextDocs}
+                    emptyLabel="No connected docs yet."
+                    onOpen={openDocument}
+                  />
+
+                  {initiativeManualContext.length > 0 && (
+                    <ExplanationCard title="Your notes" icon={NotebookPen}>
+                      {initiativeManualContext.map((context, index) => (
+                        <p key={`${context}-${index}`}>{context}</p>
+                      ))}
+                    </ExplanationCard>
+                  )}
                 </>
               )}
               {!selectedInitiative && (
                 <>
-                  <Card className="border-border/50">
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <Link2 className="h-4 w-4 text-primary" />
-                        Linked context
-                      </div>
-                      <div className="mt-4 space-y-2">
-                        {linkedContext.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">No linked context yet.</p>
+                  {isAccountDocument && (
+                    <>
+                      <ExplanationCard title="Why this account matters now" icon={BrainCircuit}>
+                        <p>{documentPriorityReason}</p>
+                      </ExplanationCard>
+                      <ExplanationCard title="Linked initiatives" icon={Workflow}>
+                        {documentInitiatives.length === 0 ? (
+                          <p>No initiative is linked to this account yet.</p>
                         ) : (
-                          linkedContext.map((link) => (
+                          documentInitiatives.map((initiative) => (
                             <button
-                              key={`${link.linkKind}-${link.targetId}`}
-                              onClick={() => link.targetPath && openDocument(link.targetPath)}
+                              key={initiative.id}
+                              onClick={() => {
+                                setSelectedPanel('initiatives')
+                                setSelectedInitiativeId(initiative.id)
+                                setSelectedPath(null)
+                              }}
                               className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
                             >
-                              <div className="flex items-center justify-between gap-3">
-                                <p className="truncate text-sm font-medium">{link.targetLabel ?? link.targetId}</p>
-                                <Badge variant="secondary" className="text-[10px]">
-                                  {link.targetType ?? link.linkKind}
-                                </Badge>
-                              </div>
+                              <p className="truncate text-sm font-medium text-foreground">{initiative.title}</p>
+                              <p className="mt-1 text-xs text-muted-foreground">{describeLikelyNextAction(initiative)}</p>
                             </button>
                           ))
                         )}
-                      </div>
-                    </CardContent>
-                  </Card>
+                      </ExplanationCard>
+                      <ConnectedContextList
+                        title="Recent meetings, email, and Slack"
+                        entries={accountConnectedContext}
+                        emptyLabel="No supporting account context yet."
+                        onOpen={openDocument}
+                      />
+                    </>
+                  )}
+
+                  {isEvidenceDocument && (
+                    <>
+                      <ExplanationCard title="Why the chief thinks this" icon={BrainCircuit}>
+                        <p>{selectedEvidenceEntry?.summary ?? 'This source record changed the chief view and triggered follow-on updates.'}</p>
+                      </ExplanationCard>
+                      <ExplanationCard title="Supporting source metadata" icon={FileClock}>
+                        <p>Updated {formatDateTime(document.freshness.updatedAt)}</p>
+                        <p>Last source update {formatDateTime(document.freshness.lastSourceUpdateAt)}</p>
+                        {document.freshness.stalenessReason && <p>{document.freshness.stalenessReason}</p>}
+                      </ExplanationCard>
+                      <ConnectedContextList
+                        title="Follow-on effects"
+                        entries={documentConnectedContext}
+                        emptyLabel="No follow-on docs linked yet."
+                        onOpen={openDocument}
+                      />
+                    </>
+                  )}
+
+                  {!isAccountDocument && !isEvidenceDocument && (
+                    <ConnectedContextList
+                      title="Connected context"
+                      entries={documentConnectedContext}
+                      emptyLabel="No connected context yet."
+                      onOpen={openDocument}
+                    />
+                  )}
 
                   <Card className="border-border/50">
                     <CardContent className="p-4">
@@ -1948,21 +2162,24 @@ export function IntelligenceWorkspace() {
                         Work connected to this
                       </div>
                       <div className="mt-4 space-y-2">
-                        {linkedWork.length === 0 ? (
+                        {linkedWorkEntries.length === 0 ? (
                           <p className="text-sm text-muted-foreground">No linked action items or decisions yet.</p>
                         ) : (
-                          linkedWork.map((link) => (
+                          linkedWorkEntries.map((entry) => (
                             <button
-                              key={`${link.linkKind}-${link.targetId}`}
-                              onClick={() => link.targetPath && openDocument(link.targetPath)}
+                              key={entry.path}
+                              onClick={() => openDocument(entry.path)}
                               className="w-full rounded-xl border border-border/50 bg-card/80 px-3 py-2 text-left hover:bg-muted/40"
                             >
                               <div className="flex items-center justify-between gap-3">
-                                <p className="truncate text-sm font-medium">{link.targetLabel ?? link.targetId}</p>
+                                <p className="truncate text-sm font-medium">{entry.title}</p>
                                 <Badge variant="secondary" className="text-[10px]">
-                                  {link.targetType ?? labelDocumentType(link.linkKind)}
+                                  {labelDocumentType(entry.documentType)}
                                 </Badge>
                               </div>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {entry.summary ?? `${labelDocumentType(entry.documentType)} updated ${timeAgo(entry.updatedAt)}.`}
+                              </p>
                             </button>
                           ))
                         )}

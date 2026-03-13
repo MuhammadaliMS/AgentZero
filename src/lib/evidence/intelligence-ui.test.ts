@@ -4,6 +4,7 @@ import {
   buildAccountWorkspaceSummary,
   buildEvidenceFeed,
   buildIntelligenceNowSummary,
+  buildOverviewStrip,
   describeLikelyNextAction,
   describeInitiativeState,
   dedupeEntryPoints,
@@ -18,6 +19,7 @@ import {
   prioritizeInitiatives,
   summarizeInitiativeManualContext,
   summarizeArtifactChannels,
+  summarizeConnectedContext,
   type ChiefOperationalMemoryLike,
   type IntelligenceInitiativeEntry,
   type IntelligenceNowSummary,
@@ -503,6 +505,41 @@ describe('buildAccountWorkspaceSummary', () => {
   })
 })
 
+describe('buildOverviewStrip', () => {
+  it('builds a compact top strip including the highest-priority initiative', () => {
+    const summary = buildIntelligenceNowSummary({
+      initiatives: [
+        {
+          id: 'crane',
+          title: 'Crane estimation',
+          status: 'blocked',
+          phase: 'execution',
+          nextMilestone: 'Send estimate',
+          nextReviewAt: '2026-03-13T07:00:00.000Z',
+          lastSignalAt: '2026-03-13T06:30:00.000Z',
+          latestSummary: 'Waiting on estimate package.',
+          currentHypothesis: null,
+          openQuestionCount: 1,
+          riskCount: 1,
+        },
+      ],
+      recentlyChanged: [],
+      jumpBackIn: [],
+      work: [],
+      meetings: [],
+      operationalMemory: null,
+      now: '2026-03-13T07:30:00.000Z',
+    })
+
+    expect(buildOverviewStrip(summary)).toEqual([
+      expect.objectContaining({ label: 'Needs you', value: 1 }),
+      expect.objectContaining({ label: 'Blocked', value: 1 }),
+      expect.objectContaining({ label: 'Waiting', value: 0 }),
+      expect.objectContaining({ label: 'Top initiative', value: 'Crane estimation' }),
+    ])
+  })
+})
+
 describe('buildEvidenceFeed', () => {
   it('builds an explainability feed from source docs and touched work', () => {
     const feed = buildEvidenceFeed({
@@ -698,5 +735,38 @@ describe('explainAccountPriority', () => {
     expect(explanation).toContain('Crane estimation')
     expect(explanation).toContain('blocked')
     expect(explanation).toContain('Estimate scope expanded')
+  })
+})
+
+describe('summarizeConnectedContext', () => {
+  it('dedupes repeated context cards by title and type', () => {
+    const context = summarizeConnectedContext([
+      {
+        path: 'Narratives/Accounts/crane.md',
+        title: 'Crane Ventures',
+        documentType: 'narrative',
+        updatedAt: '2026-03-13T08:00:00.000Z',
+        lastSourceUpdateAt: null,
+      },
+      {
+        path: 'Narratives/Accounts/crane-2.md',
+        title: 'Crane Ventures',
+        documentType: 'narrative',
+        updatedAt: '2026-03-13T08:05:00.000Z',
+        lastSourceUpdateAt: null,
+      },
+      {
+        path: 'Sources/Meetings/crane.md',
+        title: 'Crane <> KeyValue',
+        documentType: 'source_artifact',
+        updatedAt: '2026-03-13T08:10:00.000Z',
+        lastSourceUpdateAt: null,
+      },
+    ])
+
+    expect(context).toEqual([
+      expect.objectContaining({ path: 'Sources/Meetings/crane.md' }),
+      expect.objectContaining({ path: 'Narratives/Accounts/crane-2.md' }),
+    ])
   })
 })

@@ -1,6 +1,14 @@
 # Agent Zero — AI Captain
 
-A proactive, agentic Captain built for CISOs. Combines a conversational chat interface (Layer 2) with proactive Slack briefings (Layer 1).
+A proactive, agentic work companion for individuals and teams. It combines a conversational chat interface (Layer 2) with proactive briefings, nudges, approvals, and connected tools (Layer 1) so the agent can help with real work instead of staying trapped in chat.
+
+## What It Does
+
+- Chat with an agent that can reason over your context and use connected tools.
+- Send proactive morning briefs, end-of-day wraps, and nudges through Slack.
+- Connect work systems like Slack, Gmail, and Google Calendar via OAuth.
+- Gate external actions behind approval flows before messages, emails, or events are created.
+- Build memory over time with stored context, graph memory, and meeting/evidence pipelines.
 
 ---
 

@@ -1,6 +1,6 @@
-# Agent Zero — AI Chief-of-Staff
+# Agent Zero — Agentic AI for Work
 
-An open-source AI agent that acts as your Chief-of-Staff. It reads your emails, summarizes Slack, sends morning briefs, tracks commitments from meetings, nudges you when things slip, and runs an hourly intelligence loop — all from a chat interface or deployed as a Slack bot.
+An open-source AI agent that reads your emails, summarizes Slack, sends morning briefs, tracks commitments from meetings, nudges you when things slip, and runs an hourly intelligence loop — all from a chat interface or deployed as a Slack bot.
 
 Built as a deep exploration of **Claude Agent SDK vs OpenAI Agents SDK** — same 33 tools, same streaming chat, same approval gates, two different engines.
 
@@ -11,8 +11,8 @@ Built as a deep exploration of **Claude Agent SDK vs OpenAI Agents SDK** — sam
 ## What's Inside
 
 - **Dual SDK architecture** — Claude Agent SDK and OpenAI Agents SDK running behind a single runtime switch. Same tools, same streaming, same client experience.
-- **33 agent tools** — Memory, Slack, Gmail, Calendar, Compliance (Vanta), Knowledge Graph, Outcomes, Integrations, Directory.
-- **6 integrations** — Slack, Gmail, Google Calendar, Vanta, Google Workspace Directory, Meeting Bot.
+- **33 agent tools** — Memory, Slack, Gmail, Calendar, Knowledge Graph, Outcomes, Integrations, Directory.
+- **5 integrations** — Slack, Gmail, Google Calendar, Google Workspace Directory, Meeting Bot.
 - **Approval flows** — External actions (send email, post in Slack, create event) require explicit approval via in-chat cards. Database-backed, survives serverless restarts.
 - **Progressive autonomy** — Shadow → Assisted → Auto. Trust is earned through acceptance rate metrics, not configuration.
 - **Hybrid memory** — Full-text search + vector embeddings + knowledge graph with contradiction detection.
@@ -38,14 +38,14 @@ Built as a deep exploration of **Claude Agent SDK vs OpenAI Agents SDK** — sam
 │  Layer 2 (Conversation) Chat UI → SSE Stream → Captain Agent     │
 │                         → Tool calls, approvals, memory          │
 │                                                                  │
-│  Layer 3 (Intelligence) Chief Loop → Sub-agents → Graph          │
+│  Layer 3 (Intelligence) Agent Loop → Sub-agents → Graph          │
 │                         → Vault → Evidence → Learning            │
 │                                                                  │
 ├─────────────────────────────────────────────────────────────────┤
 │  SDK Layer              Claude Agent SDK ←→ OpenAI Agents SDK    │
 │                         (runtime switch, same interface)         │
 ├─────────────────────────────────────────────────────────────────┤
-│  Integrations           Slack · Gmail · Calendar · Vanta         │
+│  Integrations           Slack · Gmail · Calendar                 │
 │                         Google Directory · Meeting Bot           │
 ├─────────────────────────────────────────────────────────────────┤
 │  Storage                Supabase (DB + Auth)                     │
@@ -93,7 +93,6 @@ Copy `.env.example` to `.env.local` and fill in:
 |---|---|
 | `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_SIGNING_SECRET` | Slack |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Gmail + Google Calendar |
-| `VANTA_CLIENT_ID` / `VANTA_CLIENT_SECRET` | Vanta compliance |
 | `NVIDIA_API_KEY` | NVIDIA NIM (primary LLM for background agents) |
 | `OPENROUTER_API_KEY` | OpenRouter (fallback LLM + embeddings) |
 
@@ -158,7 +157,6 @@ http://localhost:3000/api/integrations/callback
 | **Slack** | `read_channels`, `read_thread`, `read_dms`, `read_mentions`, `send_dm`, `post_to_channel`, `send_approval_message` |
 | **Calendar** | `get_today_events`, `get_week_events`, `find_free_slots`, `create_calendar_event` |
 | **Directory** | `lookup_workspace_user` |
-| **Compliance** | `get_compliance_overview`, `list_failing_controls`, `get_audit_status` |
 | **Outcomes** | `create_outcome`, `update_outcome`, `list_outcomes` |
 | **Integration** | `list_connected_integrations`, `get_integration_health` |
 | **Internal** | `query_commitments`, `query_actions` |
@@ -173,7 +171,7 @@ Defined in Vercel cron configuration, secured with `CRON_SECRET`.
 
 | Endpoint | Schedule | Purpose |
 |---|---|---|
-| `/api/cron/chief-loop` | Hourly | 6-phase intelligence loop (gather → think → act → reflect) |
+| `/api/cron/agent-loop` | Hourly | 6-phase intelligence loop (gather → think → act → reflect) |
 | `/api/cron/morning-brief` | Hourly 6–14 UTC | Morning brief for users in 6–9 AM local window |
 | `/api/cron/eod-wrap` | Hourly 16–23 UTC | EOD wrap for users in 4–7 PM local window |
 | `/api/cron/nudge` | 14:00 UTC daily (M–F) | Smart nudges with urgency scoring + cooldowns |
@@ -182,7 +180,7 @@ Defined in Vercel cron configuration, secured with `CRON_SECRET`.
 | `/api/cron/meeting-summarize` | On trigger | Process meeting transcripts → structured output |
 | `/api/cron/weekly-tuning` | Weekly | Performance measurement + rollout adjustment |
 
-**Vercel cron limits**: 300s execution. Long workflows (chief loop) chain phases via HTTP self-triggers.
+**Vercel cron limits**: 300s execution. Long workflows (agent loop) chain phases via HTTP self-triggers.
 
 Test locally:
 ```bash
@@ -193,7 +191,7 @@ curl -H "Authorization: Bearer your-cron-secret" http://localhost:3000/api/cron/
 
 ## Intelligence System
 
-### Chief Loop (runs hourly)
+### Agent Loop (runs hourly)
 
 1. **Lock** — Acquire org lease (prevent concurrent runs)
 2. **Gather** — Fetch emails, Slack messages, calendar events, commitments, entity graph
@@ -203,18 +201,6 @@ curl -H "Authorization: Bearer your-cron-secret" http://localhost:3000/api/cron/
 6. **Closeout** — Persist metrics, release lease
 
 Budget limits per cycle: 3 new outcomes, 10 step executions, 50 agent turns.
-
-### Specialist Agents
-
-| Agent | Role |
-|---|---|
-| **Captain** | Main conversational agent (chat interface) |
-| **Eve** | Strategy sub-agent |
-| **Cole** | Operations sub-agent |
-| **Rhea** | Compliance sub-agent |
-| **Patrol Scanner** | Deadline, blocker, stale entity detection |
-| **Ghost Agent** | Proactive signal generation for upcoming events |
-| **Nudge Engine** | Smart notification scoring + delivery |
 
 ### Outcomes (Multi-step Task Tracking)
 
@@ -288,7 +274,7 @@ Switch between SDKs per-org or via environment variable. Both emit identical SSE
 | Component | Cost | Notes |
 |---|---|---|
 | Chat turn (Captain) | $0.01–0.10 | Per user message |
-| Chief loop turn | $0.02–0.05 | Hourly per org |
+| Agent loop turn | $0.02–0.05 | Hourly per org |
 | Meeting summarization | $0.01–0.05 | Per meeting |
 | Outcome planner | $0.01–0.03 | Per outcome (if LLM plans) |
 | Memory vector search | ~$0.001 | Per recall |
@@ -309,7 +295,7 @@ src/
 │   │   │   ├── chat/route.ts              # SSE streaming chat endpoint
 │   │   │   └── approve/route.ts           # Approval resolution
 │   │   ├── cron/
-│   │   │   ├── chief-loop/                # Hourly intelligence loop
+│   │   │   ├── agent-loop/                # Hourly intelligence loop
 │   │   │   ├── morning-brief/             # Morning briefing
 │   │   │   ├── eod-wrap/                  # EOD wrap
 │   │   │   ├── nudge/                     # Smart nudges
@@ -335,7 +321,6 @@ src/
 │   │   │   ├── email-tools.ts             # Gmail operations
 │   │   │   ├── calendar-tools.ts          # Calendar events
 │   │   │   ├── outcome-tools.ts           # Multi-step task tracking
-│   │   │   ├── vanta-tools.ts             # Compliance
 │   │   │   └── ...
 │   │   ├── workers/                       # Sub-agents (Eve, Cole, Rhea)
 │   │   ├── planner/                       # Outcome planning + step execution
@@ -345,7 +330,7 @@ src/
 │   │   ├── hooks.ts                       # SDK hook callbacks
 │   │   └── tool-metadata.ts              # Tool → integration mapping
 │   ├── intelligence/
-│   │   ├── chief-loop.ts                  # 6-phase intelligence orchestration
+│   │   ├── agent-loop.ts                  # 6-phase intelligence orchestration
 │   │   ├── meeting-processor.ts           # Transcript → structured output
 │   │   ├── nudge-engine.ts                # Smart notification scoring
 │   │   ├── ghost-agent.ts                 # Proactive signal generation
@@ -386,7 +371,7 @@ src/
 - **Database**: Supabase (Postgres + Auth + Realtime)
 - **LLMs**: Claude (Haiku/Sonnet), Qwen 3.5, Kimi K2.5 via NVIDIA NIM / OpenRouter
 - **Embeddings**: OpenAI text-embedding-3-small via OpenRouter
-- **Integrations**: Slack Web API, Gmail API, Google Calendar API, Vanta API
+- **Integrations**: Slack Web API, Gmail API, Google Calendar API
 - **UI**: Tailwind CSS, Radix UI, shadcn/ui, Lucide icons
 - **Deployment**: Vercel (with cron jobs)
 - **Testing**: Vitest

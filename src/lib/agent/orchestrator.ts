@@ -33,7 +33,7 @@ import { getRolloutConfig, isActionAllowed } from '@/lib/agent/runtime/rollout-m
 //   ANTHROPIC_BASE_URL=https://openrouter.ai/api
 //   ANTHROPIC_AUTH_TOKEN=sk-or-v1-...     (your OpenRouter key)
 //   ANTHROPIC_API_KEY=""                   (must be explicitly empty)
-//   CAPTAIN_MODEL=moonshotai/kimi-k2.5    (or z-ai/glm-5, etc.)
+//   CAPTAIN_MODEL=qwen/qwen3.5-397b-a17b  (or z-ai/glm-5, etc.)
 //
 // To use default Anthropic:
 //   Just set ANTHROPIC_API_KEY (no base URL override needed)
@@ -848,7 +848,7 @@ export async function* runCaptain(
 
         // Model — configurable via CAPTAIN_MODEL env var.
         // Default: claude-sonnet-4-6 (Anthropic)
-        // OpenRouter examples: moonshotai/kimi-k2.5, z-ai/glm-5
+        // NVIDIA NIM examples: qwen/qwen3.5-397b-a17b, z-ai/glm-5
         model: CAPTAIN_MODEL,
 
         // Effort level — high for thoughtful executive analysis.

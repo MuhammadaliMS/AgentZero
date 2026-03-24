@@ -66,7 +66,7 @@ export function AppShell({
   return (
     <div className="flex h-screen flex-col">
       {/* ── Top Bar ── */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b bg-background/80 backdrop-blur-md px-4 z-30">
+      <header className="flex h-11 shrink-0 items-center justify-between border-b border-border bg-background px-4 z-30">
         <div className="flex items-center gap-4">
           {/* Mobile hamburger */}
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -96,7 +96,7 @@ export function AppShell({
                       onClick={() => setMobileOpen(false)}
                       className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors duration-200 ${
                         active
-                          ? 'bg-primary/10 text-primary font-medium'
+                          ? 'bg-accent text-foreground font-medium'
                           : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                       }`}
                     >
@@ -111,7 +111,7 @@ export function AppShell({
                   onClick={() => setMobileOpen(false)}
                   className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors duration-200 ${
                     pathname === '/settings'
-                      ? 'bg-primary/10 text-primary font-medium'
+                      ? 'bg-accent text-foreground font-medium'
                       : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                   }`}
                 >
@@ -122,7 +122,7 @@ export function AppShell({
               <div className="absolute bottom-0 left-0 right-0 border-t p-3">
                 <div className="flex items-center gap-2">
                   <Avatar className="h-8 w-8">
-                    <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials}</AvatarFallback>
+                    <AvatarFallback className="text-xs bg-accent text-foreground">{initials}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{profile.full_name}</p>
@@ -135,10 +135,10 @@ export function AppShell({
 
           {/* Logo */}
           <Link href="/chat" className="flex items-center gap-2 group">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary transition-transform duration-200 group-hover:scale-105">
-              <Zap className="h-3.5 w-3.5 text-primary-foreground" />
+            <div className="flex h-6 w-6 items-center justify-center rounded-md bg-foreground">
+              <Zap className="h-3 w-3 text-background" />
             </div>
-            <span className="hidden text-lg font-semibold tracking-tight sm:inline">Zerowing</span>
+            <span className="hidden text-sm font-semibold tracking-tight sm:inline">Zerowing</span>
           </Link>
 
           {/* Desktop nav */}
@@ -151,17 +151,14 @@ export function AppShell({
                   key={item.href}
                   href={item.href}
                   aria-current={active ? 'page' : undefined}
-                  className={`relative flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors duration-200 ${
+                  className={`relative flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] transition-colors duration-100 ${
                     active
-                      ? 'text-primary font-medium'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                      ? 'text-foreground font-medium bg-accent'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent'
                   }`}
                 >
-                  <Icon className={`h-3.5 w-3.5 ${active ? 'text-primary' : ''}`} />
+                  <Icon className="h-3.5 w-3.5" />
                   {item.label}
-                  {active && (
-                    <span className="absolute bottom-0 left-3 right-3 h-0.5 rounded-full bg-primary" />
-                  )}
                 </Link>
               )
             })}
@@ -177,9 +174,9 @@ export function AppShell({
                 new KeyboardEvent('keydown', { key: 'k', metaKey: isMac, ctrlKey: !isMac })
               )
             }}
-            className="hidden items-center gap-1.5 rounded-lg border border-border/50 bg-muted/30 px-2.5 py-1 text-xs text-muted-foreground
-                       transition-all duration-200 hover:bg-muted hover:border-border cursor-pointer sm:flex
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+            className="hidden items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground
+                       transition-colors duration-100 hover:bg-accent cursor-pointer sm:flex
+                       focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/20"
           >
             <Search className="h-3 w-3" />
             <span>Search</span>
@@ -193,14 +190,14 @@ export function AppShell({
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="relative h-8 w-8 rounded-full focus-visible:ring-2 focus-visible:ring-primary/30">
                 <Avatar className="h-8 w-8">
-                  <AvatarFallback className="text-xs bg-primary/10 text-primary font-medium">{initials}</AvatarFallback>
+                  <AvatarFallback className="text-xs bg-accent text-foreground font-medium">{initials}</AvatarFallback>
                 </Avatar>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <div className="flex items-center gap-2 p-2">
                 <Avatar className="h-8 w-8">
-                  <AvatarFallback className="text-xs bg-primary/10 text-primary font-medium">{initials}</AvatarFallback>
+                  <AvatarFallback className="text-xs bg-accent text-foreground font-medium">{initials}</AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col space-y-0.5">
                   <p className="text-sm font-medium">{profile.full_name}</p>

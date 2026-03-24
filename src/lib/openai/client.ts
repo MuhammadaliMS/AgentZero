@@ -15,8 +15,8 @@ const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
   ? 'https://integrate.api.nvidia.com/v1'
   : 'https://openrouter.ai/api/v1')
 export const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || (NVIDIA_API_KEY
-  ? 'moonshotai/kimi-k2.5'
-  : 'minimax/minimax-m2.5')
+  ? 'qwen/qwen3.5-397b-a17b'
+  : 'qwen/qwen3.5-397b-a17b')
 
 // Fallback model for extraction when primary model times out or returns empty.
 // google/gemini-2.0-flash is fast (~5-15s), cheap, and reliable for JSON extraction.

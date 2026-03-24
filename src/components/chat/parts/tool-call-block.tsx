@@ -111,22 +111,21 @@ export function ToolCallBlock({ part, resultPart }: ToolCallBlockProps) {
       <button
         onClick={() => setExpanded(!expanded)}
         className={cn(
-          'inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition-colors',
-          'border bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground',
-          part.status === 'failed' && 'border-destructive/30 bg-destructive/5'
+          'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors cursor-pointer',
+          'text-muted-foreground hover:bg-accent hover:text-foreground',
+          part.status === 'failed' && 'text-destructive/80'
         )}
       >
         <ToolIcon category={category} />
         <span className="font-medium">{part.displayName}</span>
         <StatusIndicator status={part.status} />
         {typeof part.durationMs === 'number' && part.durationMs > 0 && (
-          <span className="text-[10px] text-muted-foreground/60">
+          <span className="text-[10px] text-muted-foreground/40">
             {part.durationMs < 1000
               ? `${part.durationMs}ms`
               : `${(part.durationMs / 1000).toFixed(1)}s`}
           </span>
         )}
-        {/* Chevron */}
         <ChevronDown
           className={cn(
             'h-2.5 w-2.5 transition-transform shrink-0 ml-0.5',
@@ -136,11 +135,11 @@ export function ToolCallBlock({ part, resultPart }: ToolCallBlockProps) {
       </button>
 
       {expanded && (
-        <div className="mt-1.5 ml-1 space-y-1.5">
+        <div className="mt-1 ml-1 space-y-1.5">
           {/* Tool Input */}
           {Object.keys(part.toolInput).length > 0 && (
-            <div className="rounded-lg border bg-muted/20 p-3">
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+            <div className="rounded-md border border-border bg-accent/30 p-3">
+              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/50">
                 Input
               </p>
               <pre className="whitespace-pre-wrap text-xs text-muted-foreground font-mono leading-relaxed overflow-x-auto">
@@ -153,13 +152,13 @@ export function ToolCallBlock({ part, resultPart }: ToolCallBlockProps) {
           {resultPart && (
             <div
               className={cn(
-                'rounded-lg border p-3',
+                'rounded-md border p-3',
                 resultPart.success
-                  ? 'bg-emerald-500/5 border-emerald-500/20'
+                  ? 'bg-accent/30 border-border'
                   : 'bg-destructive/5 border-destructive/20'
               )}
             >
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/50">
                 {resultPart.success ? 'Result' : 'Error'}
               </p>
               <pre className="whitespace-pre-wrap text-xs text-muted-foreground font-mono leading-relaxed overflow-x-auto max-h-[300px] overflow-y-auto">

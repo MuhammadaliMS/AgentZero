@@ -16,7 +16,7 @@
  *   - NO SQL detections, confidence decay, or maintenance ops.
  *   - Graph updates happen during ACT phase via agent decisions.
  *   - Direct integration API fetches (Gmail, Slack, Calendar) in GATHER.
- *   - Model: minimax/minimax-m2.5 (configurable via CHIEF_ANALYST_MODEL).
+ *   - Model: qwen/qwen3.5-397b-a17b (configurable via CHIEF_ANALYST_MODEL).
  *   - All data includes timestamps for LLM temporal reasoning.
  *
  * Budget limits per org per hour:
@@ -125,8 +125,9 @@ export interface ChiefLoopResult {
 const MAX_NEW_OUTCOMES_PER_HOUR = 3
 const MAX_STEP_EXECUTIONS_PER_HOUR = 10
 const REPLAN_COOLDOWN_MS = 4 * 60 * 60 * 1000 // 4 hours
-const LEASE_DURATION_MINUTES = 55
-const AGENT_TIMEOUT_MS = 300_000 // 5 minutes
+const LEASE_DURATION_MINUTES = 18 // 3 chained phases × 5 min + 3 min buffer
+const AGENT_TIMEOUT_MS = 280_000 // 4m40s — per-phase budget for LLM calls
+const FETCH_TIMEOUT_MS = 15_000 // 15 seconds per external API call (NVIDIA NIM can be slow)
 
 // ─── Working Memory Types (Feature 5) ───────────────────────────────────
 
@@ -446,6 +447,578 @@ export async function runChiefLoopForOrg(
   return result
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase-Chained Execution — 3 HTTP calls, each with its own 300s budget
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface PhaseResult {
+  phase: number
+  leaseId: string
+  orgId: string
+  durationMs: number
+  error?: string
+  nextPhase?: number
+}
+
+/** Save intermediate state between phases (uses untyped client for new table) */
+async function savePhaseState(
+  leaseId: string,
+  orgId: string,
+  data: Record<string, unknown>
+): Promise<void> {
+  const client = createUntypedAdminClient()
+  const { error } = await client
+    .from('chief_loop_phase_state')
+    .upsert({ lease_id: leaseId, org_id: orgId, ...data }, { onConflict: 'lease_id' })
+  if (error) throw new Error(`Failed to save phase state: ${error.message}`)
+}
+
+/** Load intermediate state from DB (uses untyped client for new table) */
+async function loadPhaseState(
+  leaseId: string
+): Promise<Record<string, unknown> | null> {
+  const client = createUntypedAdminClient()
+  const { data, error } = await client
+    .from('chief_loop_phase_state')
+    .select('*')
+    .eq('lease_id', leaseId)
+    .single()
+  if (error || !data) return null
+  return data as Record<string, unknown>
+}
+
+/** Delete phase state after completion (uses untyped client) */
+async function deletePhaseState(leaseId: string): Promise<void> {
+  const client = createUntypedAdminClient()
+  await client
+    .from('chief_loop_phase_state')
+    .delete()
+    .eq('lease_id', leaseId)
+}
+
+/** Trigger the next phase via internal HTTP call (fire-and-forget) */
+function triggerNextPhase(phase: number, leaseId: string): void {
+  const baseUrl = process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : `http://localhost:${process.env.PORT || 3000}`
+  const cronSecret = process.env.CRON_SECRET
+
+  console.log(`[ChiefLoop:chain] Triggering phase ${phase} for lease ${leaseId}`)
+
+  fetch(`${baseUrl}/api/cron/chief-loop?phase=${phase}&leaseId=${leaseId}`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${cronSecret}` },
+  }).catch(err => {
+    console.error(`[ChiefLoop:chain] Failed to trigger phase ${phase}:`, err)
+  })
+  // Fire-and-forget — don't await
+}
+
+/**
+ * Phase 1: SENSE — LOCK + GATHER + Triage + Sensemaking
+ * Saves intermediate state (input + classifications + decisions) to DB, triggers Phase 2.
+ */
+export async function runChiefPhase1(orgId: string, now: Date, opts?: { skipChainTrigger?: boolean }): Promise<PhaseResult> {
+  const startTime = Date.now()
+  const supabase = createAdminClient()
+  const result: PhaseResult = { phase: 1, leaseId: '', orgId, durationMs: 0 }
+
+  // ── LOCK ──
+  const leaseId = await acquireLease(supabase, orgId, now)
+  if (!leaseId) {
+    return { ...result, durationMs: Date.now() - startTime, error: 'lease_busy' }
+  }
+  result.leaseId = leaseId
+
+  // Log worker execution
+  const executionId = await logWorkerExecution({
+    org_id: orgId,
+    worker: 'chief-loop-phase1',
+    trigger: 'cron',
+    input_summary: 'Phase 1: SENSE (Gather + Triage + Sensemaking)',
+    status: 'running',
+  })
+
+  const stepCollector = new StepCollector()
+
+  try {
+    // ── GATHER ──
+    const gatherResult = await phaseGather(supabase, orgId, now)
+    console.log(`[ChiefLoop:phase1] Gathered ${gatherResult.totalSignals} signals in ${gatherResult.durationMs}ms`)
+
+    // Build ChiefAnalystInput
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const previousCarryForward = gatherResult.workingMemory?.runningSummary
+      ?? await fetchPreviousCarryForward(supabase, orgId).catch(() => null)
+
+    const emptyWorkerViews: import('@/lib/intelligence/brief-synthesizer').WorkerViews = {
+      cole: { activeCount: 0, atRiskCount: 0, overdueCount: 0, completedTodayCount: 0, topDeadlines: [], pendingActionsCount: 0, oldestActionDays: null },
+      rhea: { hasVantaConnection: false, failingControlsCount: 0, topFailingControls: [], complianceFindings: 0 },
+      eve: { recentDecisions: [], keyStakeholders: [] },
+      patrol: { openFindingsCount: 0, criticalFindings: 0, byType: {}, newSinceYesterday: 0 },
+      insights: { contradictions: [], patterns: [], anomalies: [], staleItems: [], risks: [], totalActive: 0 },
+      outcomes: { active: [], totalActive: 0 },
+    }
+
+    const input: import('@/lib/agent/openai/chief-analyst-agent').ChiefAnalystInput = {
+      orgId,
+      orgName: gatherResult.orgName,
+      currentTime: now.toISOString(),
+      timezone,
+      activeOutcomes: gatherResult.activeOutcomes,
+      recentEmails: gatherResult.recentEmails,
+      recentSlackMessages: gatherResult.recentSlackMessages,
+      todayEvents: gatherResult.todayEvents,
+      recentInsights: gatherResult.recentInsights,
+      recentFindings: gatherResult.recentFindings,
+      topEntities: gatherResult.topEntities,
+      recentRelationships: gatherResult.recentRelationships,
+      recentMemories: gatherResult.recentMemories,
+      activeClaims: gatherResult.activeClaims,
+      activeCommitments: gatherResult.activeCommitments,
+      decisionThreads: gatherResult.decisionThreads,
+      activeNarratives: gatherResult.activeNarratives,
+      recentSourceArtifacts: gatherResult.recentSourceArtifacts,
+      vaultContext: gatherResult.vaultContext,
+      activeInitiatives: gatherResult.activeInitiatives,
+      chiefWorldModel: gatherResult.chiefWorldModel,
+      workerViews: gatherResult.workerViews ?? emptyWorkerViews,
+      connectedIntegrations: gatherResult.connectedIntegrations,
+      focusProfile: gatherResult.focusProfile,
+      previousCarryForward: previousCarryForward ?? undefined,
+      proceduralMemories: gatherResult.proceduralMemories,
+      workingMemory: gatherResult.workingMemory ?? undefined,
+      decisionAccuracy: gatherResult.decisionAccuracy ?? undefined,
+    }
+
+    // ── TRIAGE ──
+    const { runTriageAgent } = await import('@/lib/agent/openai/chief-sub-agents')
+    const triageResult = await runTriageAgent(input, stepCollector)
+    console.log(`[ChiefLoop:phase1] Triage: ${triageResult.classifications.length} classifications, ${triageResult.decisions.length} decisions, ${triageResult.durationMs}ms`)
+
+    // ── SENSEMAKING ──
+    const { runSensemakingAgent } = await import('@/lib/agent/openai/chief-sub-agents')
+    const sensemakingResult = await runSensemakingAgent(input, triageResult.classifications, stepCollector)
+    console.log(`[ChiefLoop:phase1] Sensemaking: ${sensemakingResult.decisions.length} decisions, ${sensemakingResult.durationMs}ms`)
+
+    // ── SAVE STATE ──
+    // Store gather metadata (not the full input — too large for JSONB in some cases)
+    // Instead, store the input directly since Phase 2 needs it for agent prompts
+    await savePhaseState(leaseId, orgId, {
+      current_phase: 1,
+      gather_input: input,
+      classifications: triageResult.classifications,
+      phase1_decisions: [...triageResult.decisions, ...sensemakingResult.decisions],
+      phase1_usage: {
+        input: triageResult.usage.input + sensemakingResult.usage.input,
+        output: triageResult.usage.output + sensemakingResult.usage.output,
+      },
+      phase1_turns: triageResult.turns + sensemakingResult.turns,
+      phase1_completed_at: new Date().toISOString(),
+      gather_result_meta: {
+        totalSignals: gatherResult.totalSignals,
+        orgName: gatherResult.orgName,
+        previousCarryForward,
+        durationMs: gatherResult.durationMs,
+      },
+    })
+
+    // Update lease signals count
+    await supabase
+      .from('chief_loop_leases')
+      .update({ signals_ingested: gatherResult.totalSignals })
+      .eq('id', leaseId)
+
+    result.durationMs = Date.now() - startTime
+    result.nextPhase = 2
+    console.log(`[ChiefLoop:phase1] Complete in ${result.durationMs}ms.`)
+
+    // Trigger Phase 2 (skip in sync mode — caller handles it)
+    if (!opts?.skipChainTrigger) {
+      triggerNextPhase(2, leaseId)
+    }
+
+  } catch (error) {
+    result.error = (error as Error).message
+    result.durationMs = Date.now() - startTime
+    console.error('[ChiefLoop:phase1] Error:', error)
+
+    // Release lease on fatal error
+    try {
+      await supabase.rpc('release_chief_lease', {
+        p_lease_id: leaseId,
+        p_status: 'failed',
+        p_result_summary: `phase1_error: ${result.error}`,
+        p_signals_ingested: 0,
+        p_outcomes_created: 0,
+        p_steps_executed: 0,
+        p_cost_usd: 0,
+        p_carry_forward: null,
+      })
+    } catch { /* best-effort */ }
+  }
+
+  // Complete worker execution
+  if (executionId) {
+    try {
+      await completeWorkerExecution(executionId, {
+        status: result.error ? 'failed' : 'completed',
+        output_summary: `Phase 1: ${result.error || 'ok'} (${result.durationMs}ms)`,
+        duration_ms: result.durationMs,
+        steps: stepCollector.length > 0 ? stepCollector.toJSON() : undefined,
+        error: result.error,
+      })
+    } catch { /* best-effort */ }
+  }
+
+  return result
+}
+
+/**
+ * Phase 2: ANALYZE — Initiative + Execution + Graph agents
+ * Loads state from Phase 1, runs remaining sub-agents, saves decisions, triggers Phase 3.
+ */
+export async function runChiefPhase2(leaseId: string, opts?: { skipChainTrigger?: boolean }): Promise<PhaseResult> {
+  const startTime = Date.now()
+  const supabase = createAdminClient()
+
+  // Load phase state
+  const state = await loadPhaseState(leaseId)
+  if (!state) {
+    return { phase: 2, leaseId, orgId: '', durationMs: 0, error: 'no_phase_state' }
+  }
+
+  const orgId = state.org_id as string
+  const result: PhaseResult = { phase: 2, leaseId, orgId, durationMs: 0 }
+
+  const input = state.gather_input as import('@/lib/agent/openai/chief-analyst-agent').ChiefAnalystInput
+  const classifications = state.classifications as import('@/lib/agent/openai/chief-sub-agents').TriageClassification[]
+
+  const executionId = await logWorkerExecution({
+    org_id: orgId,
+    worker: 'chief-loop-phase2',
+    trigger: 'chain',
+    input_summary: 'Phase 2: ANALYZE (Initiative + Execution + Graph)',
+    status: 'running',
+  })
+
+  const stepCollector = new StepCollector()
+
+  try {
+    const { runInitiativeAgent, runExecutionAgent, runGraphAgent } = await import('@/lib/agent/openai/chief-sub-agents')
+
+    // ── INITIATIVE ──
+    const initiativeResult = await runInitiativeAgent(input, classifications, stepCollector)
+    console.log(`[ChiefLoop:phase2] Initiative: ${initiativeResult.decisions.length} decisions, ${initiativeResult.durationMs}ms`)
+
+    // ── EXECUTION ──
+    const executionResult = await runExecutionAgent(input, classifications, stepCollector)
+    console.log(`[ChiefLoop:phase2] Execution: ${executionResult.decisions.length} decisions, ${executionResult.durationMs}ms`)
+
+    // ── GRAPH ──
+    const graphResult = await runGraphAgent(input, classifications, stepCollector)
+    console.log(`[ChiefLoop:phase2] Graph: ${graphResult.decisions.length} decisions, ${graphResult.durationMs}ms`)
+
+    // ── SAVE STATE ──
+    const phase2Decisions = [
+      ...initiativeResult.decisions,
+      ...executionResult.decisions,
+      ...graphResult.decisions,
+    ]
+
+    await savePhaseState(leaseId, orgId, {
+      current_phase: 2,
+      phase2_decisions: phase2Decisions,
+      phase2_usage: {
+        input: initiativeResult.usage.input + executionResult.usage.input + graphResult.usage.input,
+        output: initiativeResult.usage.output + executionResult.usage.output + graphResult.usage.output,
+      },
+      phase2_turns: initiativeResult.turns + executionResult.turns + graphResult.turns,
+      phase2_completed_at: new Date().toISOString(),
+    })
+
+    result.durationMs = Date.now() - startTime
+    result.nextPhase = 3
+    console.log(`[ChiefLoop:phase2] Complete in ${result.durationMs}ms.`)
+
+    // Trigger Phase 3 (skip in sync mode)
+    if (!opts?.skipChainTrigger) {
+      triggerNextPhase(3, leaseId)
+    }
+
+  } catch (error) {
+    result.error = (error as Error).message
+    result.durationMs = Date.now() - startTime
+    console.error('[ChiefLoop:phase2] Error:', error)
+
+    // Release lease on fatal error
+    try {
+      await supabase.rpc('release_chief_lease', {
+        p_lease_id: leaseId,
+        p_status: 'failed',
+        p_result_summary: `phase2_error: ${result.error}`,
+        p_signals_ingested: 0,
+        p_outcomes_created: 0,
+        p_steps_executed: 0,
+        p_cost_usd: 0,
+        p_carry_forward: null,
+      })
+    } catch { /* best-effort */ }
+  }
+
+  if (executionId) {
+    try {
+      await completeWorkerExecution(executionId, {
+        status: result.error ? 'failed' : 'completed',
+        output_summary: `Phase 2: ${result.error || 'ok'} (${result.durationMs}ms)`,
+        duration_ms: result.durationMs,
+        steps: stepCollector.length > 0 ? stepCollector.toJSON() : undefined,
+        error: result.error,
+      })
+    } catch { /* best-effort */ }
+  }
+
+  return result
+}
+
+/**
+ * Phase 3: EXECUTE — ACT + REFLECT + CLOSEOUT
+ * Loads all decisions from Phases 1+2, executes them, reflects, releases lease.
+ */
+export async function runChiefPhase3(leaseId: string): Promise<PhaseResult> {
+  const startTime = Date.now()
+  const supabase = createAdminClient()
+
+  // Load phase state
+  const state = await loadPhaseState(leaseId)
+  if (!state) {
+    return { phase: 3, leaseId, orgId: '', durationMs: 0, error: 'no_phase_state' }
+  }
+
+  const orgId = state.org_id as string
+  const result: PhaseResult = { phase: 3, leaseId, orgId, durationMs: 0 }
+
+  const phase1Decisions = (state.phase1_decisions ?? []) as ChiefDecision[]
+  const phase2Decisions = (state.phase2_decisions ?? []) as ChiefDecision[]
+  const allDecisions = [...phase1Decisions, ...phase2Decisions]
+  const gatherMeta = state.gather_result_meta as Record<string, unknown> | null
+  const input = state.gather_input as import('@/lib/agent/openai/chief-analyst-agent').ChiefAnalystInput
+  const previousCarryForward = (gatherMeta?.previousCarryForward as string) ?? null
+
+  // Compute usage totals
+  const p1Usage = (state.phase1_usage ?? { input: 0, output: 0 }) as { input: number; output: number }
+  const p2Usage = (state.phase2_usage ?? { input: 0, output: 0 }) as { input: number; output: number }
+  const totalUsage = { input: p1Usage.input + p2Usage.input, output: p1Usage.output + p2Usage.output }
+
+  const executionId = await logWorkerExecution({
+    org_id: orgId,
+    worker: 'chief-loop-phase3',
+    trigger: 'chain',
+    input_summary: `Phase 3: EXECUTE (${allDecisions.length} decisions)`,
+    status: 'running',
+  })
+
+  const stepCollector = new StepCollector()
+
+  // Build a ChiefLoopResult for the ACT/CLOSEOUT phases
+  const loopResult: ChiefLoopResult = {
+    orgId,
+    leaseId,
+    signalsGathered: (gatherMeta?.totalSignals as number) ?? 0,
+    replans: 0,
+    newOutcomes: 0,
+    stepsExecuted: 0,
+    blockersEscalated: 0,
+    graphUpdates: 0,
+    deferredItems: 0,
+    costUsd: estimateCost(totalUsage.input, totalUsage.output),
+    durationMs: 0,
+    phases: {},
+  }
+
+  try {
+    // ── ACT ──
+    const actResult = await phaseAct(supabase, orgId, leaseId, allDecisions)
+    loopResult.phases.act = { durationMs: actResult.durationMs }
+    if (actResult.error) loopResult.phases.act.error = actResult.error
+    loopResult.replans = actResult.replans
+    loopResult.newOutcomes = actResult.newOutcomes
+    loopResult.stepsExecuted = actResult.stepsExecuted
+    loopResult.blockersEscalated = actResult.blockersEscalated
+    loopResult.graphUpdates = actResult.graphUpdates
+    loopResult.deferredItems = actResult.deferred
+    console.log(`[ChiefLoop:phase3] ACT: ${actResult.newOutcomes} outcomes, ${actResult.stepsExecuted} steps, ${actResult.graphUpdates} graph, ${actResult.durationMs}ms`)
+
+    // ── REFLECT ──
+    if (allDecisions.length > 0 && input) {
+      try {
+        const gatherForReflect = {
+          activeOutcomes: input.activeOutcomes,
+          proceduralMemories: input.proceduralMemories ?? [],
+        }
+        const reflectResult = await phaseReflect(
+          supabase, orgId, allDecisions,
+          { activeOutcomes: gatherForReflect.activeOutcomes, proceduralMemories: gatherForReflect.proceduralMemories } as GatherResult,
+          previousCarryForward, stepCollector
+        )
+        loopResult.phases.reflect = { durationMs: reflectResult.durationMs }
+        if (reflectResult.error) loopResult.phases.reflect.error = reflectResult.error
+        console.log(`[ChiefLoop:phase3] REFLECT: ${reflectResult.memoriesStored} memories, ${reflectResult.durationMs}ms`)
+      } catch (e) {
+        console.error('[ChiefLoop:phase3] Reflect error:', e)
+      }
+    }
+
+    // ── CLOSEOUT ──
+    loopResult.durationMs = Date.now() - startTime
+
+    // Build working memory and persist
+    // Reconstruct a minimal GatherResult from the stored input for closeout
+    let carryForward: string | null = null
+    // Reconstruct GatherResult from the stored ChiefAnalystInput.
+    // Fields overlap but types differ slightly (JSONB roundtrip), so cast.
+    const gatherForCloseout = {
+      durationMs: (gatherMeta?.durationMs as number) ?? 0,
+      totalSignals: loopResult.signalsGathered,
+      orgSettings: null,
+      orgName: input?.orgName ?? 'Unknown',
+      activeOutcomes: input?.activeOutcomes ?? [],
+      recentEmails: input?.recentEmails ?? [],
+      recentSlackMessages: input?.recentSlackMessages ?? [],
+      todayEvents: input?.todayEvents ?? [],
+      recentInsights: input?.recentInsights ?? [],
+      recentFindings: input?.recentFindings ?? [],
+      topEntities: input?.topEntities ?? [],
+      recentRelationships: input?.recentRelationships ?? [],
+      recentMemories: input?.recentMemories ?? [],
+      workerViews: null,
+      connectedIntegrations: input?.connectedIntegrations ?? [],
+      proceduralMemories: input?.proceduralMemories ?? [],
+      workingMemory: null,
+      focusProfile: input?.focusProfile ?? extractChiefFocusProfile(null),
+      activeClaims: input?.activeClaims ?? [],
+      activeCommitments: input?.activeCommitments ?? [],
+      decisionThreads: input?.decisionThreads ?? [],
+      activeNarratives: input?.activeNarratives ?? [],
+      recentSourceArtifacts: input?.recentSourceArtifacts ?? [],
+      vaultContext: input?.vaultContext ?? [],
+      activeInitiatives: input?.activeInitiatives ?? [],
+      chiefWorldModel: input?.chiefWorldModel ?? null,
+      decisionAccuracy: null,
+    } as unknown as GatherResult
+    try {
+      const closeout = await finalizeChiefLoopCloseout({
+        supabase,
+        orgId,
+        nowIso: new Date().toISOString(),
+        result: loopResult,
+        decisions: allDecisions,
+        gatherResult: gatherForCloseout,
+      })
+      carryForward = closeout.carryForward
+    } catch (error) {
+      console.error('[ChiefLoop:phase3] Working memory error:', error)
+      try {
+        carryForward = buildCarryForward(loopResult, allDecisions, gatherForCloseout)
+      } catch { /* ignore */ }
+    }
+
+    // Release lease
+    await releaseLease(supabase, leaseId, loopResult, carryForward)
+
+    // Log event
+    try {
+      await logChiefLoopEvent(supabase, orgId, leaseId, 'chief_loop_completed', {
+        metadata: {
+          signalsGathered: loopResult.signalsGathered,
+          replans: loopResult.replans,
+          newOutcomes: loopResult.newOutcomes,
+          stepsExecuted: loopResult.stepsExecuted,
+          blockersEscalated: loopResult.blockersEscalated,
+          graphUpdates: loopResult.graphUpdates,
+          durationMs: loopResult.durationMs,
+          costUsd: loopResult.costUsd,
+          mode: 'chained',
+        },
+      })
+    } catch { /* best-effort */ }
+
+    // Clean up phase state
+    try {
+      await deletePhaseState(leaseId)
+      console.log(`[ChiefLoop:phase3] Cleaned up phase state for lease ${leaseId}`)
+    } catch { /* best-effort */ }
+
+    result.durationMs = Date.now() - startTime
+    console.log(`[ChiefLoop:phase3] Complete in ${result.durationMs}ms. decisions=${allDecisions.length} outcomes=${loopResult.newOutcomes} steps=${loopResult.stepsExecuted} graph=${loopResult.graphUpdates}`)
+
+  } catch (error) {
+    result.error = (error as Error).message
+    result.durationMs = Date.now() - startTime
+    console.error('[ChiefLoop:phase3] Error:', error)
+
+    // Try to release lease
+    try {
+      await supabase.rpc('release_chief_lease', {
+        p_lease_id: leaseId,
+        p_status: 'failed',
+        p_result_summary: `phase3_error: ${result.error}`,
+        p_signals_ingested: loopResult.signalsGathered,
+        p_outcomes_created: loopResult.newOutcomes,
+        p_steps_executed: loopResult.stepsExecuted,
+        p_cost_usd: loopResult.costUsd,
+        p_carry_forward: null,
+      })
+    } catch { /* best-effort */ }
+  }
+
+  if (executionId) {
+    try {
+      await completeWorkerExecution(executionId, {
+        status: result.error ? 'failed' : 'completed',
+        output_summary: `Phase 3: decisions=${allDecisions.length} outcomes=${loopResult.newOutcomes} steps=${loopResult.stepsExecuted} graph=${loopResult.graphUpdates} (${result.durationMs}ms)`,
+        duration_ms: result.durationMs,
+        steps: stepCollector.length > 0 ? stepCollector.toJSON() : undefined,
+        error: result.error,
+      })
+    } catch { /* best-effort */ }
+  }
+
+  return result
+}
+
+/**
+ * Run all 3 phases inline (for sync/local-dev mode or backwards compat).
+ * No HTTP chaining — just calls Phase 1 → 2 → 3 sequentially.
+ */
+export async function runChiefLoopChainedSync(orgId: string, now: Date): Promise<{
+  phases: PhaseResult[]
+  totalDurationMs: number
+}> {
+  const totalStart = Date.now()
+  const phases: PhaseResult[] = []
+
+  // Phase 1 (skip HTTP trigger — we call Phase 2 directly)
+  const p1 = await runChiefPhase1(orgId, now, { skipChainTrigger: true })
+  phases.push(p1)
+  if (p1.error || !p1.leaseId) {
+    return { phases, totalDurationMs: Date.now() - totalStart }
+  }
+
+  // Phase 2 (call directly, skip HTTP trigger for Phase 3)
+  const p2 = await runChiefPhase2(p1.leaseId, { skipChainTrigger: true })
+  phases.push(p2)
+  if (p2.error) {
+    return { phases, totalDurationMs: Date.now() - totalStart }
+  }
+
+  // Phase 3 (call directly)
+  const p3 = await runChiefPhase3(p1.leaseId)
+  phases.push(p3)
+
+  return { phases, totalDurationMs: Date.now() - totalStart }
+}
+
 // ─── Phase A: Lease Acquisition ──────────────────────────────────────────
 
 async function acquireLease(
@@ -453,9 +1026,9 @@ async function acquireLease(
   orgId: string,
   _now: Date
 ): Promise<string | null> {
-  // Hour-bucket dedup: skip if already completed this clock hour
+  // Hour-bucket dedup: skip if already completed this clock hour (UTC)
   const hourStart = new Date(_now)
-  hourStart.setMinutes(0, 0, 0)
+  hourStart.setUTCMinutes(0, 0, 0)
   const { data: recentCompleted } = await supabase
     .from('chief_loop_leases')
     .select('id')
@@ -693,11 +1266,8 @@ async function phaseGather(
         return [] as GatherResult['recentEmails']
       }),
 
-      // Direct Slack API fetch
-      fetchRecentSlackMessages(orgId).catch(e => {
-        console.error('[ChiefLoop:gather] Slack fetch error:', e)
-        return [] as GatherResult['recentSlackMessages']
-      }),
+      // Slack: placeholder — fetched after org settings are available for focus topics
+      Promise.resolve([] as GatherResult['recentSlackMessages']),
 
       // Direct Calendar API fetch
       fetchTodayCalendarEvents(orgId, now).catch(e => {
@@ -773,9 +1343,15 @@ async function phaseGather(
     r.orgName = orgData?.name ?? 'Unknown'
     r.orgSettings = (orgData?.settings as Record<string, unknown> | null | undefined) ?? null
     r.focusProfile = extractChiefFocusProfile((orgData?.settings as Record<string, unknown> | null | undefined) ?? null)
+
+    // Fetch Slack messages with focus topics for broader channel coverage
+    r.recentSlackMessages = await fetchRecentSlackMessages(orgId, r.focusProfile.priorityTopics).catch(e => {
+      console.error('[ChiefLoop:gather] Slack fetch error:', e)
+      return [] as GatherResult['recentSlackMessages']
+    })
+
     r.activeOutcomes = outcomes
     r.recentEmails = emails
-    r.recentSlackMessages = slackMessages
     r.todayEvents = calendarEvents
     r.workerViews = workerViews
     r.connectedIntegrations = integrations
@@ -1675,12 +2251,21 @@ export async function finalizeChiefLoopCloseout(input: {
   }
 
   if (worldModelPlan.enabled && worldModelPlan.changedInitiativeIds.length > 0) {
-    await regenerateVault(createAdminClient(), {
-      orgId: input.orgId,
-      initiatives: refreshedInitiatives,
-      changedInitiativeIds: worldModelPlan.changedInitiativeIds,
-      changedAt: input.nowIso,
-    })
+    try {
+      await Promise.race([
+        regenerateVault(createAdminClient(), {
+          orgId: input.orgId,
+          initiatives: refreshedInitiatives,
+          changedInitiativeIds: worldModelPlan.changedInitiativeIds,
+          changedAt: input.nowIso,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Vault regeneration timed out (120s)')), 120_000)
+        ),
+      ])
+    } catch (vaultErr) {
+      console.warn('[ChiefLoop:closeout] Vault regeneration skipped:', (vaultErr as Error).message)
+    }
   }
 
   return {
@@ -1844,6 +2429,14 @@ async function upsertWorkingMemory(
   if (error) console.error('[ChiefLoop] Working memory upsert error:', error.message)
 }
 
+// ─── Timeout Helpers ─────────────────────────────────────────────────────
+
+function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer))
+}
+
 // ─── Integration Data Fetchers ───────────────────────────────────────────
 
 async function fetchRecentEmails(orgId: string): Promise<GatherResult['recentEmails']> {
@@ -1851,7 +2444,7 @@ async function fetchRecentEmails(orgId: string): Promise<GatherResult['recentEma
   if (!gmailTokens) return []
 
   try {
-    const listRes = await fetch(
+    const listRes = await fetchWithTimeout(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=15&q=newer_than:1d`,
       { headers: { Authorization: `Bearer ${gmailTokens.access_token}` } }
     )
@@ -1860,7 +2453,7 @@ async function fetchRecentEmails(orgId: string): Promise<GatherResult['recentEma
 
     const emails = await Promise.all(
       listData.messages.slice(0, 15).map(async (msg) => {
-        const detailRes = await fetch(
+        const detailRes = await fetchWithTimeout(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
           { headers: { Authorization: `Bearer ${gmailTokens.access_token}` } }
         )
@@ -1880,23 +2473,57 @@ async function fetchRecentEmails(orgId: string): Promise<GatherResult['recentEma
   }
 }
 
-async function fetchRecentSlackMessages(orgId: string): Promise<GatherResult['recentSlackMessages']> {
+async function fetchRecentSlackMessages(orgId: string, focusTopics?: string[]): Promise<GatherResult['recentSlackMessages']> {
   const tokens = await TokenManager.getTokens(orgId, 'slack')
   if (!tokens) return []
 
-  const client = new WebClient(tokens.user_access_token || tokens.access_token)
+  const client = new WebClient(tokens.user_access_token || tokens.access_token, { timeout: FETCH_TIMEOUT_MS })
+  const afterTs24h = Math.floor((Date.now() - 24 * 3600_000) / 1000)
+  const afterTs7d = Math.floor((Date.now() - 7 * 24 * 3600_000) / 1000)
+
+  // Build search queries:
+  // - "to:me" uses 24h window (high volume, keep tight)
+  // - Focus topics use 7-day window (low-activity channels need wider net)
+  // - Use keyword search (not exact phrase) for better matching across channel names and content
+  const queries = [`to:me after:${afterTs24h}`]
+  for (const topic of (focusTopics ?? []).slice(0, 3)) {
+    // Split multi-word topics into individual keywords for broader matching
+    // e.g. "Shutapa Media Pulse" → "shutapa media pulse" matches #mediapulse-preparation
+    const keywords = topic.toLowerCase().split(/\s+/).filter(w => w.length > 2).join(' ')
+    queries.push(`${keywords} after:${afterTs7d}`)
+  }
+
   try {
-    const searchRes = await client.search.messages({
-      query: `to:me after:${Math.floor((Date.now() - 24 * 3600_000) / 1000)}`,
-      count: 20, sort: 'timestamp', sort_dir: 'desc',
-    })
-    return (searchRes.messages?.matches ?? []).slice(0, 15).map(m => ({
-      channel: m.channel?.name ?? 'unknown',
-      from: m.username ?? 'unknown',
-      text: m.text?.substring(0, 300) ?? '',
-      ts: m.ts ?? '',
-      permalink: m.permalink,
-    }))
+    const allMatches: GatherResult['recentSlackMessages'] = []
+    const seenPermalinks = new Set<string>()
+
+    for (const query of queries) {
+      try {
+        const searchRes = await Promise.race([
+          client.search.messages({ query, count: 15, sort: 'timestamp', sort_dir: 'desc' }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Slack search timeout')), FETCH_TIMEOUT_MS)),
+        ])
+        for (const m of (searchRes.messages?.matches ?? []).slice(0, 10)) {
+          const link = m.permalink ?? m.ts ?? ''
+          if (seenPermalinks.has(link)) continue
+          seenPermalinks.add(link)
+          allMatches.push({
+            channel: m.channel?.name ?? 'unknown',
+            from: m.username ?? 'unknown',
+            text: m.text?.substring(0, 300) ?? '',
+            ts: m.ts ?? '',
+            permalink: m.permalink,
+          })
+        }
+      } catch (queryErr) {
+        console.warn(`[ChiefLoop:gather] Slack query "${query}" failed:`, (queryErr as Error).message)
+      }
+    }
+
+    // Sort by timestamp descending, cap at 20
+    return allMatches
+      .sort((a, b) => (b.ts ?? '').localeCompare(a.ts ?? ''))
+      .slice(0, 20)
   } catch (e) {
     console.error('[ChiefLoop:gather] Slack fetch error:', (e as Error).message)
     return []
@@ -1911,7 +2538,7 @@ async function fetchTodayCalendarEvents(orgId: string, now: Date): Promise<Gathe
     const start = new Date(now); start.setHours(0, 0, 0, 0)
     const end = new Date(start); end.setDate(end.getDate() + 2)
 
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${start.toISOString()}&timeMax=${end.toISOString()}&singleEvents=true&orderBy=startTime&maxResults=30`,
       { headers: { Authorization: `Bearer ${googleTokens.access_token}` } }
     )
@@ -2067,7 +2694,9 @@ async function phaseThink(
     }
 
     // Feature 10: Try sub-agents first, fall back to monolithic on error
+    // IMPORTANT: Shared time budget — sub-agents + fallback share AGENT_TIMEOUT_MS total
     let agentResult: { decisions: ChiefDecision[]; usage: { input: number; output: number }; turns: number; durationMs: number }
+    const thinkStartMs = Date.now()
 
     try {
       const { runSubAgents } = await import('@/lib/agent/openai/chief-sub-agents')
@@ -2079,17 +2708,24 @@ async function phaseThink(
       ])
       console.log(`[ChiefLoop:think] Sub-agents completed: ${agentResult.decisions.length} decisions, ${agentResult.turns} turns, ${agentResult.durationMs}ms`)
     } catch (subAgentError) {
-      console.warn('[ChiefLoop:think] Sub-agent error, falling back to monolithic:', (subAgentError as Error).message)
+      const elapsedMs = Date.now() - thinkStartMs
+      const remainingMs = AGENT_TIMEOUT_MS - elapsedMs
+      console.warn(`[ChiefLoop:think] Sub-agent error after ${Math.round(elapsedMs / 1000)}s, remaining=${Math.round(remainingMs / 1000)}s:`, (subAgentError as Error).message)
 
-      // Fallback: original monolithic runChiefAnalyst — zero regression risk
-      const { runChiefAnalyst } = await import('@/lib/agent/openai/chief-analyst-agent')
-      agentResult = await Promise.race([
-        runChiefAnalyst(input, collector),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Chief analyst timed out after ${AGENT_TIMEOUT_MS / 1000}s`)), AGENT_TIMEOUT_MS)
-        ),
-      ])
-      console.log(`[ChiefLoop:think] Monolithic fallback completed: ${agentResult.decisions.length} decisions, ${agentResult.turns} turns, ${agentResult.durationMs}ms`)
+      // Only fall back to monolithic if we have meaningful time left (>30s)
+      if (remainingMs > 30_000) {
+        const { runChiefAnalyst } = await import('@/lib/agent/openai/chief-analyst-agent')
+        agentResult = await Promise.race([
+          runChiefAnalyst(input, collector),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Chief analyst timed out after ${Math.round(remainingMs / 1000)}s`)), remainingMs)
+          ),
+        ])
+        console.log(`[ChiefLoop:think] Monolithic fallback completed: ${agentResult.decisions.length} decisions, ${agentResult.turns} turns, ${agentResult.durationMs}ms`)
+      } else {
+        console.warn('[ChiefLoop:think] No time left for monolithic fallback, proceeding with empty decisions')
+        agentResult = { decisions: [], usage: { input: 0, output: 0 }, turns: 0, durationMs: elapsedMs }
+      }
     }
 
     r.decisions = agentResult.decisions
@@ -2956,7 +3592,7 @@ async function executeReadySteps(
         const execResult = await executeToolDirectly(
           orgId, step.toolName,
           (step.toolArgs as Record<string, unknown>) ?? {},
-          { timeoutMs: 30_000 }
+          { timeoutMs: 120_000 }
         )
 
         await updateStep(step.id, {
@@ -2976,7 +3612,7 @@ async function executeReadySteps(
           const { runHeadlessCaptain } = await import('@/lib/agent/runtime/headless-captain')
           const headlessResult = await runHeadlessCaptain(orgId, `Execute step: ${step.description}`, {
             maxTurns: 10,
-            timeoutMs: 60_000,
+            timeoutMs: 120_000,
           })
 
           if (headlessResult.error) {
@@ -3396,7 +4032,7 @@ async function fetchAccuracyStats(
 
 // ─── Phase E: Reflect (Feature 12) ───────────────────────────────────────
 // Lightweight self-reflection after ACT: compares decisions with previous
-// outcomes and stores reusable procedural memories. 30s timeout, 5 turns max.
+// outcomes and stores reusable procedural memories. 120s timeout, 8 turns max.
 
 interface ReflectResult {
   durationMs: number
@@ -3432,7 +4068,7 @@ async function phaseReflect(
     const reflectResult = await Promise.race([
       runReflectionAgent(orgId, reflectInput, collector),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Reflection timed out (30s)')), 30_000)
+        setTimeout(() => reject(new Error('Reflection timed out (120s)')), 120_000)
       ),
     ])
 

@@ -28,10 +28,10 @@ import { createCaptainToolsMap, type CaptainToolParams } from './captain-tools'
 
 // ─── Sub-Agent Model ────────────────────────────────────────────────────────
 // Claude SDK uses 'sonnet' for all workers. For OpenAI SDK, we use a
-// configurable model via env var, defaulting to minimax-m2.5 (capable model
+// configurable model via env var, defaulting to qwen/qwen3.5-397b-a17b (capable model
 // for specialist work, similar to how sonnet > haiku in Claude SDK).
 
-const WORKER_MODEL = process.env.OPENAI_WORKER_MODEL || 'minimax/minimax-m2.5'
+const WORKER_MODEL = process.env.OPENAI_WORKER_MODEL || 'qwen/qwen3.5-397b-a17b'
 
 // ─── Tool Lists (matching Claude SDK worker definitions exactly) ─────────────
 

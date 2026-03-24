@@ -61,8 +61,8 @@ const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
   ? 'https://integrate.api.nvidia.com/v1'
   : 'https://openrouter.ai/api/v1')
 const DEFAULT_SUMMARIZATION_MODEL = process.env.MEETING_SUMMARY_MODEL || (NVIDIA_API_KEY
-  ? 'moonshotai/kimi-k2.5'
-  : 'anthropic/claude-haiku-4.5')
+  ? 'qwen/qwen3.5-397b-a17b'
+  : 'qwen/qwen3.5-397b-a17b')
 const MAX_RETRIES = 3
 
 // ─── System Prompt ───────────────────────────────────────────────────────
@@ -618,7 +618,7 @@ function estimateCost(model: string, promptTokens: number, completionTokens: num
   const pricing: Record<string, { input: number; output: number }> = {
     'anthropic/claude-haiku-4.5': { input: 0.80, output: 4.00 },
     'anthropic/claude-sonnet-4-20250514': { input: 3.00, output: 15.00 },
-    'minimax/minimax-m2.5': { input: 0.50, output: 1.50 },
+    'qwen/qwen3.5-397b-a17b': { input: 0.00, output: 0.00 },  // Free on NVIDIA NIM
     'x-ai/grok-4.1-fast': { input: 0.30, output: 0.50 },
   }
 

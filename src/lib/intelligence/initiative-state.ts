@@ -159,8 +159,19 @@ function normalizeText(value: string | null | undefined): string {
     .trim()
 }
 
+// Common English words that cause false-positive matches across unrelated content
+const STOPWORDS = new Set([
+  'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'her', 'was', 'one',
+  'our', 'out', 'has', 'had', 'its', 'let', 'get', 'got', 'too', 'use', 'may', 'did',
+  'from', 'with', 'this', 'that', 'have', 'will', 'been', 'they', 'them', 'then',
+  'than', 'what', 'when', 'where', 'which', 'their', 'there', 'these', 'those',
+  'about', 'would', 'could', 'should', 'after', 'before', 'being', 'other',
+  'active', 'advance', 'signals', 'completion', 'work', 'next', 'step', 'current',
+  'recent', 'new', 'now', 'just', 'keep', 'also', 'into', 'more', 'most', 'some',
+])
+
 function tokenize(value: string | null | undefined): string[] {
-  return normalizeText(value).split(' ').filter(token => token.length > 2)
+  return normalizeText(value).split(' ').filter(token => token.length > 2 && !STOPWORDS.has(token))
 }
 
 function scoreTextOverlap(haystack: string, needles: string[]): number {
@@ -179,13 +190,15 @@ function scoreTextOverlap(haystack: string, needles: string[]): number {
 }
 
 function matchesInitiativeText(initiative: InitiativeRecord, candidateText: string): boolean {
+  // Use stable identity fields for matching.
+  // Deliberately exclude latestSummary to avoid feedback loops where
+  // a wrong artifact pollutes the summary, which then matches more wrong artifacts.
+  // goal is safe because stopwords filter out generic terms like "active", "signals", etc.
   const initiativeTokens = tokenize([
     initiative.title,
     initiative.goal,
     initiative.scope,
-    initiative.latestSummary,
-    ...initiative.openQuestions,
-    ...initiative.knownRisks,
+    ...initiative.stakeholders,
   ].join(' '))
 
   return scoreTextOverlap(candidateText, initiativeTokens) > 0
@@ -225,15 +238,13 @@ export function selectRelevantInitiatives(input: RelevantInitiativesInput): Init
 
   return [...input.initiatives]
     .map(initiative => {
+      // Use stable identity fields only — exclude latestSummary/currentHypothesis
+      // to prevent feedback loops where wrong data perpetuates wrong matches.
       const searchable = [
         initiative.title,
         initiative.goal,
         initiative.scope,
-        initiative.latestSummary,
-        initiative.currentHypothesis,
         initiative.nextMilestone,
-        ...initiative.openQuestions,
-        ...initiative.knownRisks,
         ...initiative.stakeholders,
       ].join(' ')
 

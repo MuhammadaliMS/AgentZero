@@ -18,17 +18,17 @@ export function ThinkingPartBlock({ part }: ThinkingPartProps) {
     : 'Thinking...'
 
   return (
-    <div className="my-1">
+    <div className="my-0.5">
       <button
         onClick={() => setExpanded(!expanded)}
         className={cn(
-          'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors',
-          'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground',
+          'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors cursor-pointer',
+          'text-muted-foreground/70 hover:bg-accent hover:text-foreground',
           part.isStreaming && 'animate-pulse'
         )}
       >
         <Brain className="h-3 w-3 shrink-0" />
-        <span className="truncate max-w-[300px]">
+        <span className="truncate max-w-[300px] italic">
           {expanded ? 'Thinking' : summary}
         </span>
         <ChevronDown
@@ -40,7 +40,7 @@ export function ThinkingPartBlock({ part }: ThinkingPartProps) {
       </button>
 
       {expanded && part.content && (
-        <div className="mt-2 ml-1 rounded-lg border border-l-2 border-primary/20 bg-muted/30 p-3">
+        <div className="mt-1 ml-1 rounded-md border border-border bg-accent/30 p-3">
           <pre className="whitespace-pre-wrap text-xs text-muted-foreground font-mono leading-relaxed">
             {part.content}
           </pre>

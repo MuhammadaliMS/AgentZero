@@ -57,7 +57,7 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
   }
 
   return (
-    <div className="shrink-0 border-t border-border/40 bg-background/80 backdrop-blur-sm px-4 pb-4 pt-3">
+    <div className="shrink-0 border-t border-border/60 bg-background px-4 pb-4 pt-3">
       <div className="mx-auto max-w-3xl">
         {/* Input row */}
         <div className="relative flex items-end gap-2">
@@ -67,8 +67,8 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder={placeholder || 'Message your Captain...'}
-              className="min-h-[48px] max-h-[200px] resize-none rounded-xl border-border/50 bg-muted/20 pr-4 shadow-sm transition-all duration-200 focus:shadow-md focus:border-primary/30 focus:ring-1 focus:ring-primary/20"
+              placeholder={placeholder || 'Ask anything...'}
+              className="min-h-[44px] max-h-[200px] resize-none rounded-lg border-border bg-background pr-4 text-[14px] transition-colors duration-150 focus:border-foreground/20 focus:ring-0 placeholder:text-muted-foreground/50"
               rows={1}
               disabled={isStreaming}
             />
@@ -82,9 +82,9 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
                     variant="outline"
                     size="icon"
                     onClick={onStop}
-                    className="shrink-0 h-10 w-10 rounded-xl border-border/60 cursor-pointer hover:bg-destructive/10 hover:border-destructive/30 hover:text-destructive transition-colors"
+                    className="shrink-0 h-9 w-9 rounded-lg border-border cursor-pointer hover:bg-accent transition-colors"
                   >
-                    <Square className="h-4 w-4" />
+                    <Square className="h-3.5 w-3.5" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="top">
@@ -100,9 +100,9 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
                     size="icon"
                     onClick={handleSend}
                     disabled={!input.trim()}
-                    className="shrink-0 h-10 w-10 rounded-xl bg-primary text-primary-foreground shadow-sm shadow-primary/20 hover:bg-primary/90 transition-all duration-200 hover:shadow-md hover:shadow-primary/25 active:scale-95 disabled:opacity-30 disabled:shadow-none disabled:hover:shadow-none cursor-pointer"
+                    className="shrink-0 h-9 w-9 rounded-lg bg-foreground text-background hover:bg-foreground/90 transition-colors duration-150 active:scale-[0.97] disabled:opacity-20 cursor-pointer"
                   >
-                    <Send className="h-4 w-4" />
+                    <Send className="h-3.5 w-3.5" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="top">
@@ -117,12 +117,12 @@ export function MessageInput({ onSend, isStreaming, onStop, placeholder }: Messa
         <div className="mt-1.5 flex items-center justify-between px-1">
           <div className="flex items-center gap-2.5">
             <SDKToggle variant="compact" />
-            <span className="text-[10px] text-muted-foreground/50">
+            <span className="text-[10px] text-muted-foreground/40">
               Shift+Enter for new line
             </span>
           </div>
           {charCount > 500 && (
-            <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+            <span className="text-[10px] text-muted-foreground/40 tabular-nums">
               {charCount.toLocaleString()} chars
             </span>
           )}

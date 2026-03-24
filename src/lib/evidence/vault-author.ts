@@ -18,7 +18,7 @@ const LLM_BASE_URL = process.env.LLM_BASE_URL || (NVIDIA_API_KEY
   : 'https://openrouter.ai/api/v1')
 const VAULT_WRITER_TIMEOUT_MS = Number(process.env.VAULT_WRITER_TIMEOUT_MS) || 180_000
 const VAULT_WRITER_MAX_TOKENS = Math.max(Number(process.env.VAULT_WRITER_MAX_TOKENS) || 5000, 1000)
-const VAULT_WRITER_MODEL = process.env.AGENTIC_VAULT_MODEL || EXTRACTOR_MODEL || 'moonshotai/kimi-k2.5'
+const VAULT_WRITER_MODEL = process.env.AGENTIC_VAULT_MODEL || EXTRACTOR_MODEL || 'qwen/qwen3.5-397b-a17b'
 
 const sourceInterpretationSchema = z.object({
   whatHappened: z.string().min(1),

@@ -60,17 +60,17 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
   }).format(message.createdAt)
 
   return (
-    <div className={cn('group flex gap-3 py-3 justify-end animate-slide-up')}>
-      <div className="flex flex-col gap-1 max-w-[80%]">
+    <div className={cn('group flex gap-3 py-4 justify-end animate-fade-in')}>
+      <div className="flex flex-col gap-1 max-w-[75%]">
         {/* Message bubble */}
-        <div className="rounded-2xl rounded-br-md px-4 py-3 bg-primary text-primary-foreground shadow-sm shadow-primary/10">
-          <p className="whitespace-pre-wrap text-sm leading-relaxed">{textContent}</p>
+        <div className="rounded-2xl rounded-br-sm px-4 py-2.5 bg-muted/80 text-foreground">
+          <p className="whitespace-pre-wrap text-[14px] leading-relaxed">{textContent}</p>
         </div>
 
         {/* Hover action bar */}
         <div className={cn(
           'flex items-center gap-0.5 transition-all duration-150 justify-end',
-          'opacity-0 group-hover:opacity-100 translate-y-0.5 group-hover:translate-y-0'
+          'opacity-0 group-hover:opacity-100'
         )}>
           <span className="text-[10px] text-muted-foreground/50 mr-1 tabular-nums">
             {formattedTime}
@@ -83,10 +83,10 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleCopy}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/50 transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
                   >
                     {copied ? (
-                      <Check className="h-3 w-3 text-emerald-500" />
+                      <Check className="h-3 w-3 text-emerald-600" />
                     ) : (
                       <Copy className="h-3 w-3" />
                     )}
@@ -106,7 +106,7 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
                 <TooltipTrigger asChild>
                   <button
                     onClick={() => onRetry(textContent)}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/50 transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
                   >
                     <RotateCcw className="h-3 w-3" />
                   </button>
@@ -121,8 +121,8 @@ export function MessageBubble({ message, onRetry, isLastUserMessage }: MessageBu
       </div>
 
       {/* User avatar */}
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/15">
-        <User className="h-4 w-4" />
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-foreground/8 text-foreground/60">
+        <User className="h-3.5 w-3.5" />
       </div>
     </div>
   )

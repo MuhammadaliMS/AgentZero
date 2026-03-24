@@ -53,10 +53,10 @@ function getCardConfig(toolName: string): CardConfig {
 
 // Tailwind purges dynamic classes, so we use pre-written static class maps
 const PENDING_ACCENT = {
-  purple: { border: 'border-purple-500/40', bg: 'bg-purple-500/5', iconBg: 'bg-purple-500/10', iconText: 'text-purple-600 dark:text-purple-400', button: 'bg-purple-600 hover:bg-purple-700' },
-  blue:   { border: 'border-blue-500/40',   bg: 'bg-blue-500/5',   iconBg: 'bg-blue-500/10',   iconText: 'text-blue-600 dark:text-blue-400',   button: 'bg-blue-600 hover:bg-blue-700' },
-  green:  { border: 'border-green-500/40',  bg: 'bg-green-500/5',  iconBg: 'bg-green-500/10',  iconText: 'text-green-600 dark:text-green-400', button: 'bg-green-600 hover:bg-green-700' },
-  amber:  { border: 'border-amber-500/40',  bg: 'bg-amber-500/5',  iconBg: 'bg-amber-500/10',  iconText: 'text-amber-600 dark:text-amber-400', button: 'bg-emerald-600 hover:bg-emerald-700' },
+  purple: { border: 'border-border', bg: 'bg-background', iconBg: 'bg-purple-50 dark:bg-purple-500/10', iconText: 'text-purple-600 dark:text-purple-400', button: 'bg-foreground hover:bg-foreground/90' },
+  blue:   { border: 'border-border', bg: 'bg-background', iconBg: 'bg-blue-50 dark:bg-blue-500/10',   iconText: 'text-blue-600 dark:text-blue-400',   button: 'bg-foreground hover:bg-foreground/90' },
+  green:  { border: 'border-border', bg: 'bg-background', iconBg: 'bg-green-50 dark:bg-green-500/10',  iconText: 'text-green-600 dark:text-green-400', button: 'bg-foreground hover:bg-foreground/90' },
+  amber:  { border: 'border-border', bg: 'bg-background', iconBg: 'bg-amber-50 dark:bg-amber-500/10',  iconText: 'text-amber-600 dark:text-amber-400', button: 'bg-foreground hover:bg-foreground/90' },
 }
 
 // ─── Tool-Specific Icons ─────────────────────────────────────────────────
@@ -112,7 +112,7 @@ function SlackPreview({ toolInput }: { toolInput: Record<string, unknown> }) {
         </div>
       )}
       {message && (
-        <div className="mt-1.5 rounded-lg border border-purple-500/15 bg-purple-500/[0.03] px-3 py-2">
+        <div className="mt-1.5 rounded-md border border-border bg-accent/40 px-3 py-2">
           <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">{truncateStr(message, 500)}</p>
         </div>
       )}
@@ -154,7 +154,7 @@ function EmailPreview({ toolInput }: { toolInput: Record<string, unknown> }) {
         </div>
       )}
       {body && (
-        <div className="mt-1.5 rounded-lg border border-blue-500/15 bg-blue-500/[0.03] px-3 py-2">
+        <div className="mt-1.5 rounded-md border border-border bg-accent/40 px-3 py-2">
           <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">{truncateStr(body, 500)}</p>
         </div>
       )}
@@ -213,7 +213,7 @@ function CalendarPreview({ toolInput }: { toolInput: Record<string, unknown> }) 
         </div>
       )}
       {description && (
-        <div className="mt-1.5 rounded-lg border border-green-500/15 bg-green-500/[0.03] px-3 py-2">
+        <div className="mt-1.5 rounded-md border border-border bg-accent/40 px-3 py-2">
           <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">{truncateStr(description, 300)}</p>
         </div>
       )}
@@ -283,11 +283,11 @@ export function ApprovalCard({ part, onApproval }: ApprovalCardProps) {
   return (
     <div
       className={cn(
-        'my-2 shadow-md rounded-xl border-2 p-4 transition-colors',
+        'my-2 rounded-lg border p-4 transition-colors',
         isPending && `${accentStyles.border} ${accentStyles.bg}`,
-        isApproved && 'border-emerald-500/30 bg-emerald-500/5',
-        isRejected && 'border-destructive/30 bg-destructive/5',
-        isExpired && 'border-muted-foreground/20 bg-muted/30'
+        isApproved && 'border-border bg-background',
+        isRejected && 'border-border bg-background',
+        isExpired && 'border-border bg-muted/20'
       )}
     >
       {/* Header */}
@@ -348,7 +348,7 @@ export function ApprovalCard({ part, onApproval }: ApprovalCardProps) {
             size="sm"
             onClick={() => handleDecision('approve')}
             disabled={submitting !== null}
-            className="h-8 bg-primary text-primary-foreground hover:bg-primary/90"
+            className="h-8 bg-foreground text-background hover:bg-foreground/90 cursor-pointer"
           >
             {submitting === 'approve' ? (
               <span className="flex items-center gap-1.5">
@@ -368,7 +368,7 @@ export function ApprovalCard({ part, onApproval }: ApprovalCardProps) {
             size="sm"
             onClick={() => handleDecision('reject')}
             disabled={submitting !== null}
-            className="h-8"
+            className="h-8 cursor-pointer"
           >
             {submitting === 'reject' ? (
               <span className="flex items-center gap-1.5">

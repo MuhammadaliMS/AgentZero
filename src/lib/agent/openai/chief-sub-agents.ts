@@ -12,7 +12,7 @@
  * Each agent gets a scoped tool subset from the shared createChiefAnalystTools().
  * All agents share a single decisions[] closure for atomic decision collection.
  *
- * Model: moonshotai/kimi-k2.5 via NVIDIA NIM (same as monolithic agent).
+ * Model: qwen/qwen3.5-397b-a17b via NVIDIA NIM (same as monolithic agent).
  */
 
 import { Agent, Runner, tool } from '@openai/agents'
@@ -62,9 +62,22 @@ export interface ReflectResult {
   durationMs: number
 }
 
+/** Result from a single sub-agent run (used by phase-chained execution) */
+export interface SingleAgentResult {
+  decisions: ChiefDecision[]
+  usage: { input: number; output: number }
+  turns: number
+  durationMs: number
+}
+
+/** Result from triage specifically (includes classifications) */
+export interface TriageResult extends SingleAgentResult {
+  classifications: TriageClassification[]
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────
 
-const DEFAULT_MODEL = 'moonshotai/kimi-k2.5'
+const DEFAULT_MODEL = 'qwen/qwen3.5-397b-a17b'
 
 // Tool name lists for each sub-agent
 const READ_TOOL_NAMES = [
@@ -89,7 +102,7 @@ const INITIATIVE_TOOL_NAMES = [
 ]
 
 const EXECUTION_TOOL_NAMES = [
-  'get_outcome_detail', 'get_entity_detail', 'query_knowledge',
+  ...READ_TOOL_NAMES,
   'create_outcome', 'branch_replan', 'execute_step', 'skip_step', 'block_step',
   'escalate_blocker', 'attach_signal_to_outcome',
   'create_initiative', 'update_initiative',
@@ -774,7 +787,294 @@ function buildReflectionPrompt(input: ReflectInput): string {
   return sections.join('\n')
 }
 
-// ─── Main Orchestrator ────────────────────────────────────────────────────
+// ─── Phase-Callable Sub-Agent Functions ──────────────────────────────────
+// Each function runs a single sub-agent independently, for use in chained phases.
+// They share the same tool/decision closure pattern but can be called from separate HTTP requests.
+
+/** Phase 1: Run Triage agent — classify all signals */
+export async function runTriageAgent(
+  input: ChiefAnalystInput,
+  collector?: StepCollector
+): Promise<TriageResult> {
+  const startTime = Date.now()
+  const model = process.env.CHIEF_ANALYST_MODEL || DEFAULT_MODEL
+  const provider = getChiefAnalystProvider()
+  setOpenAIAPI('chat_completions')
+
+  const { tools: allTools, decisions } = createChiefAnalystTools(input.orgId)
+  const classifications: TriageClassification[] = []
+
+  const classifySignalTool = tool({
+    name: 'classify_signal',
+    description: 'Classify a signal by category and priority for downstream routing.',
+    parameters: z.object({
+      signal_id: z.string().max(200),
+      signal_type: z.enum(['email', 'slack', 'insight', 'finding', 'outcome_update']),
+      category: z.enum(['needs_analysis', 'needs_action', 'needs_graph_update', 'noise', 'defer']),
+      priority: z.enum(['critical', 'high', 'medium', 'low']),
+      reasoning: z.string().max(500),
+    }),
+    execute: async (args) => {
+      classifications.push({
+        signalId: args.signal_id,
+        signalType: args.signal_type,
+        category: args.category,
+        priority: args.priority,
+        reasoning: args.reasoning,
+      })
+      return `Classified: ${args.signal_id} → ${args.category} (${args.priority})`
+    },
+  })
+
+  const rawTriageTools = [...pickTools(allTools, TRIAGE_TOOL_NAMES), classifySignalTool]
+  const triageTools = collector ? wrapToolsWithStepCollector(rawTriageTools, collector) : rawTriageTools
+  const triageAgent = new Agent({
+    name: 'Triage Specialist',
+    instructions: buildTriagePrompt(input),
+    model,
+    tools: triageTools,
+  })
+
+  const runner = new Runner({ modelProvider: provider })
+  let totalInput = 0, totalOutput = 0, totalTurns = 0
+
+  console.log('[SubAgents:triage] Starting triage...')
+  collector?.subAgentStart('Triage Specialist')
+  const triageStart = Date.now()
+  try {
+    const triageResult = await Promise.race([
+      runner.run(triageAgent, 'Classify all incoming signals. Use classify_signal for each one. Dismiss noise and defer non-urgent items.', { maxTurns: 30 }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Triage timed out (150s)')), 150_000)),
+    ])
+    const usage = extractUsage(triageResult)
+    totalInput += usage.input
+    totalOutput += usage.output
+    totalTurns += extractTurns(triageResult)
+    collector?.subAgentEnd('Triage Specialist', Date.now() - triageStart, 'ok', { in: usage.input, out: usage.output })
+  } catch (err) {
+    collector?.subAgentEnd('Triage Specialist', Date.now() - triageStart, 'error')
+    console.warn(`[SubAgents:triage] Error (continuing with ${classifications.length} classifications):`, (err as Error).message)
+  }
+
+  console.log(`[SubAgents:triage] Done: ${classifications.length} classifications, ${decisions.length} decisions (dismiss/defer)`)
+
+  return {
+    decisions: [...decisions],
+    classifications,
+    usage: { input: totalInput, output: totalOutput },
+    turns: totalTurns,
+    durationMs: Date.now() - startTime,
+  }
+}
+
+/** Phase 1: Run Sensemaking agent */
+export async function runSensemakingAgent(
+  input: ChiefAnalystInput,
+  classifications: TriageClassification[],
+  collector?: StepCollector
+): Promise<SingleAgentResult> {
+  const startTime = Date.now()
+  const model = process.env.CHIEF_ANALYST_MODEL || DEFAULT_MODEL
+  const provider = getChiefAnalystProvider()
+  setOpenAIAPI('chat_completions')
+
+  const { tools: allTools, decisions } = createChiefAnalystTools(input.orgId)
+  const needsSensemaking = classifications.filter(c =>
+    ['needs_analysis', 'needs_action', 'needs_graph_update'].includes(c.category)
+  )
+
+  if (needsSensemaking.length === 0) {
+    return { decisions: [], usage: { input: 0, output: 0 }, turns: 0, durationMs: 0 }
+  }
+
+  const runner = new Runner({ modelProvider: provider })
+  let totalInput = 0, totalOutput = 0, totalTurns = 0
+
+  console.log(`[SubAgents:sensemaking] Starting sensemaking for ${needsSensemaking.length} signals...`)
+  collector?.subAgentStart('Sensemaking Specialist')
+  const agentStart = Date.now()
+  try {
+    const rawTools = pickTools(allTools, SENSEMAKING_TOOL_NAMES)
+    const tools = collector ? wrapToolsWithStepCollector(rawTools, collector) : rawTools
+    const agent = new Agent({
+      name: 'Sensemaking Specialist',
+      instructions: buildSensemakingPrompt(input, needsSensemaking),
+      model,
+      tools,
+    })
+    const result = await Promise.race([
+      runner.run(agent, 'Investigate what changed, what remains true, and which initiatives are affected. Store insights and durable memory.', { maxTurns: 20 }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Sensemaking timed out (120s)')), 120_000)),
+    ])
+    const usage = extractUsage(result)
+    totalInput += usage.input
+    totalOutput += usage.output
+    totalTurns += extractTurns(result)
+    collector?.subAgentEnd('Sensemaking Specialist', Date.now() - agentStart, 'ok', { in: usage.input, out: usage.output })
+  } catch (err) {
+    collector?.subAgentEnd('Sensemaking Specialist', Date.now() - agentStart, 'error')
+    console.error('[SubAgents:sensemaking] Error:', err)
+  }
+
+  console.log(`[SubAgents:sensemaking] Done: ${decisions.length} total decisions`)
+  return { decisions: [...decisions], usage: { input: totalInput, output: totalOutput }, turns: totalTurns, durationMs: Date.now() - startTime }
+}
+
+/** Phase 2: Run Initiative Planner agent */
+export async function runInitiativeAgent(
+  input: ChiefAnalystInput,
+  classifications: TriageClassification[],
+  collector?: StepCollector
+): Promise<SingleAgentResult> {
+  const startTime = Date.now()
+  const model = process.env.CHIEF_ANALYST_MODEL || DEFAULT_MODEL
+  const provider = getChiefAnalystProvider()
+  setOpenAIAPI('chat_completions')
+
+  const shouldRun = shouldRunInitiativePlanner(input, classifications, input.currentTime)
+  if (!shouldRun) {
+    return { decisions: [], usage: { input: 0, output: 0 }, turns: 0, durationMs: 0 }
+  }
+
+  const { tools: allTools, decisions } = createChiefAnalystTools(input.orgId)
+  const needsSensemaking = classifications.filter(c =>
+    ['needs_analysis', 'needs_action', 'needs_graph_update'].includes(c.category)
+  )
+
+  const runner = new Runner({ modelProvider: provider })
+  let totalInput = 0, totalOutput = 0, totalTurns = 0
+
+  console.log('[SubAgents:initiative] Starting initiative planning...')
+  collector?.subAgentStart('Initiative Planner')
+  const agentStart = Date.now()
+  try {
+    const rawTools = pickTools(allTools, INITIATIVE_TOOL_NAMES)
+    const tools = collector ? wrapToolsWithStepCollector(rawTools, collector) : rawTools
+    const agent = new Agent({
+      name: 'Initiative Planner',
+      instructions: buildInitiativePlannerPrompt(input, needsSensemaking),
+      model,
+      tools,
+    })
+    const result = await Promise.race([
+      runner.run(agent, 'Review the active initiatives and changed context. Update durable initiative state for the next chief run.', { maxTurns: 20 }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Initiative planning timed out (90s)')), 90_000)),
+    ])
+    const usage = extractUsage(result)
+    totalInput += usage.input
+    totalOutput += usage.output
+    totalTurns += extractTurns(result)
+    collector?.subAgentEnd('Initiative Planner', Date.now() - agentStart, 'ok', { in: usage.input, out: usage.output })
+  } catch (err) {
+    collector?.subAgentEnd('Initiative Planner', Date.now() - agentStart, 'error')
+    console.error('[SubAgents:initiative] Error:', err)
+  }
+
+  console.log(`[SubAgents:initiative] Done: ${decisions.length} total decisions`)
+  return { decisions: [...decisions], usage: { input: totalInput, output: totalOutput }, turns: totalTurns, durationMs: Date.now() - startTime }
+}
+
+/** Phase 2: Run Execution Planner agent */
+export async function runExecutionAgent(
+  input: ChiefAnalystInput,
+  classifications: TriageClassification[],
+  collector?: StepCollector
+): Promise<SingleAgentResult> {
+  const startTime = Date.now()
+  const model = process.env.CHIEF_ANALYST_MODEL || DEFAULT_MODEL
+  const provider = getChiefAnalystProvider()
+  setOpenAIAPI('chat_completions')
+
+  const needsAction = classifications.filter(c => c.category === 'needs_action')
+  if (needsAction.length === 0) {
+    return { decisions: [], usage: { input: 0, output: 0 }, turns: 0, durationMs: 0 }
+  }
+
+  const { tools: allTools, decisions } = createChiefAnalystTools(input.orgId)
+  const runner = new Runner({ modelProvider: provider })
+  let totalInput = 0, totalOutput = 0, totalTurns = 0
+
+  console.log(`[SubAgents:execution] Starting execution planning for ${needsAction.length} signals...`)
+  collector?.subAgentStart('Execution Planner')
+  const agentStart = Date.now()
+  try {
+    const rawTools = pickTools(allTools, EXECUTION_TOOL_NAMES)
+    const tools = collector ? wrapToolsWithStepCollector(rawTools, collector) : rawTools
+    const agent = new Agent({
+      name: 'Execution Planner',
+      instructions: buildExecutionPrompt(input, needsAction),
+      model,
+      tools,
+    })
+    const result = await Promise.race([
+      runner.run(agent, 'Plan and execute actions for the signals requiring action. Create outcomes, update plans, escalate blockers.', { maxTurns: 20 }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Execution timed out (120s)')), 120_000)),
+    ])
+    const usage = extractUsage(result)
+    totalInput += usage.input
+    totalOutput += usage.output
+    totalTurns += extractTurns(result)
+    collector?.subAgentEnd('Execution Planner', Date.now() - agentStart, 'ok', { in: usage.input, out: usage.output })
+  } catch (err) {
+    collector?.subAgentEnd('Execution Planner', Date.now() - agentStart, 'error')
+    console.error('[SubAgents:execution] Error:', err)
+  }
+
+  console.log(`[SubAgents:execution] Done: ${decisions.length} total decisions`)
+  return { decisions: [...decisions], usage: { input: totalInput, output: totalOutput }, turns: totalTurns, durationMs: Date.now() - startTime }
+}
+
+/** Phase 2: Run Graph Curator agent */
+export async function runGraphAgent(
+  input: ChiefAnalystInput,
+  classifications: TriageClassification[],
+  collector?: StepCollector
+): Promise<SingleAgentResult> {
+  const startTime = Date.now()
+  const model = process.env.CHIEF_ANALYST_MODEL || DEFAULT_MODEL
+  const provider = getChiefAnalystProvider()
+  setOpenAIAPI('chat_completions')
+
+  const needsGraph = classifications.filter(c => c.category === 'needs_graph_update')
+  if (needsGraph.length === 0) {
+    return { decisions: [], usage: { input: 0, output: 0 }, turns: 0, durationMs: 0 }
+  }
+
+  const { tools: allTools, decisions } = createChiefAnalystTools(input.orgId)
+  const runner = new Runner({ modelProvider: provider })
+  let totalInput = 0, totalOutput = 0, totalTurns = 0
+
+  console.log(`[SubAgents:graph] Starting graph curation for ${needsGraph.length} signals...`)
+  collector?.subAgentStart('Graph Curator')
+  const agentStart = Date.now()
+  try {
+    const rawTools = pickTools(allTools, GRAPH_TOOL_NAMES)
+    const tools = collector ? wrapToolsWithStepCollector(rawTools, collector) : rawTools
+    const agent = new Agent({
+      name: 'Graph Curator',
+      instructions: buildGraphPrompt(input, needsGraph),
+      model,
+      tools,
+    })
+    const result = await Promise.race([
+      runner.run(agent, 'Update the knowledge graph. Create and update entities and relationships for the relevant signals.', { maxTurns: 15 }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Graph curation timed out (90s)')), 90_000)),
+    ])
+    const usage = extractUsage(result)
+    totalInput += usage.input
+    totalOutput += usage.output
+    totalTurns += extractTurns(result)
+    collector?.subAgentEnd('Graph Curator', Date.now() - agentStart, 'ok', { in: usage.input, out: usage.output })
+  } catch (err) {
+    collector?.subAgentEnd('Graph Curator', Date.now() - agentStart, 'error')
+    console.error('[SubAgents:graph] Error:', err)
+  }
+
+  console.log(`[SubAgents:graph] Done: ${decisions.length} total decisions`)
+  return { decisions: [...decisions], usage: { input: totalInput, output: totalOutput }, turns: totalTurns, durationMs: Date.now() - startTime }
+}
+
+// ─── Main Orchestrator (backwards compat — runs all sub-agents sequentially) ─
 
 export async function runSubAgents(input: ChiefAnalystInput, collector?: StepCollector): Promise<SubAgentResult> {
   const startTime = Date.now()
@@ -831,16 +1131,21 @@ export async function runSubAgents(input: ChiefAnalystInput, collector?: StepCol
   console.log('[SubAgents:triage] Starting triage...')
   collector?.subAgentStart('Triage Specialist')
   const triageStart = Date.now()
-  const triageResult = await Promise.race([
-    runner.run(triageAgent, 'Classify all incoming signals. Use classify_signal for each one. Dismiss noise and defer non-urgent items.', { maxTurns: 10 }),
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Triage timed out (30s)')), 30_000)),
-  ])
+  try {
+    const triageResult = await Promise.race([
+      runner.run(triageAgent, 'Classify all incoming signals. Use classify_signal for each one. Dismiss noise and defer non-urgent items.', { maxTurns: 30 }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Triage timed out (150s)')), 150_000)),
+    ])
 
-  const triageUsage = extractUsage(triageResult)
-  totalInputTokens += triageUsage.input
-  totalOutputTokens += triageUsage.output
-  totalTurns += extractTurns(triageResult)
-  collector?.subAgentEnd('Triage Specialist', Date.now() - triageStart, 'ok', { in: triageUsage.input, out: triageUsage.output })
+    const triageUsage = extractUsage(triageResult)
+    totalInputTokens += triageUsage.input
+    totalOutputTokens += triageUsage.output
+    totalTurns += extractTurns(triageResult)
+    collector?.subAgentEnd('Triage Specialist', Date.now() - triageStart, 'ok', { in: triageUsage.input, out: triageUsage.output })
+  } catch (err) {
+    collector?.subAgentEnd('Triage Specialist', Date.now() - triageStart, 'error')
+    console.warn(`[SubAgents:triage] Error (continuing with ${classifications.length} classifications):`, (err as Error).message)
+  }
 
   console.log(`[SubAgents:triage] Done: ${classifications.length} classifications, ${decisions.length} decisions (dismiss/defer)`)
 
@@ -884,8 +1189,8 @@ export async function runSubAgents(input: ChiefAnalystInput, collector?: StepCol
       })
 
       const sensemakingResult = await Promise.race([
-        runner.run(sensemakingAgent, 'Investigate what changed, what remains true, and which initiatives are affected. Store insights and durable memory.', { maxTurns: 15 }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Sensemaking timed out (60s)')), 60_000)),
+        runner.run(sensemakingAgent, 'Investigate what changed, what remains true, and which initiatives are affected. Store insights and durable memory.', { maxTurns: 20 }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Sensemaking timed out (120s)')), 120_000)),
       ])
 
       const sensemakingUsage = extractUsage(sensemakingResult)
@@ -918,8 +1223,8 @@ export async function runSubAgents(input: ChiefAnalystInput, collector?: StepCol
       })
 
       const initiativeResult = await Promise.race([
-        runner.run(initiativeAgent, 'Review the active initiatives and changed context. Update durable initiative state for the next chief run.', { maxTurns: 12 }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Initiative planning timed out (45s)')), 45_000)),
+        runner.run(initiativeAgent, 'Review the active initiatives and changed context. Update durable initiative state for the next chief run.', { maxTurns: 20 }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Initiative planning timed out (90s)')), 90_000)),
       ])
 
       const initiativeUsage = extractUsage(initiativeResult)
@@ -952,8 +1257,8 @@ export async function runSubAgents(input: ChiefAnalystInput, collector?: StepCol
       })
 
       const executionResult = await Promise.race([
-        runner.run(executionAgent, 'Plan and execute actions for the signals requiring action. Create outcomes, update plans, escalate blockers.', { maxTurns: 15 }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Execution timed out (60s)')), 60_000)),
+        runner.run(executionAgent, 'Plan and execute actions for the signals requiring action. Create outcomes, update plans, escalate blockers.', { maxTurns: 20 }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Execution timed out (120s)')), 120_000)),
       ])
 
       const executionUsage = extractUsage(executionResult)
@@ -986,8 +1291,8 @@ export async function runSubAgents(input: ChiefAnalystInput, collector?: StepCol
       })
 
       const graphResult = await Promise.race([
-        runner.run(graphAgent, 'Update the knowledge graph. Create and update entities and relationships for the relevant signals.', { maxTurns: 10 }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Graph curation timed out (30s)')), 30_000)),
+        runner.run(graphAgent, 'Update the knowledge graph. Create and update entities and relationships for the relevant signals.', { maxTurns: 15 }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Graph curation timed out (90s)')), 90_000)),
       ])
 
       const graphUsage = extractUsage(graphResult)
@@ -1059,7 +1364,7 @@ export async function runReflectionAgent(
 
   console.log('[SubAgents:reflect] Starting reflection...')
   collector?.subAgentStart('Reflector')
-  await runner.run(agent, 'Reflect on the decisions made this run. Identify and store reusable patterns.', { maxTurns: 5 })
+  await runner.run(agent, 'Reflect on the decisions made this run. Identify and store reusable patterns.', { maxTurns: 15 })
 
   const durationMs = Date.now() - startTime
   collector?.subAgentEnd('Reflector', durationMs, 'ok')

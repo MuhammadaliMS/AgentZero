@@ -124,14 +124,14 @@ export function ConversationSidebar() {
   const totalCount = groupedConversations.reduce((acc, g) => acc + g.conversations.length, 0)
 
   return (
-    <div className="hidden md:flex h-full w-72 flex-col border-r border-border/50 bg-muted/10">
+    <div className="hidden md:flex h-full w-64 flex-col border-r border-border bg-sidebar">
       {/* Header */}
-      <div className="flex h-14 items-center justify-between border-b border-border/40 px-4">
-        <span className="text-sm font-semibold tracking-tight">Conversations</span>
+      <div className="flex h-12 items-center justify-between px-4">
+        <span className="text-[13px] font-medium text-muted-foreground">Conversations</span>
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+          className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
           asChild
         >
           <Link href="/chat">
@@ -149,7 +149,7 @@ export function ConversationSidebar() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search conversations..."
-            className="h-8 pl-8 text-xs bg-background/50 border-border/40 focus:border-primary/40 focus:ring-1 focus:ring-primary/20 rounded-lg transition-all"
+            className="h-8 pl-8 text-xs bg-background/60 border-border focus:border-foreground/20 focus:ring-0 rounded-md transition-colors"
           />
           {searchQuery && (
             <button
@@ -240,19 +240,19 @@ export function ConversationSidebar() {
                     <div
                       key={conv.id}
                       className={cn(
-                        'group relative flex items-center gap-2.5 rounded-lg px-2 py-2 transition-all duration-150',
+                        'group relative flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors duration-100',
                         isActive
-                          ? 'bg-primary/8 ring-1 ring-primary/15 shadow-sm'
-                          : 'hover:bg-accent/50'
+                          ? 'bg-accent text-foreground'
+                          : 'hover:bg-accent/60'
                       )}
                     >
                       {/* Contextual icon */}
                       <div
                         className={cn(
-                          'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors',
+                          'flex h-6 w-6 shrink-0 items-center justify-center',
                           isActive
-                            ? 'bg-primary/15 text-primary'
-                            : 'bg-muted/60 text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary/70'
+                            ? 'text-foreground/70'
+                            : 'text-muted-foreground/60'
                         )}
                       >
                         <Icon className="h-4 w-4" />
@@ -266,12 +266,12 @@ export function ConversationSidebar() {
                         <span
                           className={cn(
                             'truncate text-[13px] leading-tight',
-                            isActive ? 'font-semibold text-foreground' : 'font-medium text-foreground/80'
+                            isActive ? 'font-medium text-foreground' : 'text-foreground/75'
                           )}
                         >
                           {title}
                         </span>
-                        <span className="text-[11px] text-muted-foreground/60">
+                        <span className="text-[11px] text-muted-foreground/50">
                           {formatRelativeDate(date)}
                         </span>
                       </Link>

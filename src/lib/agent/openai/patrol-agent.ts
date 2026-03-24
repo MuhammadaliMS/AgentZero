@@ -910,7 +910,7 @@ function getPatrolProvider(): OpenAIProvider {
 }
 
 // Default model: Qwen 3.5 via NVIDIA NIM
-const DEFAULT_PATROL_MODEL = 'moonshotai/kimi-k2.5'
+const DEFAULT_PATROL_MODEL = 'qwen/qwen3.5-397b-a17b'
 
 // ─── Agent Factory + Runner ──────────────────────────────────────────────────
 

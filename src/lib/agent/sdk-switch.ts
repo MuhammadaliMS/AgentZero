@@ -68,7 +68,7 @@ export function getSDKInfo(override?: AgentSDK): {
   const sdk = getActiveSDK(override)
 
   if (sdk === 'openai') {
-    const model = process.env.OPENAI_CAPTAIN_MODEL || 'moonshotai/kimi-k2.5'
+    const model = process.env.OPENAI_CAPTAIN_MODEL || 'qwen/qwen3.5-397b-a17b'
     const provider = process.env.NVIDIA_API_KEY ? 'nvidia' : process.env.OPENROUTER_API_KEY ? 'openrouter' : 'openai'
     return { sdk, model, provider }
   }

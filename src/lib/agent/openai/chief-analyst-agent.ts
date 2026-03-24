@@ -5,7 +5,7 @@
  * The LLM sees everything (with timestamps) and decides what matters.
  *
  * Uses OpenAI Agents SDK with READ + DECISION tools.
- * Model: minimax/minimax-m2.5 via OpenRouter (configurable).
+ * Model: qwen/qwen3.5-397b-a17b via NVIDIA NIM (configurable).
  * Budget: max 50 turns.
  */
 
@@ -1394,7 +1394,7 @@ ${o.steps.map(s => `  - [${s.status}] Step ${s.stepOrder}: ${s.description}${s.o
 export function getChiefAnalystProvider(): OpenAIProvider {
   const model = process.env.CHIEF_ANALYST_MODEL || DEFAULT_CHIEF_ANALYST_MODEL
 
-  // Priority 1: NVIDIA NIM (always first)
+  // Priority 1: NVIDIA NIM (primary provider for Kimi)
   const nvidiaKey = process.env.NVIDIA_API_KEY
   if (nvidiaKey) {
     console.log(`[ChiefAnalyst] Using NVIDIA NIM provider for model: ${model}`)
@@ -1405,7 +1405,7 @@ export function getChiefAnalystProvider(): OpenAIProvider {
     })
   }
 
-  // Priority 2: OpenRouter
+  // Priority 2: OpenRouter (fallback)
   const openRouterKey = process.env.OPENROUTER_API_KEY
   if (openRouterKey) {
     console.log(`[ChiefAnalyst] Using OpenRouter provider for model: ${model}`)
@@ -1429,7 +1429,7 @@ export function getChiefAnalystProvider(): OpenAIProvider {
   throw new Error('Chief Analyst requires NVIDIA_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.')
 }
 
-const DEFAULT_CHIEF_ANALYST_MODEL = 'moonshotai/kimi-k2.5'
+const DEFAULT_CHIEF_ANALYST_MODEL = 'qwen/qwen3.5-397b-a17b'
 
 // ─── Runner ──────────────────────────────────────────────────────────────
 
@@ -1454,11 +1454,22 @@ export async function runChiefAnalyst(input: ChiefAnalystInput, collector?: Step
   })
 
   collector?.subAgentStart('Chief Analyst (monolithic)')
-  const result = await runner.run(agent, 'Analyze all gathered data and make decisions. Use your tools to read deeper and act on what you find.', {
-    maxTurns: 50,
-  })
+  let result: unknown
+  let hitMaxTurns = false
+  try {
+    result = await runner.run(agent, 'Analyze all gathered data and make decisions. Use your tools to read deeper and act on what you find.', {
+      maxTurns: 50,
+    })
+  } catch (err) {
+    if ((err as Error).name === 'MaxTurnsExceededError' || (err as Error).message?.includes('Max turns')) {
+      console.warn(`[ChiefAnalyst] MaxTurnsExceeded — returning ${decisions.length} decisions collected so far`)
+      hitMaxTurns = true
+    } else {
+      throw err
+    }
+  }
 
-  const resultAny = result as unknown as {
+  const resultAny = (result ?? {}) as {
     usage?: { inputTokens?: number; outputTokens?: number }
     rawResponses?: unknown[]
   }
@@ -1467,7 +1478,7 @@ export async function runChiefAnalyst(input: ChiefAnalystInput, collector?: Step
     input: resultAny.usage?.inputTokens ?? 0,
     output: resultAny.usage?.outputTokens ?? 0,
   }
-  collector?.subAgentEnd('Chief Analyst (monolithic)', Date.now() - startTime, 'ok', { in: usage.input, out: usage.output })
+  collector?.subAgentEnd('Chief Analyst (monolithic)', Date.now() - startTime, hitMaxTurns ? 'ok' : 'ok', { in: usage.input, out: usage.output })
 
   return {
     decisions,

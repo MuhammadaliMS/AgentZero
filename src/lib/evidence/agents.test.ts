@@ -60,8 +60,8 @@ describe('getEvidenceAgentModels', () => {
     const { getEvidenceAgentModels } = await import('@/lib/evidence/agents')
 
     expect(getEvidenceAgentModels()).toEqual({
-      analystModel: 'moonshotai/kimi-k2.5',
-      synthesizerModel: 'moonshotai/kimi-k2.5',
+      analystModel: 'qwen/qwen3.5-397b-a17b',
+      synthesizerModel: 'qwen/qwen3.5-397b-a17b',
     })
   })
 })

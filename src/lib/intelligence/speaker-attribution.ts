@@ -54,8 +54,8 @@ const ATTRIBUTION_BASE_URL = process.env.SPEAKER_ATTRIBUTION_BASE_URL
     : 'https://integrate.api.nvidia.com/v1')
 const ATTRIBUTION_MODEL = process.env.SPEAKER_ATTRIBUTION_MODEL
   || (ATTRIBUTION_API_KEY === OPENROUTER_API_KEY && OPENROUTER_API_KEY
-    ? 'anthropic/claude-haiku-4.5'
-    : 'moonshotai/kimi-k2.5')
+    ? 'qwen/qwen3.5-397b-a17b'
+    : 'qwen/qwen3.5-397b-a17b')
 const ATTRIBUTION_MAX_TOKENS = Math.max(
   Number(process.env.SPEAKER_ATTRIBUTION_MAX_TOKENS) || 8192, 4000
 )

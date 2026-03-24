@@ -15,12 +15,12 @@ export function SubagentBlock({ part }: SubagentBlockProps) {
     <div className="my-1">
       <div
         className={cn(
-          'inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition-colors',
-          'border bg-violet-500/5 border-violet-500/20 text-muted-foreground',
+          'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors',
+          'text-muted-foreground',
           isRunning && 'animate-pulse'
         )}
       >
-        <Bot className="h-3.5 w-3.5 shrink-0 text-violet-500" />
+        <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
 
         <span className="font-medium">
           {isRunning
@@ -30,7 +30,7 @@ export function SubagentBlock({ part }: SubagentBlockProps) {
 
         {/* Status indicator */}
         {isRunning ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-500" />
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
         ) : (
           <Check className="h-3.5 w-3.5 text-emerald-500" />
         )}
@@ -38,7 +38,7 @@ export function SubagentBlock({ part }: SubagentBlockProps) {
 
       {/* Summary (shown when completed and summary exists) */}
       {!isRunning && part.summary && (
-        <div className="mt-1.5 ml-1 rounded-lg border border-violet-500/10 bg-violet-500/5 p-2.5">
+        <div className="mt-1 ml-1 rounded-md border border-border bg-accent/30 p-2.5">
           <p className="text-xs text-muted-foreground leading-relaxed">
             {part.summary}
           </p>

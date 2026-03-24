@@ -128,33 +128,29 @@ export function ChatInterface({ conversationId, initialPrompt }: ChatInterfacePr
         <div className="mx-auto max-w-3xl px-4 pb-8">
           {/* Empty state */}
           {messages.length === 0 && !isStreaming && (
-            <div className="flex flex-col items-center justify-center py-24 text-center animate-fade-in">
+            <div className="flex flex-col items-center justify-center py-28 text-center animate-fade-in">
               {/* Logo */}
-              <div className="relative mb-6">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/20 animate-float">
-                  <Sparkles className="h-8 w-8" />
+              <div className="mb-5">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-foreground text-background">
+                  <Sparkles className="h-5 w-5" />
                 </div>
-                <div className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-emerald-500 ring-2 ring-background" />
               </div>
 
               {/* Title */}
-              <h2 className="text-2xl font-bold tracking-tight">Captain</h2>
-              <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-                Your strategic AI aide. Ask about deliverables, platform health,
-                commitments, or anything on your plate.
+              <h2 className="text-xl font-semibold tracking-tight text-foreground">How can I help?</h2>
+              <p className="mt-1.5 max-w-md text-sm leading-relaxed text-muted-foreground">
+                Ask about deliverables, platform health, commitments, or anything on your plate.
               </p>
 
               {/* Quick actions */}
-              <div className="mt-10 grid grid-cols-2 gap-2.5 max-w-lg w-full">
+              <div className="mt-8 grid grid-cols-2 gap-2 max-w-lg w-full">
                 {quickActions.map(({ label, icon: Icon }) => (
                   <button
                     key={label}
                     onClick={() => sendMessage(label)}
-                    className="group flex items-center gap-2.5 rounded-xl border border-border/50 bg-card px-3.5 py-3 text-left text-[13px] text-muted-foreground transition-all duration-200 hover:shadow-md hover:border-primary/20 hover:text-foreground hover:bg-primary/[0.02] cursor-pointer"
+                    className="group flex items-center gap-2.5 rounded-lg border border-border bg-background px-3 py-2.5 text-left text-[13px] text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-foreground cursor-pointer"
                   >
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/8 transition-colors group-hover:bg-primary/15">
-                      <Icon className="h-4 w-4 text-primary/60 group-hover:text-primary transition-colors" />
-                    </div>
+                    <Icon className="h-4 w-4 shrink-0 text-muted-foreground/60 group-hover:text-foreground/70 transition-colors" />
                     <span className="leading-snug">{label}</span>
                   </button>
                 ))}

@@ -140,14 +140,14 @@ export function AgenticMessage({
   const hasError = !!message.metadata?.error
 
   return (
-    <div className="group flex gap-3 py-3 animate-fade-in">
+    <div className="group flex gap-3 py-4 animate-fade-in">
       {/* Avatar */}
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
-        <Bot className="h-4 w-4" />
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-foreground text-background">
+        <Bot className="h-3.5 w-3.5" />
       </div>
 
       {/* Content */}
-      <div className={cn('flex flex-col gap-1 min-w-0 max-w-[85%]', hasError && 'border-l-2 border-destructive/30 pl-3')}>
+      <div className={cn('flex flex-col gap-1.5 min-w-0 max-w-[85%]', hasError && 'border-l-2 border-destructive/30 pl-3')}>
         {/* Parts */}
         {message.parts.map((part) => (
           <MessagePartRenderer
